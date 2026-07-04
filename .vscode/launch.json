@@ -6,7 +6,7 @@
             "name": "Launch SchedulerApp",
             "request": "launch",
             "mainClass": "SchedulerApp",
-            "vmArgs": "--module-path \"javafx-sdk-26/lib\" --add-modules javafx.controls,javafx.fxml"
+            "vmArgs": "--module-path \"${workspaceFolder}/javafx-sdk-26/lib\" --add-modules javafx.controls,javafx.fxml"
         }
     ]
 }

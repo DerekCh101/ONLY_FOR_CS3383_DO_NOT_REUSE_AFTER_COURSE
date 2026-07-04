@@ -5,11 +5,11 @@ import java.util.*;
 public class schedulerEngine {
 
     private BlockedTimePeriod blockedTime;
-    private Task[][] grid; // 56 days × 17 hours
+    private Task[][] grid; 
     private ArrayList<Task> unscheduledTasks;
     private LocalDate baseDate;
 
-    private static final int TOTAL_DAYS = 56;
+    private static final int TOTAL_DAYS = 365*60;
     private static final int START_HOUR = 6;
     private static final int HOURS_PER_DAY = 17;
 
@@ -27,12 +27,10 @@ public class schedulerEngine {
     public ArrayList<Task> getUnscheduledTasks() {
         return unscheduledTasks;
     }
-
+ 
     public void scheduleTasks(ArrayList<Task> tasks) {
-
-        clearGrid();
+        
         unscheduledTasks.clear();
-
         ArrayList<Task> fixedTasks = new ArrayList<>();
         ArrayList<Task> deadlineTasks = new ArrayList<>();
         ArrayList<Task> flexibleTasks = new ArrayList<>();
@@ -49,11 +47,11 @@ public class schedulerEngine {
         }
 
         // Sort deadline tasks by earliest date, then shorter duration
-        deadlineTasks.sort((t1, t2) -> {
+        deadlineTasks.sort((t1, t2) -> {//every comparison would run this function
             int dateCompare = t1.getDeadLineDate()
                     .compareTo(t2.getDeadLineDate());
-            if (dateCompare != 0) return dateCompare;
-            return Integer.compare(
+            if (dateCompare != 0) return dateCompare;//if not equal, then earlier is first
+            return Integer.compare(//if equal i.e.==0,compare the duration, if t1 is greater than t2 then function would return +ve t1 will be placed behind
                     getDuration(t1),
                     getDuration(t2)
             );
@@ -64,11 +62,7 @@ public class schedulerEngine {
         placeFlexibleTasks(flexibleTasks);
     }
 
-    private void clearGrid() {
-        for (int i = 0; i < TOTAL_DAYS; i++) {
-            Arrays.fill(grid[i], null);
-        }
-    }
+
 
     // Fixed tasks ignore blocked time
     private void placeFixedTasks(ArrayList<Task> tasks) {
@@ -80,7 +74,7 @@ public class schedulerEngine {
                     task.getStartingDate()
             );
 
-            if (dayIndex < 0 || dayIndex >= TOTAL_DAYS) {
+            if (dayIndex < 0|| dayIndex > TOTAL_DAYS) {//must not earlier than today
                 unscheduledTasks.add(task);
                 continue;
             }
@@ -218,7 +212,7 @@ public class schedulerEngine {
         return true;
     }
 
-    // Fill grid with task reference
+    // Fill grid with task
     private void placeTask(int day, int hour,
                            int duration, Task task) {
 
@@ -240,7 +234,7 @@ public class schedulerEngine {
                                          int duration,
                                          long lastDay) {
 
-        if (task.getDeadLineTime() == null)
+        if (task.getDeadLineTime() == null) 
             return true;
 
         if (day < lastDay)
@@ -252,4 +246,4 @@ public class schedulerEngine {
         return finishHour
                 <= task.getDeadLineTime().getHour();
     }
-}
+}yoyoyo

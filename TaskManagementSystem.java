@@ -121,6 +121,7 @@ public class TaskManagementSystem {
 
                 case "exit":
                     running = false;
+                    input.close();
                     System.exit(0);
                     break;
 
