@@ -74,7 +74,7 @@ public class schedulerEngine {
                     task.getStartingDate()
             );
 
-            if (dayIndex < 0|| dayIndex > TOTAL_DAYS) {//must not earlier than today
+            if (dayIndex < 0|| dayIndex >= TOTAL_DAYS) {//must not earlier than today
                 unscheduledTasks.add(task);
                 continue;
             }
@@ -131,7 +131,7 @@ public class schedulerEngine {
                 for (int day = 0; day <= lastDay && !placed; day++) {
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
-                        if (canPlaceIgnoringBlocked(day, hour, duration)
+                        if (canPlace(day, hour, duration,true)
                                 && respectsDeadlineTime(task, day, hour,
                                                         duration, lastDay)) {
 
@@ -196,21 +196,6 @@ public class schedulerEngine {
         return true;
     }
 
-    // Check slot ignoring blocked time
-    private boolean canPlaceIgnoringBlocked(int day,
-                                            int hour,
-                                            int duration) {
-
-        if (hour < 0 || hour + duration > HOURS_PER_DAY)
-            return false;
-
-        for (int i = 0; i < duration; i++) {
-            if (grid[day][hour + i] != null)
-                return false;
-        }
-
-        return true;
-    }
 
     // Fill grid with task
     private void placeTask(int day, int hour,
@@ -240,10 +225,10 @@ public class schedulerEngine {
         if (day < lastDay)
             return true;
 
-        int finishHour =
+        int finishHour = 
                 START_HOUR + hour + duration;
 
         return finishHour
                 <= task.getDeadLineTime().getHour();
     }
-}yoyoyo
+}
