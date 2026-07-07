@@ -2,26 +2,26 @@ import java.time.*;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 
-public class schedulerEngine {
+public class SchedulerEngine {
 
-    private BlockedTimePeriod blockedTime;
-    private Task[][] grid; 
+    private Day[] Daysgrid; 
     private ArrayList<Task> unscheduledTasks;
     private LocalDate baseDate;
+    private int dayIndexCurrently;
 
-    private static final int TOTAL_DAYS = 365*60;
+    private static final int TOTAL_DAYS = 365*5;
     private static final int START_HOUR = 6;
     private static final int HOURS_PER_DAY = 17;
 
-    public schedulerEngine(BlockedTimePeriod blockedTime, LocalDate baseDate) {
-        this.blockedTime = blockedTime;
+
+    public schedulerEngine(LocalDate baseDate) {
         this.baseDate = baseDate;
-        this.grid = new Task[TOTAL_DAYS][HOURS_PER_DAY];
+        this.Daysgrid = new Day[TOTAL_DAYS];
         this.unscheduledTasks = new ArrayList<>();
     }
 
-    public Task[][] getGrid() {
-        return grid;
+    public Day[] getGrid() {
+        return Daysgrid;
     }
 
     public ArrayList<Task> getUnscheduledTasks() {
@@ -74,7 +74,7 @@ public class schedulerEngine {
                     task.getStartingDate()
             );
 
-            if (dayIndex < 0|| dayIndex >= TOTAL_DAYS) {//must not earlier than today
+            if (dayIndex < 0|| dayIndex >= TOTAL_DAYS) {//must not earlier than today and not exceeding binary
                 unscheduledTasks.add(task);
                 continue;
             }
@@ -82,7 +82,7 @@ public class schedulerEngine {
             int hourIndex = task.getStartingTime().getHour() - START_HOUR;
             int duration = getDuration(task);
 
-            if (canPlace((int) dayIndex, hourIndex, duration, true)) {
+            if (Daysgrid[(int)dayIndex].canPlace((int) dayIndex, hourIndex, duration, true)) {
                 placeTask((int) dayIndex, hourIndex, duration, task);
             } else {
                 unscheduledTasks.add(task);
@@ -116,7 +116,7 @@ public class schedulerEngine {
             for (int day = 0; day <= lastDay && !placed; day++) {
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
-                    if (canPlace(day, hour, duration, false)
+                    if (Daysgrid[day].canPlace(day, hour, duration, false)
                             && respectsDeadlineTime(task, day, hour,
                                                     duration, lastDay)) {
 
@@ -126,7 +126,7 @@ public class schedulerEngine {
                 }
             }
 
-            // Second pass: allow blocked override
+            // Second pass: allow blocked override if cannot be accommodate in first pass
             if (!placed) {
                 for (int day = 0; day <= lastDay && !placed; day++) {
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
@@ -159,8 +159,8 @@ public class schedulerEngine {
             for (int day = 0; day < TOTAL_DAYS && !placed; day++) {
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
-                    if (canPlace(day, hour, duration, false)) {
-                        placeTask(day, hour, duration, task);
+                    if (Daysgrid[day].canPlace(day, hour, duration, false)) {
+                        Daysgrid[day].placeTask(day, hour, duration, task);
                         placed = true;
                     }
                 }
@@ -172,39 +172,8 @@ public class schedulerEngine {
         }
     }
 
-    // Check slot availability with optional blocked rule
-    private boolean canPlace(int day, int hour,
-                             int duration, boolean ignoreBlocked) {
-
-        if (hour < 0 || hour + duration > HOURS_PER_DAY)
-            return false;
-
-        for (int i = 0; i < duration; i++) {
-
-            if (grid[day][hour + i] != null)
-                return false;
-
-            if (!ignoreBlocked) {
-                LocalTime checkTime =
-                        LocalTime.of(START_HOUR + hour + i, 0);
-
-                if (blockedTime.isBlocked(checkTime))
-                    return false;
-            }
-        }
-
-        return true;
-    }
-
-
     // Fill grid with task
-    private void placeTask(int day, int hour,
-                           int duration, Task task) {
 
-        for (int i = 0; i < duration; i++) {
-            grid[day][hour + i] = task;
-        }
-    }
 
     // Default duration = 2 if invalid
     private int getDuration(Task task) {

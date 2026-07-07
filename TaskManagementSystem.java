@@ -11,14 +11,14 @@ public class TaskManagementSystem {
 
     private ArrayList<Task> tasks;
 
-    private schedulerEngine engine;
+    private SchedulerEngine engine;
     private BlockedTimePeriod blocked;
     private LocalDate baseDate;
 
     private SchedulerApp guiReference;
 
     private TaskManagementSystem() {
-        System.out.println("System Created, this version is made in 1700 06/04/2026.");
+        System.out.println("System Created, this version is made in 17:00 06/04/2026.");
         tasks = new ArrayList<>();
 
         baseDate = LocalDate.now();
