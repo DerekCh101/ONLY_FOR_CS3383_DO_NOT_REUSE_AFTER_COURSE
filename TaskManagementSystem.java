@@ -12,7 +12,7 @@ public class TaskManagementSystem {
     private ArrayList<Task> tasks;
 
     private SchedulerEngine engine;
-    private BlockedTimePeriod blocked;
+    private BlockedTimePeriod blockedTime;
     private LocalDate baseDate;
 
     private SchedulerApp guiReference;
@@ -20,10 +20,9 @@ public class TaskManagementSystem {
     private TaskManagementSystem() {
         System.out.println("System Created, this version is made in 17:00 06/04/2026.");
         tasks = new ArrayList<>();
-
         baseDate = LocalDate.now();
-        blocked = new BlockedTimePeriod();
-        engine = new schedulerEngine(blocked, baseDate);
+        blockedTime = new BlockedTimePeriod();
+        engine = new SchedulerEngine(blockedTime, baseDate);
     }
 
     public static TaskManagementSystem getInstance() {
@@ -42,7 +41,7 @@ public class TaskManagementSystem {
         return tasks;
     }
 
-    public Task[][] getGrid() {
+    public Day[] getGrid() {
         return engine.getGrid();
     }
 

@@ -14,10 +14,14 @@ public class SchedulerEngine {
     private static final int HOURS_PER_DAY = 17;
 
 
-    public schedulerEngine(LocalDate baseDate) {
+    public SchedulerEngine(BlockedTimePeriod blockedTime, LocalDate baseDate) {
         this.baseDate = baseDate;
         this.Daysgrid = new Day[TOTAL_DAYS];
+        for (int i = 0; i < TOTAL_DAYS; i++) {
+            Daysgrid[i] = new Day(blockedTime);
+        }
         this.unscheduledTasks = new ArrayList<>();
+        this.dayIndexCurrently = 0;
     }
 
     public Day[] getGrid() {
@@ -83,7 +87,7 @@ public class SchedulerEngine {
             int duration = getDuration(task);
 
             if (Daysgrid[(int)dayIndex].canPlace((int) dayIndex, hourIndex, duration, true)) {
-                placeTask((int) dayIndex, hourIndex, duration, task);
+                Daysgrid[(int)dayIndex].placeTask((int) dayIndex, hourIndex, duration, task);
             } else {
                 unscheduledTasks.add(task);
             }
@@ -111,16 +115,22 @@ public class SchedulerEngine {
 
             int duration = getDuration(task);
             boolean placed = false;
+            for(int day = dayIndexCurrently; day<=lastDay; day++){
+                if(Daysgrid[day].getOverloadFlag()==false){
+                    dayIndexCurrently = day;
+                    break;
+                }
+            }
 
             // First pass: respect blocked time
-            for (int day = 0; day <= lastDay && !placed; day++) {
+            for (int day = dayIndexCurrently; day <= lastDay && !placed; day++) {
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
                     if (Daysgrid[day].canPlace(day, hour, duration, false)
                             && respectsDeadlineTime(task, day, hour,
                                                     duration, lastDay)) {
 
-                        placeTask(day, hour, duration, task);
+                        Daysgrid[day].placeTask(day, hour, duration, task);
                         placed = true;
                     }
                 }
@@ -128,14 +138,14 @@ public class SchedulerEngine {
 
             // Second pass: allow blocked override if cannot be accommodate in first pass
             if (!placed) {
-                for (int day = 0; day <= lastDay && !placed; day++) {
+                for (int day = dayIndexCurrently; day <= lastDay && !placed; day++) {
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
-                        if (canPlace(day, hour, duration,true)
+                        if (Daysgrid[day].canPlace(day, hour, duration,true)
                                 && respectsDeadlineTime(task, day, hour,
                                                         duration, lastDay)) {
 
-                            placeTask(day, hour, duration, task);
+                            Daysgrid[day].placeTask(day, hour, duration, task);
                             placed = true;
                         }
                     }
@@ -156,7 +166,14 @@ public class SchedulerEngine {
             int duration = getDuration(task);
             boolean placed = false;
 
-            for (int day = 0; day < TOTAL_DAYS && !placed; day++) {
+            for(int day = dayIndexCurrently; day<=TOTAL_DAYS; day++){
+                if(Daysgrid[day].getOverloadFlag()==false){
+                    dayIndexCurrently = day;
+                    break;
+                }
+            }
+
+            for (int day = dayIndexCurrently; day < TOTAL_DAYS && !placed; day++) {
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
 
                     if (Daysgrid[day].canPlace(day, hour, duration, false)) {

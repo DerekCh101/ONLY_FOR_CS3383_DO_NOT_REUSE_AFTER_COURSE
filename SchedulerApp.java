@@ -14,7 +14,7 @@ public class SchedulerApp extends Application {
 
     private TaskManagementSystem system;
 
-    private Task[][] gridData;
+    private Day[] gridData;
 
     private int weekOffset = 0;
 
@@ -89,7 +89,7 @@ public class SchedulerApp extends Application {
             grid.add(new Label(text), col + 1, 0);
         }
 
-        // Time rows
+        // Time rows, so bascially filling from right to left first then downward repeat
         for (int row = 1; row <= 17; row++) {
 
             int hourIndex = row - 1;
@@ -104,8 +104,8 @@ public class SchedulerApp extends Application {
                 Pane cell = new Pane();
                 cell.setPrefSize(100, 40);
 
-                if (gridData != null && dayIndex < 56) {
-                    Task task = gridData[dayIndex][hourIndex];
+                if (gridData != null && dayIndex < 365*5) {
+                    Task task = gridData[dayIndex].returnDayGrid()[hourIndex];
 
                     if (task != null) {
                         cell.getChildren().add(

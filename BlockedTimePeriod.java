@@ -31,15 +31,14 @@ public class BlockedTimePeriod {
         timePeriod[0] = timeParts1;
         timePeriod[1] = timeParts2;
         periods.add(timePeriod);
+        timePeriod = new LocalTime[2];
         timePeriod[0] = timeParts3;
         timePeriod[1] = timeParts4;
         periods.add(timePeriod);
+        timePeriod = new LocalTime[2];
         timePeriod[0] = timeParts5;
         timePeriod[1] = timeParts6;
         periods.add(timePeriod);
-        for(LocalTime[] time:periods){
-            System.out.println(time);
-        }
     }
 
     private boolean validatePeriod(LocalTime start, LocalTime end) { //check can this period be added
@@ -200,6 +199,14 @@ public class BlockedTimePeriod {
         return false;
     }
 
-
-    
+    public int returnTotalBlockedTime() {
+        int totalHours = 0;
+        for (LocalTime[] period : periods) {
+            LocalTime start = period[0];
+            LocalTime end = period[1];
+            int hours = (int) java.time.Duration.between(start, end).toHours();
+            totalHours += hours;
+        }
+        return totalHours;  
+    }    
 }
