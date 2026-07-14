@@ -1,0 +1,69 @@
+Software Project Phase 1
+18-04-2026
+23-00
+5
+
+
+Dentist Appointment
+
+
+1
+10-04-2026
+09-00
+
+Read Machine Learning Book
+
+
+4
+
+
+Submit Internship Form
+20-04-2026
+
+2
+
+
+Hackathon
+
+
+6
+12-04-2026
+08-00
+
+Study Marathon
+
+
+8
+
+
+Data Structures Quiz
+14-04-2026
+15-00
+3
+
+
+Team Sync Meeting
+
+
+2
+11-04-2026
+10-00
+
+Daily Reflection
+
+
+1
+
+
+Capstone Final Submission
+25-04-2026
+23-00
+10
+
+
+Invalid Both Case
+15-04-2026
+18-00
+2
+13-04-2026
+09-00

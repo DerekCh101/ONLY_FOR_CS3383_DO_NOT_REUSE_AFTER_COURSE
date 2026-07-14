@@ -1,0 +1,6 @@
+{
+    "java.project.referencedLibraries": [
+        "javafx-sdk-26/lib/*.jar"
+    ],
+    "java.debug.settings.vmArgs": "--module-path \"${workspaceFolder}/javafx-sdk-26/lib\" --add-modules javafx.controls,javafx.fxml"
+}
