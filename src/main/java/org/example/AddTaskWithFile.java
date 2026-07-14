@@ -97,7 +97,6 @@ public class AddTaskWithFile implements Command {
         }
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
-        theSystem.command("printAll");
         System.out.println("Tasks added from file.");
     }
 

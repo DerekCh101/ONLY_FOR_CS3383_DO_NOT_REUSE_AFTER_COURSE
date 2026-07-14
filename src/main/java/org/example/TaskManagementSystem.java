@@ -80,7 +80,7 @@ public class TaskManagementSystem {
                 cmdString = null;
                 break;
 
-            case "addTaskFromFile":
+            case "addTaskFromFile"://for debugging mainly
                 try {
                     Command addTaskWithFile = new AddTaskWithFile(this);
                     addTaskWithFile.execute();

@@ -12,7 +12,7 @@ public class SchedulerEngine {
     private LocalDate baseDate;
     private LocalDate daySearchCurrently;
     private BlockedTimePeriod blockedTime;
-    private  CLIRunner debugConsole; //debug only
+    //private  CLIRunner debugConsole; //debug only
 
     private static final int TOTAL_DAYS = 365*5;
     private static final int START_HOUR = 6;

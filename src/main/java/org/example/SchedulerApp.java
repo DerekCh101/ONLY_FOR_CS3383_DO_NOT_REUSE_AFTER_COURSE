@@ -140,13 +140,16 @@ public class SchedulerApp extends Application {
                 if (gridData != null && dayIndex < 365*5) {
                     if(!gridData.containsKey(date)){
                         system.getEngine().putIfAbsent(date);
-                    //gridData.putIfAbsent(date,new Day(system.getBlockedTime()));
                     }
                     Task task = gridData.get(date).returnDayGrid()[hourIndex];
 
                     if (task != null) {
-                        cell.getChildren().add(
-                                new Label(task.getTaskName()));
+                        Label taskNameCell = new Label(task.getTaskName());
+                        taskNameCell.setWrapText(true);
+                        taskNameCell.setMaxWidth(Double.MAX_VALUE);
+                        taskNameCell.prefWidthProperty().bind(cell.widthProperty());
+                        cell.getChildren().add(taskNameCell);
+
                     }
                 }
                 cell.setOnMouseMoved(event -> {
@@ -161,9 +164,8 @@ public class SchedulerApp extends Application {
 
         }
         sidePanel.setText("Unscheduled task: \n");
-        system.getEngine().
         sidePanel.setText(sidePanel.getText()+ system.getEngine().printUnscheduledTask());
-
+        system.command("printAll");
 
     }
 
