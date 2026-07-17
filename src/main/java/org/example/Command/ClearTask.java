@@ -1,5 +1,8 @@
-package org.example;
+package org.example.Command;
 
+
+import org.example.Task;
+import org.example.TaskManagementSystem;
 
 import java.util.Scanner;
 
@@ -10,12 +13,12 @@ public class ClearTask implements Command {
     Scanner scanner;
 
 
-    ClearTask(TaskManagementSystem theSystem){
+    public ClearTask(TaskManagementSystem theSystem){
         this.theSystem = theSystem;
         System.out.println("Enter the taskName");
         scanner = new Scanner(System.in);
         String taskName = scanner.nextLine();
-        for(Task task: theSystem.getTasks()){
+        for(Task task: theSystem.getPlacedTasks()){
             if(task.getTaskName().equals(taskName)){
                 this.thisTask = task;
                 break;
@@ -24,15 +27,16 @@ public class ClearTask implements Command {
         System.out.println("Task Finsihed, removed from Calendar.");
     }
     @Override
-    public void execute(){
-        theSystem.getTasks().remove(thisTask);
+    public boolean execute(){
+        theSystem.getPlacedTasks().remove(thisTask);
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
+        return true;
     }
     @Override
     public void undo(){
         if(RecordedCommand.getUndoList()!=null){
-            theSystem.getTasks().add(thisTask);
+            theSystem.getPlacedTasks().add(thisTask);
             RecordedCommand.getRedoList().add(this);
             RecordedCommand.getUndoList().remove(this);
             System.out.println("redolist: "+RecordedCommand.getRedoList());
@@ -41,7 +45,7 @@ public class ClearTask implements Command {
     }
     @Override
     public void redo(){
-        theSystem.getTasks().remove(thisTask);
+        theSystem.getPlacedTasks().remove(thisTask);
         RecordedCommand.getRedoList().removeLast();
         RecordedCommand.getUndoList().add(this);
         System.out.println("redolist: "+RecordedCommand.getRedoList());

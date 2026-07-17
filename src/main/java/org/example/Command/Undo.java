@@ -1,5 +1,7 @@
-package org.example;
+package org.example.Command;
 
+
+import org.example.TaskManagementSystem;
 
 public class Undo extends RecordedCommand {
 
@@ -10,8 +12,10 @@ public class Undo extends RecordedCommand {
     }
 
     @Override
-    public void execute(){
+    public boolean execute(){
         RecordedCommand.getUndoList().getLast().undo();
+        return true;
+
     }
 
 }

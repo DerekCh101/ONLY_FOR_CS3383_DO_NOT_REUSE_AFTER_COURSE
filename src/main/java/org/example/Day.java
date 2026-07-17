@@ -26,7 +26,7 @@ public class Day{
              0 || hour + duration > HOURS_PER_DAY)
             return false;
         
-        if(overloadFlag){
+        if(ignoreBlocked==false && overloadFlag){
             return false;
         }
 

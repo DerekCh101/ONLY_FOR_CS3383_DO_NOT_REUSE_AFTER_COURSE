@@ -1,4 +1,4 @@
-package org.example;
+package org.example.Command;
 
 
 import java.util.ArrayList;
@@ -13,9 +13,9 @@ public class RecordedCommand implements Command {
         return redoList;
     }
     @Override
-    public void execute() {
+    public boolean execute() {
         // TODO Auto-generated method stub
-        
+        return true;
     }
     @Override
     public void undo(){

@@ -1,4 +1,7 @@
-package org.example;
+package org.example.Command;
+import org.example.Task;
+import org.example.TaskManagementSystem;
+
 import java.util.*;
 import java.time.format.DateTimeFormatter;
 import java.time.LocalDate;
@@ -9,12 +12,45 @@ public class AddTask extends RecordedCommand {
     private Task thisTask;
     private TaskManagementSystem theSystem;
     private Scanner scanner;
+    private LocalDate clickedDate;
+    private LocalTime clickedTime;
 
-    AddTask(TaskManagementSystem theSystem){
+
+    public AddTask(String taskName,boolean fixed,
+                   boolean hasDeadline, int duration,
+                   LocalDate Date, LocalTime Time,LocalDate secDate, LocalTime secTime,
+                   LocalDate clickedDate, LocalTime clickedTime){
+
+        this.clickedDate = clickedDate;
+        this.clickedTime = clickedTime;
+
+        if(duration<=0){
+            duration = 2;
+        }
+
+        if(fixed){
+                secDate = null;
+                secTime = null;
+                this.thisTask = new Task(taskName,secDate,secTime,duration,Date,Time);
+        } else if (hasDeadline) {
+            this.thisTask = new Task(taskName,Date,Time,duration,secDate,secTime);
+        }
+        else{
+            secDate = null;
+            secTime = null;
+            this.thisTask = new Task(taskName,Date,Time,duration,secDate,secTime);
+        }
+
+
+
+
+    }
+
+    public AddTask(TaskManagementSystem theSystem){
 
         this.theSystem = theSystem;
-        scanner = new Scanner(System.in);
 
+        scanner = new Scanner(System.in);
         System.out.println("Enter the task name:");
         String taskName = scanner.nextLine();
         while(taskName.isBlank()){
@@ -74,21 +110,38 @@ public class AddTask extends RecordedCommand {
         thisTask = new Task(taskName, ddate, dtime, duration, startingDate, startingTime);
 
         System.out.println("Task created successfully.");
+
     }
 
     @Override
-    public void execute() {
+    public boolean execute() {
+        if(theSystem.getGrid().containsKey(clickedDate)){ //validate click and add
+            if (clickedTime.getHour() <6 ||
+                    (clickedTime.getHour() + thisTask.getDurationHours()) >= 22) {
+                return false;
+            }
+            int thisTime = clickedTime.getHour()- theSystem.getEngine().getStartingHour();
+            for(int i =0;i<thisTask.getDurationHours();i++){
+                if(theSystem.getGrid().get(clickedDate).returnDayGrid()[thisTime]!=null)
+                    return false;
+                thisTime++;
+            }
+            return false;
+        }
+
         if(thisTask != null){
-            theSystem.getTasks().add(thisTask);
+            theSystem.getPlacedTasks().add(thisTask);
             RecordedCommand.getRedoList().clear();
             RecordedCommand.getUndoList().add(this);
+            return true;
         }
+        return false;
     }
 
     @Override
     public void undo(){
         if(thisTask != null){
-            theSystem.getTasks().remove(thisTask);
+            theSystem.getPlacedTasks().remove(thisTask);
             RecordedCommand.getRedoList().add(this);
             RecordedCommand.getUndoList().remove(this);
         }
@@ -97,7 +150,7 @@ public class AddTask extends RecordedCommand {
     @Override
     public void redo(){
         if(thisTask != null){
-            theSystem.getTasks().add(thisTask);
+            theSystem.getPlacedTasks().add(thisTask);
             RecordedCommand.getRedoList().removeLast();
             RecordedCommand.getUndoList().add(this);
         }

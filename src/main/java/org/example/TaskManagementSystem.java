@@ -3,28 +3,41 @@ package org.example;
 
 import java.io.FileNotFoundException;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
+import java.util.TreeMap;
 
 import javafx.application.Platform;
+import org.example.CliRunner.CLIRunner;
+import org.example.Command.*;
 
 public class TaskManagementSystem {
 
     private static TaskManagementSystem theSystem;
-    private ArrayList<Task> tasks;
+    private List<Task> pendingTasks;
+    private List<Task> placedTasks;
+    private List<Task> unscheduledTasks;
     private SchedulerEngine engine;
     private BlockedTimePeriod blockedTime;
     private LocalDate baseDate;
-    private SchedulerApp guiReference;
-    //private CLIRunner cliMode;
+    private SchedulerController guiController;
+    private CLIRunner cliMode;
+    private boolean cliFlag;
+    private Map<LocalDate, Day> daysGrid;
+
 
     private TaskManagementSystem() {
         System.out.println("System Created, this version is made in 17:00 06/04/2026.");
-        tasks = new ArrayList<>();
+        pendingTasks = new ArrayList<>();
+        placedTasks = new ArrayList<>();
+        unscheduledTasks = new ArrayList<>();
         baseDate = LocalDate.now();
         blockedTime = new BlockedTimePeriod();
-        engine = new SchedulerEngine(blockedTime, baseDate);
+        daysGrid = new TreeMap<>();
+        engine = new SchedulerEngine(this, baseDate,daysGrid);
+        cliFlag = false;
     }
 
     public static TaskManagementSystem getInstance() {
@@ -34,41 +47,34 @@ public class TaskManagementSystem {
         theSystem = new TaskManagementSystem();
         return theSystem;
     }
-    //public CLIRunner getCliMode(){
-//        return new CLIRunner();
-//    }
 
-    public void attachGUI(SchedulerApp gui) {
-        this.guiReference = gui;
+    public void attachGUI(SchedulerController controller) {
+        this.guiController = controller;
     }
-
-    public ArrayList<Task> getTasks() {
-        return tasks;
+    public List<Task> getPendingTasks() {
+        return pendingTasks;
     }
-
-    public Map<LocalDate, Day> getGrid() {
-        return engine.getGrid();
-    }
-
-    public void updateSchedule() {
-        engine.scheduleTasks(tasks);
-    }
-
+    public List<Task> getPlacedTasks() {return placedTasks; }
+    public List<Task> getUnscheduledTasks() {return unscheduledTasks;}
     public BlockedTimePeriod getBlockedTime() {
         return blockedTime;
     }
+    public Map<LocalDate, Day> getGrid() {return daysGrid;}
+    public SchedulerEngine getEngine(){return engine;}
+
+    public void updateSchedule() {
+        theSystem.command("printAllTask");
+        engine.scheduleTasks(placedTasks);
+    }
 
     public void refreshGUI() {
-        if (guiReference != null) {
+        if (guiController != null) {
             Platform.runLater(() -> {
-                guiReference.renderGrid();
+                guiController.refresh();
             });
         }
     }
 
-    public SchedulerEngine getEngine(){
-        return engine;
-    }
 
     public void command(String cmdString) {
 
@@ -84,6 +90,7 @@ public class TaskManagementSystem {
                 try {
                     Command addTaskWithFile = new AddTaskWithFile(this);
                     addTaskWithFile.execute();
+                    engine.scheduleTasks(pendingTasks);
                 } catch (FileNotFoundException e) {
                     System.out.println("File Not Found!");
                 }
@@ -96,7 +103,7 @@ public class TaskManagementSystem {
                 cmdString = null;
                 break;
 
-            case "printAll":
+            case "printAllTask":
                 Command printAll = new PrintAllTask(this);
                 printAll.execute();
                 cmdString = null;
@@ -119,8 +126,15 @@ public class TaskManagementSystem {
                 cmdString = null;
                 break;
 
-            case "update":
+            case "updateGUI":
+                refreshGUI();
+                System.out.println("GUI updated.");
+                cmdString = null;
+                break;
+
+            case "runScheduler":
                 updateSchedule();
+                refreshGUI();
                 System.out.println("GUI updated.");
                 cmdString = null;
                 break;
@@ -136,5 +150,11 @@ public class TaskManagementSystem {
                 break;
         }
 
+    }
+    public CLIRunner getCliMode(){
+        return new CLIRunner();
+    }
+    public boolean getCliFlag(){
+        return cliFlag;
     }
 }

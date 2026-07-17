@@ -16,7 +16,7 @@ public class Task {
     private LocalTime startingTime; // optional
     private boolean fixedTime;
 
-    Task(String tName, LocalDate dDate, LocalTime dTime, int durations, LocalDate sD, LocalTime sT) {
+    public Task(String tName, LocalDate dDate, LocalTime dTime, int durations, LocalDate sD, LocalTime sT) {
         this.uuid = UUID.randomUUID();
 //        while (repository.existsById(uuid)) {   // Very rare loop
 //            uuid = UUID.randomUUID();

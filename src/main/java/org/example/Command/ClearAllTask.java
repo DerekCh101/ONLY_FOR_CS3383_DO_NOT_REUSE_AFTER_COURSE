@@ -1,4 +1,7 @@
-package org.example;
+package org.example.Command;
+
+import org.example.Task;
+import org.example.TaskManagementSystem;
 
 import java.util.ArrayList;
 
@@ -6,23 +9,24 @@ public class ClearAllTask implements Command{
     TaskManagementSystem theSystem;
     ArrayList<Task> listofTasks;
 
-    ClearAllTask(TaskManagementSystem theSystem) {
+    public ClearAllTask(TaskManagementSystem theSystem) {
         this.theSystem = theSystem;
         listofTasks = new ArrayList<>();
-        this.listofTasks.addAll(theSystem.getTasks());
+        this.listofTasks.addAll(theSystem.getPlacedTasks());
         System.out.println("Task finished, removed from Calendar.");
     }
 
     @Override
-    public void execute(){
-        theSystem.getTasks().removeAll(listofTasks);
+    public boolean execute(){
+        theSystem.getPlacedTasks().removeAll(listofTasks);
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
+        return true;
     }
     @Override
     public void undo(){
         if(RecordedCommand.getUndoList()!=null){
-            theSystem.getTasks().addAll(listofTasks);
+            theSystem.getPlacedTasks().addAll(listofTasks);
             RecordedCommand.getRedoList().add(this);
             RecordedCommand.getUndoList().remove(this);
             System.out.println("redolist: "+RecordedCommand.getRedoList());
@@ -31,7 +35,7 @@ public class ClearAllTask implements Command{
     }
     @Override
     public void redo(){
-        theSystem.getTasks().removeAll(listofTasks);
+        theSystem.getPlacedTasks().removeAll(listofTasks);
         RecordedCommand.getRedoList().removeLast();
         RecordedCommand.getUndoList().add(this);
         System.out.println("redolist: "+RecordedCommand.getRedoList());

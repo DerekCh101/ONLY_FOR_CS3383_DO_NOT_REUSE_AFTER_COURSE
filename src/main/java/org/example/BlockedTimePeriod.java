@@ -15,7 +15,7 @@ public class BlockedTimePeriod {
     private final Scanner scanner = new Scanner(System.in);
 
 
-    BlockedTimePeriod(){
+    public BlockedTimePeriod(){
         timePeriod = new LocalTime[2];
         periods = new ArrayList<>();
         String time1 = "06-00 07-00"; 

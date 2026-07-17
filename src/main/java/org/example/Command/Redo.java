@@ -1,5 +1,7 @@
-package org.example;
+package org.example.Command;
 
+
+import org.example.TaskManagementSystem;
 
 public class Redo extends RecordedCommand {
 
@@ -10,8 +12,9 @@ public class Redo extends RecordedCommand {
     }
 
     @Override
-    public void execute(){
+    public boolean execute(){
         RecordedCommand.getRedoList().getLast().redo();
+        return true;
     }
 
 

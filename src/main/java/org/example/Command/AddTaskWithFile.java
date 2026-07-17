@@ -1,9 +1,11 @@
-package org.example;
+package org.example.Command;
+
+import org.example.Task;
+import org.example.TaskManagementSystem;
 
 import java.io.InputStream;
 import java.util.*;
 import java.time.format.DateTimeFormatter;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -13,7 +15,7 @@ public class AddTaskWithFile implements Command {
     private ArrayList<Task> addedTaskList = new ArrayList<>();
     private TaskManagementSystem theSystem;
 
-    AddTaskWithFile(TaskManagementSystem theSystem) throws FileNotFoundException {
+    public AddTaskWithFile(TaskManagementSystem theSystem) throws FileNotFoundException {
 
         this.theSystem = theSystem;
         InputStream input = getClass().getClassLoader().getResourceAsStream("taskInput1.txt");
@@ -91,19 +93,20 @@ public class AddTaskWithFile implements Command {
     }
 
     @Override
-    public void execute() {
+    public boolean execute() {
         for(Task task : addedTaskList){
-            theSystem.getTasks().add(task);
+            theSystem.getPendingTasks().add(task);
         }
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
         System.out.println("Tasks added from file.");
+        return true;
     }
 
     @Override
     public void undo(){
         for(Task task : addedTaskList){
-            theSystem.getTasks().remove(task);
+            theSystem.getPendingTasks().remove(task);
         }
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
@@ -112,7 +115,7 @@ public class AddTaskWithFile implements Command {
     @Override
     public void redo(){
         for(Task task : addedTaskList){
-            theSystem.getTasks().add(task);
+            theSystem.getPendingTasks().add(task);
         }
         RecordedCommand.getRedoList().removeLast();
         RecordedCommand.getUndoList().add(this);

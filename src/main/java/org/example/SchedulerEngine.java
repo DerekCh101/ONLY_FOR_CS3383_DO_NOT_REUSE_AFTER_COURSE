@@ -8,34 +8,32 @@ import java.util.*;
 public class SchedulerEngine {
 
     private Map<LocalDate, Day> daysGrid;
-    private ArrayList<Task> unscheduledTasks;
+    private List<Task> unscheduledTasks;
     private LocalDate baseDate;
     private LocalDate daySearchCurrently;
     private BlockedTimePeriod blockedTime;
-    //private  CLIRunner debugConsole; //debug only
+    private TaskManagementSystem system;
 
     private static final int TOTAL_DAYS = 365*5;
     private static final int START_HOUR = 6;
     private static final int HOURS_PER_DAY = 17;
 
 
-    public SchedulerEngine(BlockedTimePeriod blockedTime, LocalDate baseDate) {
+    public SchedulerEngine(TaskManagementSystem system, LocalDate baseDate, Map<LocalDate, Day> daysGrid) {
         this.baseDate = baseDate;
-        this.daysGrid = new TreeMap<>();
-        this.unscheduledTasks = new ArrayList<>();
+        this.daysGrid = daysGrid;
+        this.unscheduledTasks = system.getUnscheduledTasks();
         this.daySearchCurrently = baseDate;
-        this.blockedTime = blockedTime;
+        this.blockedTime = system.getBlockedTime();
+        this.daysGrid = daysGrid;
+        this.system = system;
     }
 
     public Map<LocalDate, Day> getGrid() {
         return daysGrid;
     }
 
-    public ArrayList<Task> getUnscheduledTasks() {
-        return unscheduledTasks;
-    }
- 
-    public void scheduleTasks(ArrayList<Task> tasks) {
+    public void scheduleTasks(List<Task> tasks) {
         
         unscheduledTasks.clear();
         daySearchCurrently = baseDate;
@@ -68,6 +66,9 @@ public class SchedulerEngine {
         placeFixedTasks(fixedTasks);
         placeDeadlineTasks(deadlineTasks);
         placeFlexibleTasks(flexibleTasks);
+
+        system.getPendingTasks().clear();
+
     }
 
 
@@ -89,13 +90,14 @@ public class SchedulerEngine {
 
             int hourSearch = task.getStartingTime().getHour() - START_HOUR;
             int duration = getDuration(task);
-
+            System.out.printf(task.getStartingDate().toString());
             daysGrid.putIfAbsent(task.getStartingDate(), new Day(blockedTime));
 
             Day theDay = daysGrid.get(task.getStartingDate());
 
             if (theDay.canPlace(hourSearch, duration, true)) {
                 theDay.placeTask(hourSearch, duration, task);
+                system.getPlacedTasks().add(task);
             } else {
                 unscheduledTasks.add(task);
             }
@@ -149,6 +151,7 @@ public class SchedulerEngine {
                             && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
 
                         theDay.placeTask(hour, duration, task);
+                        system.getPlacedTasks().add(task);
                         placed = true;
                     }
                 }
@@ -166,8 +169,8 @@ public class SchedulerEngine {
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
                         if (theDay != null && theDay.canPlace(hour, duration, true)
                                 && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
-
                             theDay.placeTask(hour, duration, task);
+                            system.getPlacedTasks().add(task);
                             placed = true;
                         }
                     }
@@ -213,6 +216,7 @@ public class SchedulerEngine {
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
                     if (theDay != null && theDay.canPlace(hour, duration, false)) {
                         theDay.placeTask(hour, duration, task);
+                        system.getPlacedTasks().add(task);
                         placed = true;
                     }
                 }
@@ -247,7 +251,7 @@ public class SchedulerEngine {
             return true;
         }
 
-        int finishHour = 
+        int finishHour =
                 START_HOUR + hour + duration;
 
         return finishHour
@@ -263,12 +267,8 @@ public class SchedulerEngine {
         return text;
     }
 
-    public void clearAllTasks(){
-        unscheduledTasks.clear();
-    }
-
-    public void putIfAbsent(LocalDate date){
-        daysGrid.putIfAbsent(date,new Day(blockedTime));
+    public int getStartingHour(){
+        return START_HOUR;
     }
 }
 
