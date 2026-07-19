@@ -14,66 +14,76 @@ public class Task {
     private int durationHours;      // optional, default 2
     private LocalDate startingDate; // optional
     private LocalTime startingTime; // optional
-    private boolean fixedTime;
+    private LocalDate clickedDate;
+    private LocalTime clickedTime;
+    private boolean isFixed;
+    private boolean isFlexible;
+    private boolean hasDeadline;
+    private int state;
 
-    public Task(String tName, LocalDate dDate, LocalTime dTime, int durations, LocalDate sD, LocalTime sT) {
+    public Task(String tName, int duration,int state, LocalDate clickedDate, LocalTime clickedTime, LocalDate secDate, LocalTime secTime) {
         this.uuid = UUID.randomUUID();
 //        while (repository.existsById(uuid)) {   // Very rare loop
 //            uuid = UUID.randomUUID();
 //        }
         this.id = uuid.toString();
         this.taskName = tName;
-        this.deadLineDate = dDate;
-        this.deadLineTime = dTime;
-        this.durationHours = durations;
+        this.durationHours = duration;
 
-        if (sD == null) {
-            fixedTime = false;
-        } else {
-            fixedTime = true;
-            this.startingDate = sD;
-            this.startingTime = sT;
+        if(state==1){//fixed task
+            this.state=1;
+            isFixed = true;
+            hasDeadline=false;
+            isFlexible=false;
+            startingDate = clickedDate;
+            startingTime = clickedTime;
+            this.clickedDate = clickedDate;
+            this.clickedTime = clickedTime;
+        }
+        if(state==2){//deadline Task
+            this.state=2;
+            isFixed = false;
+            hasDeadline=true;
+            isFlexible=false;
+            deadLineDate = secDate;
+            deadLineTime = secTime;
+            this.clickedDate = clickedDate;
+            this.clickedTime = clickedTime;
+        }
+        if(state==3){//flexible task
+            this.state=3;
+            isFixed = false;
+            hasDeadline=false;
+            isFlexible=true;
+            this.clickedDate = clickedDate;
+            this.clickedTime = clickedTime;
         }
     }
 
 
 
-    public String getTaskName() {
-        return taskName;
-    }
-
-    public LocalDate getDeadLineDate() {
-        return deadLineDate;
-    }
-
-    public LocalTime getDeadLineTime() {
-        return deadLineTime;
-    }
-
-    public int getDurationHours() {
-        return durationHours;
-    }
-
-    public LocalDate getStartingDate() {
-        return startingDate;
-    }
-
-    public LocalTime getStartingTime() {
-        return startingTime;
-    }
-
-    public boolean isFixedTime() {
-        return fixedTime;
-    }
+    public String getTaskName() {return taskName;}
+    public LocalDate getDeadLineDate() {return deadLineDate;}
+    public LocalTime getDeadLineTime() { return deadLineTime;}
+    public int getDurationHours() { return durationHours;}
+    public LocalDate getStartingDate() { return startingDate;}
+    public LocalTime getStartingTime() { return startingTime;}
+    public LocalDate getClickedDate(){ return clickedDate;}
+    public LocalTime getClickedTime(){ return clickedTime;}
 
     public String getID(){
         return id;
     }
 
+    public boolean isFixedTime() { return isFixed;}
+    public boolean isFlexible(){ return isFlexible;}
+    public boolean hasDeadline(){ return hasDeadline;}
+
+
     @Override
     public String toString() {
-        return String.format("{%s},{%s},{%s},{%s},{%s}",
-                taskName, deadLineDate, deadLineTime,
-                durationHours, fixedTime);
+        return String.format("{%s},{%d},{%d},{%s},{%s},{%s},{%s}",
+                taskName, durationHours, state, startingDate, startingTime,
+                deadLineDate,deadLineTime);
     }
 }

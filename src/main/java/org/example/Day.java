@@ -2,12 +2,13 @@ package org.example;
 
 import java.time.*;
 
-public class Day{
-        
-    private BlockedTimePeriod blockedTime;
+public class Day {
+
+    private final BlockedTimePeriod blockedTime;
     private int availableHours;
-    private Task[] todayTaskGrid;
+    private final Task[] todayTaskGrid;
     private boolean overloadFlag;
+
     private static final int START_HOUR = 6;
     private static final int HOURS_PER_DAY = 17;
 
@@ -18,45 +19,49 @@ public class Day{
         this.overloadFlag = false;
     }
 
-    // Check slot availability with optional blocked rule
-    public boolean canPlace(int hour,
-                             int duration, boolean ignoreBlocked) {
-
-        if (hour <
-             0 || hour + duration > HOURS_PER_DAY)
+    // Main improved version - validates current time on today
+    public boolean canPlace(int hour, int duration, boolean ignoreBlocked, LocalDate thisDay, Task task) {
+        if (hour < 0 || hour + duration > HOURS_PER_DAY) {
             return false;
-        
-        if(ignoreBlocked==false && overloadFlag){
+        }
+
+        // Prevent scheduling in the past on the current day
+        if (thisDay.equals(LocalDate.now())) {
+            int currentHour = LocalTime.now().getHour();
+            int taskStartHour = START_HOUR + hour;
+            if (taskStartHour < currentHour) {
+                return false;
+            }
+        }
+
+        if (!ignoreBlocked && overloadFlag) {//deadline task can get in overload day
             return false;
         }
 
         for (int i = 0; i < duration; i++) {
+            int slot = hour + i;
 
-            if (todayTaskGrid[hour + i] != null)
+            if (todayTaskGrid[slot] != null && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
-
-            
-            if (!ignoreBlocked) {
-                LocalTime checkTime =
-                LocalTime.of(START_HOUR + hour + i, 0);
-                
-                if (blockedTime.isBlocked(checkTime))
-                    return false;
             }
 
+            if (!ignoreBlocked) {
+                LocalTime checkTime = LocalTime.of(START_HOUR + slot, 0);
+                if (blockedTime.isBlocked(checkTime)) {
+                    return false;
+                }
+            }
         }
-
         return true;
     }
 
-    // Fill grid with task
-    public void placeTask(int hour, int duration, Task task) {
 
+    public void placeTask(int hour, int duration, Task task) {
         for (int i = 0; i < duration; i++) {
             todayTaskGrid[hour + i] = task;
         }
         availableHours = availableHours - duration;
-        if(availableHours<=2){
+        if (availableHours <= 2) {
             overloadFlag = true;
         }
     }
@@ -68,8 +73,4 @@ public class Day{
     public boolean getOverloadFlag(){
         return overloadFlag;
     }
-    
-
-
-
 }

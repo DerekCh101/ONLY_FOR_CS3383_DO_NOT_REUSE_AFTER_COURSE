@@ -6,35 +6,28 @@ import java.time.LocalTime;
 public class FetchPopOutTask {
 
     private String taskName;
-    private boolean fixed;
-    private boolean hasDeadline;
     private int duration;
-
-    private LocalDate deadlineDate;
-    private LocalTime deadlineTime;
-
-    private LocalDate startDate;
-    private LocalTime startTime;
-
+    private int state; // 1 = Fixed, 2 = Deadline, 3 = Flexible
     private LocalDate clickedDate;
     private LocalTime clickedTime;
+    private LocalDate secDate;
+    private LocalTime secTime;
 
-    public FetchPopOutTask(String taskName, boolean fixed, boolean hasDeadline,
+    public FetchPopOutTask(String taskName,
                            int duration,
-                           LocalDate deadlineDate, LocalTime deadlineTime,
-                           LocalDate startDate, LocalTime startTime,
-                           LocalDate clickedDate, LocalTime clickedTime) {
+                           int state,
+                           LocalDate clickedDate,
+                           LocalTime clickedTime,
+                           LocalDate secDate,
+                           LocalTime secTime) {
 
         this.taskName = taskName;
-        this.fixed = fixed;
-        this.hasDeadline = hasDeadline;
         this.duration = duration;
-        this.deadlineDate = deadlineDate;
-        this.deadlineTime = deadlineTime;
-        this.startDate = startDate;
-        this.startTime = startTime;
+        this.state = state;
         this.clickedDate = clickedDate;
         this.clickedTime = clickedTime;
+        this.secDate = secDate;
+        this.secTime = secTime;
     }
 
     // ==================== GETTERS ====================
@@ -43,32 +36,12 @@ public class FetchPopOutTask {
         return taskName;
     }
 
-    public boolean isFixed() {
-        return fixed;
-    }
-
-    public boolean hasDeadline() {
-        return hasDeadline;
-    }
-
     public int getDuration() {
         return duration;
     }
 
-    public LocalDate getDeadlineDate() {
-        return deadlineDate;
-    }
-
-    public LocalTime getDeadlineTime() {
-        return deadlineTime;
-    }
-
-    public LocalDate getStartDate() {
-        return startDate;
-    }
-
-    public LocalTime getStartTime() {
-        return startTime;
+    public int getState() {
+        return state;
     }
 
     public LocalDate getClickedDate() {
@@ -79,15 +52,38 @@ public class FetchPopOutTask {
         return clickedTime;
     }
 
-    // Optional: toString for debugging
+    public LocalDate getSecDate() {
+        return secDate;
+    }
+
+    public LocalTime getSecTime() {
+        return secTime;
+    }
+
+    // Optional helper methods (cleaner than checking state everywhere)
+
+    public boolean isFixed() {
+        return state == 1;
+    }
+
+    public boolean isDeadline() {
+        return state == 2;
+    }
+
+    public boolean isFlexible() {
+        return state == 3;
+    }
+
     @Override
     public String toString() {
         return "FetchPopOutTask{" +
                 "taskName='" + taskName + '\'' +
-                ", fixed=" + fixed +
-                ", hasDeadline=" + hasDeadline +
                 ", duration=" + duration +
+                ", state=" + state +
                 ", clickedDate=" + clickedDate +
+                ", clickedTime=" + clickedTime +
+                ", secDate=" + secDate +
+                ", secTime=" + secTime +
                 '}';
     }
 }

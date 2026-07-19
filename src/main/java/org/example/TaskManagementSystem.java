@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import javafx.application.Platform;
+import javafx.stage.Popup;
 import org.example.CliRunner.CLIRunner;
 import org.example.Command.*;
 
@@ -26,6 +27,7 @@ public class TaskManagementSystem {
     private CLIRunner cliMode;
     private boolean cliFlag;
     private Map<LocalDate, Day> daysGrid;
+    private FetchPopOutTask popupTask;
 
 
     private TaskManagementSystem() {
@@ -62,10 +64,9 @@ public class TaskManagementSystem {
     public Map<LocalDate, Day> getGrid() {return daysGrid;}
     public SchedulerEngine getEngine(){return engine;}
 
-    public void updateSchedule() {
-        theSystem.command("printAllTask");
+    public void updateSchedule() {//doesn't render grid by itself
         engine.scheduleTasks(placedTasks);
-    }
+    } 
 
     public void refreshGUI() {
         if (guiController != null) {
@@ -75,81 +76,139 @@ public class TaskManagementSystem {
         }
     }
 
+    public FetchPopOutTask fetchPopupTask(FetchPopOutTask popupTask){
+        this.popupTask = popupTask;
+        return popupTask;
+    }
+    public FetchPopOutTask getPopupTask(){
+        return popupTask;
+    }
 
-    public void command(String cmdString) {
+    public boolean command(String cmdString) {
 
         switch (cmdString) {
 
             case "addTask":
-                Command addTask = new AddTask(this);
-                addTask.execute();
-                cmdString = null;
-                break;
 
-            case "addTaskFromFile"://for debugging mainly
+                if(!ValidateAddTaskInput.validateAddTaskInput(
+                        popupTask.getTaskName(),
+                        popupTask.getDuration(),
+                        popupTask.getState(),
+                        popupTask.getClickedDate(),
+                        popupTask.getClickedTime(),
+                        popupTask.getSecDate(),
+                        popupTask.getSecTime())){
+                    return false;
+                }
+
+                Command addTaskFromGUI = new AddTask(
+                        popupTask.getTaskName(),
+                        popupTask.getDuration(),
+                        popupTask.getState(),
+                        popupTask.getClickedDate(),
+                        popupTask.getClickedTime(),
+                        popupTask.getSecDate(),
+                        popupTask.getSecTime()
+                );
+
+                if (!addTaskFromGUI.execute()) {
+                    return false;
+                }
+                engine.scheduleTasks(pendingTasks);
+                return true;
+
+
+            case "addTaskFromFile":
                 try {
                     Command addTaskWithFile = new AddTaskWithFile(this);
-                    addTaskWithFile.execute();
+
+                    if (!addTaskWithFile.execute()) {
+                        return false;
+                    }
+
                     engine.scheduleTasks(pendingTasks);
+                    return true;
+
                 } catch (FileNotFoundException e) {
                     System.out.println("File Not Found!");
+                    return false;
                 }
-                cmdString = null;
-                break;
 
             case "clearTask":
                 Command clearTask = new ClearTask(this);
-                clearTask.execute();
-                cmdString = null;
-                break;
+
+                if (!clearTask.execute()) {
+                    return false;
+                }
+                engine.scheduleTasks(placedTasks);
+                return true;
 
             case "printAllTask":
                 Command printAll = new PrintAllTask(this);
-                printAll.execute();
-                cmdString = null;
-                break;
+
+                if (!printAll.execute()) {
+                    return false;
+                }
+
+                return true;
+
             case "clearAllTask":
                 Command clearAllTask = new ClearAllTask(this);
-                clearAllTask.execute();
-                cmdString = null;
-                break;
+
+                if (!clearAllTask.execute()) {
+                    return false;
+                }
+
+                return true;
 
             case "undo":
                 RecordedCommand undo = new Undo(this);
-                undo.execute();
-                cmdString = null;
-                break;
+
+                if (!undo.execute()) {
+                    return false;
+                }
+
+                refreshGUI();
+                return true;
 
             case "redo":
                 RecordedCommand redo = new Redo(this);
-                redo.execute();
-                cmdString = null;
-                break;
+
+                if (!redo.execute()) {
+                    return false;
+                }
+
+                refreshGUI();
+                return true;
 
             case "updateGUI":
                 refreshGUI();
                 System.out.println("GUI updated.");
-                cmdString = null;
-                break;
+                return true;
 
             case "runScheduler":
                 updateSchedule();
                 refreshGUI();
                 System.out.println("GUI updated.");
-                cmdString = null;
-                break;
+                return true;
 
             case "exit":
                 System.exit(0);
-                break;
+                return true;
 
+            case "addTaskFromCli":
+                Command addTask = new AddTask(this);
+
+                if (!addTask.execute()) {
+                    return false;
+                }
+
+                return true;
 
             default:
                 System.out.println("Invalid Command.");
-                cmdString = null;
-                break;
+                return false;
         }
-
     }
     public CLIRunner getCliMode(){
         return new CLIRunner();

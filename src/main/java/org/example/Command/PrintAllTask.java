@@ -14,6 +14,7 @@ public class PrintAllTask implements Command{
 
     @Override
     public boolean execute() {
+        System.out.println("Current placed Task: ");
         for(Task task: theSystem.getPlacedTasks()){
             System.out.println(task);
         }

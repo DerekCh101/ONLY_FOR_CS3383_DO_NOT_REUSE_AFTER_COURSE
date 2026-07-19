@@ -2,6 +2,7 @@ package org.example.Command;
 
 import org.example.Task;
 import org.example.TaskManagementSystem;
+import org.example.ValidateAddTaskInput;
 
 import java.io.InputStream;
 import java.util.*;
@@ -31,33 +32,26 @@ public class AddTaskWithFile implements Command {
                 continue;
             }
 
+            int duration = 2;
+            int state = 0;
             LocalDate ddate = null;
             LocalTime dtime = null;
             LocalDate startingDate = null;
             LocalTime startingTime = null;
-            int duration = 2;
-
-            // Deadline Date
-            if(file.hasNextLine()){
-                String deadLineDateString = file.nextLine().trim();
-                if(!deadLineDateString.isBlank()){
-                    ddate = LocalDate.parse(deadLineDateString, dateFormatter);
-                }
-            }
-
-            // Deadline Time
-            if(file.hasNextLine()){
-                String deadLineTimeString = file.nextLine().trim();
-                if(!deadLineTimeString.isBlank()){
-                    dtime = LocalTime.parse(deadLineTimeString, timeFormatter);
-                }
-            }
 
             // Duration
             if(file.hasNextLine()){
                 String durationString = file.nextLine().trim();
                 if(!durationString.isBlank()){
                     duration = Integer.parseInt(durationString);
+                }
+            }
+
+            //ask state
+            if(file.hasNextLine()){
+                String stateString = file.nextLine().trim();
+                if(!stateString.isBlank()){
+                   state = Integer.parseInt(stateString);
                 }
             }
 
@@ -77,17 +71,31 @@ public class AddTaskWithFile implements Command {
                 }
             }
 
-            // ===== MUTUAL EXCLUSIVITY CHECK =====
-            if(ddate != null && startingDate != null){
-                System.out.println("Error in file: Task '" + taskName +
-                        "' has both deadline and fixed start. Skipping.");
-                continue;
+            // Deadline Date
+            if(file.hasNextLine()){
+                String deadLineDateString = file.nextLine().trim();
+                if(!deadLineDateString.isBlank()){
+                    ddate = LocalDate.parse(deadLineDateString, dateFormatter);
+                }
             }
 
-            Task task = new Task(taskName, ddate, dtime, duration, startingDate, startingTime);
-            addedTaskList.add(task);
+            // Deadline Time
+            if(file.hasNextLine()){
+                String deadLineTimeString = file.nextLine().trim();
+                if(!deadLineTimeString.isBlank()){
+                    dtime = LocalTime.parse(deadLineTimeString, timeFormatter);
+                }
+            }
+            Task thisTask;
+            try{
+                ValidateAddTaskInput.validateAddTaskInput(taskName, duration,state,
+                        startingDate, startingTime, ddate, dtime);
+                thisTask = new Task(taskName, duration,state, startingDate, startingTime, ddate, dtime);
+                addedTaskList.add(thisTask);
+            }catch(Exception ignored){
+                System.out.printf("\nSome thing went wrong, %s is not created.\n",taskName);
+            }
         }
-
         file.close();
         System.out.println("File loading complete.");
     }
@@ -106,8 +114,9 @@ public class AddTaskWithFile implements Command {
     @Override
     public void undo(){
         for(Task task : addedTaskList){
-            theSystem.getPendingTasks().remove(task);
+            theSystem.getPlacedTasks().remove(task);
         }
+        theSystem.getEngine().scheduleTasks(theSystem.getPlacedTasks());
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
@@ -117,6 +126,7 @@ public class AddTaskWithFile implements Command {
         for(Task task : addedTaskList){
             theSystem.getPendingTasks().add(task);
         }
+        theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
         RecordedCommand.getRedoList().removeLast();
         RecordedCommand.getUndoList().add(this);
     }

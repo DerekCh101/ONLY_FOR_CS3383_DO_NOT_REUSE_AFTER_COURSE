@@ -29,12 +29,14 @@ public class SchedulerEngine {
         this.system = system;
     }
 
-    public Map<LocalDate, Day> getGrid() {
-        return daysGrid;
-    }
-
     public void scheduleTasks(List<Task> tasks) {
-        
+        tasks.addAll(system.getPlacedTasks());
+        system.getPlacedTasks().removeAll(system.getPlacedTasks());
+        if(tasks.isEmpty()){
+            system.getGrid().clear();
+            unscheduledTasks.clear();
+            return;
+        }
         unscheduledTasks.clear();
         daySearchCurrently = baseDate;
         ArrayList<Task> fixedTasks = new ArrayList<>();
@@ -45,9 +47,9 @@ public class SchedulerEngine {
         for (Task task : tasks) {
             if (task.isFixedTime()) {
                 fixedTasks.add(task);
-            } else if (task.getDeadLineDate() != null) {
+            } else if (task.hasDeadline()) {
                 deadlineTasks.add(task);
-            } else {
+            } else if(task.isFlexible()){
                 flexibleTasks.add(task);
             }
         }
@@ -68,6 +70,8 @@ public class SchedulerEngine {
         placeFlexibleTasks(flexibleTasks);
 
         system.getPendingTasks().clear();
+        //safety net
+        system.getUnscheduledTasks().removeAll(system.getPlacedTasks());
 
     }
 
@@ -95,7 +99,7 @@ public class SchedulerEngine {
 
             Day theDay = daysGrid.get(task.getStartingDate());
 
-            if (theDay.canPlace(hourSearch, duration, true)) {
+            if (theDay.canPlace(hourSearch, duration, true,task.getStartingDate(), task)) {
                 theDay.placeTask(hourSearch, duration, task);
                 system.getPlacedTasks().add(task);
             } else {
@@ -104,7 +108,6 @@ public class SchedulerEngine {
         }
     }
 
-    // Deadline tasks: first respect blocked, then allow override
     // Deadline tasks: first respect blocked, then allow override
     private void placeDeadlineTasks(ArrayList<Task> tasks) {
 
@@ -147,14 +150,16 @@ public class SchedulerEngine {
                 Day theDay = daysGrid.get(thisDay);
 
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay != null && theDay.canPlace(hour, duration, false)
+                    if (theDay != null && theDay.canPlace(hour, duration, false,thisDay, task)
                             && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
 
                         theDay.placeTask(hour, duration, task);
-                        system.getPlacedTasks().add(task);
                         placed = true;
                     }
                 }
+            }
+            if(placed){
+                system.getPlacedTasks().add(task);
             }
 
             // Second pass: allow blocked override
@@ -167,7 +172,7 @@ public class SchedulerEngine {
                     Day theDay = daysGrid.get(thisDay);
 
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                        if (theDay != null && theDay.canPlace(hour, duration, true)
+                        if (theDay != null && theDay.canPlace(hour, duration, true,thisDay, task)
                                 && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
                             theDay.placeTask(hour, duration, task);
                             system.getPlacedTasks().add(task);
@@ -176,6 +181,8 @@ public class SchedulerEngine {
                     }
                 }
             }
+
+
 
             if (!placed) {
                 unscheduledTasks.add(task);
@@ -212,12 +219,15 @@ public class SchedulerEngine {
 
                 daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                 Day theDay = daysGrid.get(thisDay);
-
-                for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay != null && theDay.canPlace(hour, duration, false)) {
+                int hourIdx = 0;
+                if(thisDay == baseDate){
+                    hourIdx = LocalTime.now().getHour() - getStartingHour();
+                }
+                for (int hour = hourIdx; hour < HOURS_PER_DAY && !placed; hour++) {
+                    if (theDay != null && theDay.canPlace(hour, duration, false,thisDay, task)) {
                         theDay.placeTask(hour, duration, task);
-                        system.getPlacedTasks().add(task);
                         placed = true;
+                        system.getPlacedTasks().add(task);
                     }
                 }
             }
@@ -227,9 +237,6 @@ public class SchedulerEngine {
             }
         }
     }
-
-    // Fill grid with task
-
 
     // Default duration = 2 if invalid
     private int getDuration(Task task) {
@@ -244,7 +251,7 @@ public class SchedulerEngine {
                                          int duration,
                                          long lastDay) {
 
-        if (task.getDeadLineTime() == null) 
+        if (task.getDeadLineTime() == null)
             return true;
 
         if (day.isBefore(task.getDeadLineDate())){
@@ -270,5 +277,6 @@ public class SchedulerEngine {
     public int getStartingHour(){
         return START_HOUR;
     }
-}
 
+    public int getTotalHours(){return HOURS_PER_DAY;}
+}

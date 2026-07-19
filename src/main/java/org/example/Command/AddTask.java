@@ -1,6 +1,7 @@
 package org.example.Command;
 import org.example.Task;
 import org.example.TaskManagementSystem;
+import org.example.ValidateAddTaskInput;
 
 import java.util.*;
 import java.time.format.DateTimeFormatter;
@@ -16,37 +17,31 @@ public class AddTask extends RecordedCommand {
     private LocalTime clickedTime;
 
 
-    public AddTask(String taskName,boolean fixed,
-                   boolean hasDeadline, int duration,
-                   LocalDate Date, LocalTime Time,LocalDate secDate, LocalTime secTime,
-                   LocalDate clickedDate, LocalTime clickedTime){
+    public AddTask(String taskName,int duration,
+                   int state,
+                   LocalDate clickedDate, LocalTime clickedTime,
+                   LocalDate secDate, LocalTime secTime){
 
         this.clickedDate = clickedDate;
         this.clickedTime = clickedTime;
+        theSystem = TaskManagementSystem.getInstance();
 
         if(duration<=0){
             duration = 2;
         }
+        try{
+            ValidateAddTaskInput.validateAddTaskInput(taskName,duration,
+                    state,clickedDate,clickedTime,secDate,secTime);
 
-        if(fixed){
-                secDate = null;
-                secTime = null;
-                this.thisTask = new Task(taskName,secDate,secTime,duration,Date,Time);
-        } else if (hasDeadline) {
-            this.thisTask = new Task(taskName,Date,Time,duration,secDate,secTime);
+            thisTask = new Task(taskName,duration,state,clickedDate,clickedTime,secDate,secTime);
+
+        }catch(Exception ignored){
+            System.out.printf("\nSome thing went wrong, %s is not created.\n",taskName);
         }
-        else{
-            secDate = null;
-            secTime = null;
-            this.thisTask = new Task(taskName,Date,Time,duration,secDate,secTime);
-        }
-
-
-
 
     }
 
-    public AddTask(TaskManagementSystem theSystem){
+    public AddTask(TaskManagementSystem theSystem){//for debug only
 
         this.theSystem = theSystem;
 
@@ -66,20 +61,10 @@ public class AddTask extends RecordedCommand {
         LocalDate startingDate = null;
         LocalTime startingTime = null;
 
-        // ===== DEADLINE INPUT =====
-        System.out.println("Enter deadline date (dd-MM-yyyy). Press Enter if none:");
-        String deadLineDateString = scanner.nextLine();
+        System.out.println("Enter the type of task, 1: fixed, 2: deadline 3: flexible.");
+        int state = scanner.nextInt();
 
-        if(!deadLineDateString.isBlank()){
-            ddate = LocalDate.parse(deadLineDateString, dateFormatter);
-
-            System.out.println("Enter deadline time (HH-mm). Press Enter if none:");
-            String deadLineTimeString = scanner.nextLine();
-            if(!deadLineTimeString.isBlank()){
-                dtime = LocalTime.parse(deadLineTimeString, timeFormatter);
-            }
-        }
-        else {
+        if(state==1){
             // ===== ONLY ASK FOR FIXED START IF NO DEADLINE =====
             System.out.println("Enter fixed starting date (dd-MM-yyyy). Press Enter if none:");
             String startingDateString = scanner.nextLine();
@@ -97,6 +82,20 @@ public class AddTask extends RecordedCommand {
 
                 startingTime = LocalTime.parse(startingTimeString, timeFormatter);
             }
+        }else if(state == 2){
+            // ===== DEADLINE INPUT =====
+            System.out.println("Enter deadline date (dd-MM-yyyy). Press Enter if none:");
+            String deadLineDateString = scanner.nextLine();
+
+            if(!deadLineDateString.isBlank()){
+                ddate = LocalDate.parse(deadLineDateString, dateFormatter);
+
+                System.out.println("Enter deadline time (HH-mm). Press Enter if none:");
+                String deadLineTimeString = scanner.nextLine();
+                if(!deadLineTimeString.isBlank()){
+                    dtime = LocalTime.parse(deadLineTimeString, timeFormatter);
+                }
+            }
         }
 
         // ===== DURATION =====
@@ -106,8 +105,13 @@ public class AddTask extends RecordedCommand {
         if(!durationString.isBlank()){
             duration = Integer.parseInt(durationString);
         }
-
-        thisTask = new Task(taskName, ddate, dtime, duration, startingDate, startingTime);
+        try{
+            ValidateAddTaskInput.validateAddTaskInput(taskName, duration,state,
+                    startingDate, startingTime, ddate, dtime);
+            thisTask = new Task(taskName, duration,state, startingDate, startingTime, ddate, dtime);
+        }catch(Exception ignored){
+            System.out.printf("\nSome thing went wrong, %s is not created.\n",taskName);
+        }
 
         System.out.println("Task created successfully.");
 
@@ -115,22 +119,8 @@ public class AddTask extends RecordedCommand {
 
     @Override
     public boolean execute() {
-        if(theSystem.getGrid().containsKey(clickedDate)){ //validate click and add
-            if (clickedTime.getHour() <6 ||
-                    (clickedTime.getHour() + thisTask.getDurationHours()) >= 22) {
-                return false;
-            }
-            int thisTime = clickedTime.getHour()- theSystem.getEngine().getStartingHour();
-            for(int i =0;i<thisTask.getDurationHours();i++){
-                if(theSystem.getGrid().get(clickedDate).returnDayGrid()[thisTime]!=null)
-                    return false;
-                thisTime++;
-            }
-            return false;
-        }
-
         if(thisTask != null){
-            theSystem.getPlacedTasks().add(thisTask);
+            theSystem.getPendingTasks().add(thisTask);
             RecordedCommand.getRedoList().clear();
             RecordedCommand.getUndoList().add(this);
             return true;
@@ -141,7 +131,7 @@ public class AddTask extends RecordedCommand {
     @Override
     public void undo(){
         if(thisTask != null){
-            theSystem.getPlacedTasks().remove(thisTask);
+            theSystem.getPendingTasks().remove(thisTask);
             RecordedCommand.getRedoList().add(this);
             RecordedCommand.getUndoList().remove(this);
         }
@@ -150,7 +140,7 @@ public class AddTask extends RecordedCommand {
     @Override
     public void redo(){
         if(thisTask != null){
-            theSystem.getPlacedTasks().add(thisTask);
+            theSystem.getPendingTasks().add(thisTask);
             RecordedCommand.getRedoList().removeLast();
             RecordedCommand.getUndoList().add(this);
         }
