@@ -32,6 +32,7 @@ public class SchedulerEngine {
     public void scheduleTasks(List<Task> tasks) {
         tasks.addAll(system.getPlacedTasks());
         system.getPlacedTasks().removeAll(system.getPlacedTasks());
+        system.getGrid().clear();
         if(tasks.isEmpty()){
             system.getGrid().clear();
             unscheduledTasks.clear();

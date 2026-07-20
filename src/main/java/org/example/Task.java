@@ -14,49 +14,48 @@ public class Task {
     private int durationHours;      // optional, default 2
     private LocalDate startingDate; // optional
     private LocalTime startingTime; // optional
-    private LocalDate clickedDate;
-    private LocalTime clickedTime;
     private boolean isFixed;
     private boolean isFlexible;
     private boolean hasDeadline;
     private int state;
-
-    public Task(String tName, int duration,int state, LocalDate clickedDate, LocalTime clickedTime, LocalDate secDate, LocalTime secTime) {
-        this.uuid = UUID.randomUUID();
 //        while (repository.existsById(uuid)) {   // Very rare loop
 //            uuid = UUID.randomUUID();
 //        }
+
+    public Task(String tName, int duration, int state,
+                LocalDate startDate, LocalTime startTime,
+                LocalDate deadlineDate, LocalTime deadlineTime) {
+
+        this.uuid = UUID.randomUUID();
         this.id = uuid.toString();
         this.taskName = tName;
         this.durationHours = duration;
+        this.state = state;
 
-        if(state==1){//fixed task
-            this.state=1;
+        if (state == 1) { // Fixed
             isFixed = true;
-            hasDeadline=false;
-            isFlexible=false;
-            startingDate = clickedDate;
-            startingTime = clickedTime;
-            this.clickedDate = clickedDate;
-            this.clickedTime = clickedTime;
-        }
-        if(state==2){//deadline Task
-            this.state=2;
+            hasDeadline = false;
+            isFlexible = false;
+            this.startingDate = startDate;
+            this.startingTime = startTime;
+            this.deadLineDate = null;
+            this.deadLineTime = null;
+        } else if (state == 2) { // Deadline
             isFixed = false;
-            hasDeadline=true;
-            isFlexible=false;
-            deadLineDate = secDate;
-            deadLineTime = secTime;
-            this.clickedDate = clickedDate;
-            this.clickedTime = clickedTime;
-        }
-        if(state==3){//flexible task
-            this.state=3;
+            hasDeadline = true;
+            isFlexible = false;
+            this.startingDate = null;
+            this.startingTime = null;
+            this.deadLineDate = deadlineDate;
+            this.deadLineTime = deadlineTime;
+        } else if (state == 3) { // Flexible
             isFixed = false;
-            hasDeadline=false;
-            isFlexible=true;
-            this.clickedDate = clickedDate;
-            this.clickedTime = clickedTime;
+            hasDeadline = false;
+            isFlexible = true;
+            this.startingDate = null;
+            this.startingTime = null;
+            this.deadLineDate = null;
+            this.deadLineTime = null;
         }
     }
 
@@ -68,8 +67,7 @@ public class Task {
     public int getDurationHours() { return durationHours;}
     public LocalDate getStartingDate() { return startingDate;}
     public LocalTime getStartingTime() { return startingTime;}
-    public LocalDate getClickedDate(){ return clickedDate;}
-    public LocalTime getClickedTime(){ return clickedTime;}
+
 
     public String getID(){
         return id;

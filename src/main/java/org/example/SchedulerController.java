@@ -150,13 +150,6 @@ public class SchedulerController {
                 parent.heightProperty().subtract(node.heightProperty()).divide(2).multiply(heightOffset));
         node.setManaged(false);
     }
-    private void centerInParentOffsetDownward(Pane node, Region parent) {
-        node.layoutXProperty().bind(
-                parent.widthProperty().subtract(node.widthProperty()).divide(2).multiply(0.7));
-        node.layoutYProperty().bind(
-                parent.heightProperty().subtract(node.heightProperty()).divide(2).multiply(0.9));
-        node.setManaged(false);
-    }
 
     private VBox createWhiteBox() {
         VBox box = new VBox(12);
@@ -404,12 +397,11 @@ public class SchedulerController {
 
         saveButton.setOnAction(e -> {
             String name = taskNameField.getText().trim();
-            DateTimeFormatter clickedDateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
+            DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
             DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH-mm");
             LocalDate nowDate = LocalDate.now();
             LocalTime nowTime = LocalTime.now();
-            LocalTime clickedTime =
-                    LocalTime.of(hourIndex + system.getEngine().getStartingHour(), 0);
+            LocalTime clickedTime = LocalTime.of(hourIndex + system.getEngine().getStartingHour(), 0);
 
             boolean isFixed = fixedRadio.isSelected();
             boolean hasDeadline = deadlineRadio.isSelected();
@@ -429,107 +421,88 @@ public class SchedulerController {
                 return;
             }
 
-            if (clickedDate.isBefore(nowDate) ||
-                    (clickedDate.equals(nowDate) && hourIndex + system.getEngine().getStartingHour() <= nowTime.getHour())) {
-                showAlertPopup(scene, "Cannot add task into the past.");
-                return;
+            // Only Fixed tasks care about the clicked cell being in the past
+            if (isFixed) {
+                if (clickedDate.isBefore(nowDate) ||
+                        (clickedDate.equals(nowDate) && hourIndex + system.getEngine().getStartingHour() <= nowTime.getHour())) {
+                    showAlertPopup(scene, "Cannot add Fixed task into the past.");
+                    return;
+                }
             }
 
+            LocalDate startDate = null;
+            LocalTime startTime = null;
             LocalDate deadlineDate = null;
-            LocalTime dtime = null;
-            boolean dTimeExists = false;
+            LocalTime deadlineTime = null;
 
-            if (hasDeadline) {
-
+            if (isFixed) {
+                startDate = clickedDate;
+                startTime = clickedTime;
+            } else if (hasDeadline) {
                 if (deadlineDateField.getText().trim().isEmpty()) {
-                    showAlertPopup(scene, "Deadline Task must at least have a clickedDate.");
+                    showAlertPopup(scene, "Deadline Task must have a deadline date.");
                     return;
                 }
 
                 try {
-                    deadlineDate = LocalDate.parse(deadlineDateField.getText().trim(), clickedDateFormatter);
+                    deadlineDate = LocalDate.parse(deadlineDateField.getText().trim(), dateFormatter);
                 } catch (Exception ex) {
-                    showAlertPopup(scene, "Deadline clickedDate format invalid.");
+                    showAlertPopup(scene, "Deadline date format invalid (dd-MM-yyyy).");
                     return;
                 }
 
                 if (!deadlineTimeField.getText().trim().isEmpty()) {
                     try {
-                        dtime = LocalTime.parse(deadlineTimeField.getText().trim(), timeFormatter);
-                        dTimeExists = true;
+                        deadlineTime = LocalTime.parse(deadlineTimeField.getText().trim(), timeFormatter);
                     } catch (Exception ex) {
-                        showAlertPopup(scene, "Deadline time format invalid.");
+                        showAlertPopup(scene, "Deadline time format invalid (HH-mm).");
                         return;
                     }
-                }else{//deadline time cant be null
-                    dtime = LocalTime.of(23,59);
+                } else {
+                    deadlineTime = LocalTime.of(23, 59);
                 }
 
                 if (deadlineDate.isBefore(nowDate) ||
-                        (deadlineDate.equals(nowDate) && dTimeExists && dtime.isBefore(nowTime))) {
+                        (deadlineDate.equals(nowDate) && deadlineTime.isBefore(nowTime))) {
                     showAlertPopup(scene, "Cannot have deadline in the past.");
                     return;
                 }
             }
-            //check time conflict
-            for (int i = 0; i < duration; i++) {
-                int checkHour = hourIndex + i;
+            // Flexible → both stay null
 
-                if (checkHour >= system.getEngine().getTotalHours()) {
-                    showAlertPopup(scene, "Task exceeds daily time range.");
-                    return;
-                }
+            // Time conflict check only makes sense for Fixed tasks
+            if (isFixed) {
+                for (int i = 0; i < duration; i++) {
+                    int checkHour = hourIndex + i;
+                    if (checkHour >= system.getEngine().getTotalHours()) {
+                        showAlertPopup(scene, "Task exceeds daily time range.");
+                        return;
+                    }
 
-                system.getGrid().putIfAbsent(clickedDate, new Day(system.getBlockedTime()));
-
-                if (system.getGrid().get(clickedDate)
-                        .returnDayGrid()[checkHour] != null) {
-                    showAlertPopup(scene, "The task has time-conflict with other tasks.");
-                    return;
-                }
-            }
-
-            if(isFixed){
-                int state = 1;
-                LocalDate secDate = null;
-                LocalTime secTime = null;
-                FetchPopOutTask popoutPackage = new FetchPopOutTask(taskNameField.getText(),
-                        duration,state,clickedDate,clickedTime,secDate, secTime);
-                system.fetchPopupTask(popoutPackage);
-                if(system.command("addTask")== false){
-                    showAlertPopup(scene,"Task input error.");
-                }
-
-            } else if (hasDeadline) {
-                int state = 2;
-                LocalDate secDate = deadlineDate;
-                LocalTime secTime = dtime;
-                FetchPopOutTask popoutPackage = new FetchPopOutTask(taskNameField.getText(),
-                        duration,state,clickedDate,clickedTime,secDate, secTime);
-                system.fetchPopupTask(popoutPackage);
-                if(system.command("addTask")== false){
-                    showAlertPopup(scene,"Task input error.");
-                }
-
-            }
-            else if (isFlexible) {
-                int state = 3;
-                LocalDate secDate = null;
-                LocalTime secTime = null;
-                FetchPopOutTask popoutPackage = new FetchPopOutTask(taskNameField.getText(),
-                        duration,state,clickedDate,clickedTime,secDate, secTime);
-                system.fetchPopupTask(popoutPackage);
-                if(system.command("addTask")== false){
-                    showAlertPopup(scene,"Task input error.");
+                    system.getGrid().putIfAbsent(clickedDate, new Day(system.getBlockedTime()));
+                    if (system.getGrid().get(clickedDate).returnDayGrid()[checkHour] != null) {
+                        showAlertPopup(scene, "The task has time-conflict with other tasks.");
+                        return;
+                    }
                 }
             }
 
+            int state = isFixed ? 1 : (hasDeadline ? 2 : 3);
 
-            System.out.println("db Current Task List:");
-            system.command("printAllTask");
-            System.out.println("db unschedule task: ");
-            system.getEngine().printUnscheduledTask();
-            System.out.println("Task Created: " + name + " on " + clickedDate);
+            FetchPopOutTask popoutPackage = new FetchPopOutTask(
+                    name, duration, state,
+                    startDate, startTime,
+                    deadlineDate, deadlineTime);
+
+            system.fetchPopupTask(popoutPackage);
+
+            if (!system.command("addTask")) {
+                showAlertPopup(scene, "Task input error.");
+                return;
+            }
+
+            System.out.println("Task Created: " + name);
+            System.out.printf("Unscheduled Task:\n %s",system.getEngine().printUnscheduledTask());
             renderGrid();
             closeEverything(scene);
         });

@@ -1,4 +1,5 @@
 package org.example.Command;
+
 import org.example.Task;
 import org.example.TaskManagementSystem;
 import org.example.ValidateAddTaskInput;
@@ -12,114 +13,94 @@ public class AddTask extends RecordedCommand {
 
     private Task thisTask;
     private TaskManagementSystem theSystem;
-    private Scanner scanner;
-    private LocalDate clickedDate;
-    private LocalTime clickedTime;
 
+    public AddTask(String taskName, int duration, int state,
+                   LocalDate startDate, LocalTime startTime,
+                   LocalDate deadlineDate, LocalTime deadlineTime) {
 
-    public AddTask(String taskName,int duration,
-                   int state,
-                   LocalDate clickedDate, LocalTime clickedTime,
-                   LocalDate secDate, LocalTime secTime){
-
-        this.clickedDate = clickedDate;
-        this.clickedTime = clickedTime;
         theSystem = TaskManagementSystem.getInstance();
 
-        if(duration<=0){
+        if (duration <= 0) {
             duration = 2;
         }
-        try{
-            ValidateAddTaskInput.validateAddTaskInput(taskName,duration,
-                    state,clickedDate,clickedTime,secDate,secTime);
 
-            thisTask = new Task(taskName,duration,state,clickedDate,clickedTime,secDate,secTime);
+        try {
+            ValidateAddTaskInput.validateAddTaskInput(
+                    taskName, duration, state,
+                    startDate, startTime, deadlineDate, deadlineTime);
 
-        }catch(Exception ignored){
-            System.out.printf("\nSome thing went wrong, %s is not created.\n",taskName);
+            thisTask = new Task(taskName, duration, state,
+                    startDate, startTime, deadlineDate, deadlineTime);
+
+        } catch (Exception ignored) {
+            System.out.printf("\nSome thing went wrong, %s is not created.\n", taskName);
         }
-
     }
 
-    public AddTask(TaskManagementSystem theSystem){//for debug only
-
+    // ===== CLI version (for debugging) =====
+    public AddTask(TaskManagementSystem theSystem) {
         this.theSystem = theSystem;
+        Scanner scanner = new Scanner(System.in);
 
-        scanner = new Scanner(System.in);
         System.out.println("Enter the task name:");
-        String taskName = scanner.nextLine();
-        while(taskName.isBlank()){
+        String taskName = scanner.nextLine().trim();
+        while (taskName.isBlank()) {
             System.out.println("Task name cannot be blank. Enter again:");
-            taskName = scanner.nextLine();
+            taskName = scanner.nextLine().trim();
         }
 
         DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH-mm");
 
-        LocalDate ddate = null;
-        LocalTime dtime = null;
-        LocalDate startingDate = null;
-        LocalTime startingTime = null;
+        LocalDate startDate = null;
+        LocalTime startTime = null;
+        LocalDate deadlineDate = null;
+        LocalTime deadlineTime = null;
 
-        System.out.println("Enter the type of task, 1: fixed, 2: deadline 3: flexible.");
-        int state = scanner.nextInt();
+        System.out.println("Enter the type of task (1 = Fixed, 2 = Deadline, 3 = Flexible):");
+        int state = Integer.parseInt(scanner.nextLine().trim());
 
-        if(state==1){
-            // ===== ONLY ASK FOR FIXED START IF NO DEADLINE =====
-            System.out.println("Enter fixed starting date (dd-MM-yyyy). Press Enter if none:");
-            String startingDateString = scanner.nextLine();
+        if (state == 1) {
+            System.out.println("Enter starting date (dd-MM-yyyy):");
+            String dateStr = scanner.nextLine().trim();
+            startDate = LocalDate.parse(dateStr, dateFormatter);
 
-            if(!startingDateString.isBlank()){
-                startingDate = LocalDate.parse(startingDateString, dateFormatter);
+            System.out.println("Enter starting time (HH-mm):");
+            String timeStr = scanner.nextLine().trim();
+            startTime = LocalTime.parse(timeStr, timeFormatter);
 
-                System.out.println("Enter fixed starting time (HH-mm):");
-                String startingTimeString = scanner.nextLine();
+        } else if (state == 2) {
+            System.out.println("Enter deadline date (dd-MM-yyyy):");
+            String dateStr = scanner.nextLine().trim();
+            deadlineDate = LocalDate.parse(dateStr, dateFormatter);
 
-                if(startingTimeString.isBlank()){
-                    System.out.println("Starting time is required if starting date is given.");
-                    return;
-                }
-
-                startingTime = LocalTime.parse(startingTimeString, timeFormatter);
-            }
-        }else if(state == 2){
-            // ===== DEADLINE INPUT =====
-            System.out.println("Enter deadline date (dd-MM-yyyy). Press Enter if none:");
-            String deadLineDateString = scanner.nextLine();
-
-            if(!deadLineDateString.isBlank()){
-                ddate = LocalDate.parse(deadLineDateString, dateFormatter);
-
-                System.out.println("Enter deadline time (HH-mm). Press Enter if none:");
-                String deadLineTimeString = scanner.nextLine();
-                if(!deadLineTimeString.isBlank()){
-                    dtime = LocalTime.parse(deadLineTimeString, timeFormatter);
-                }
-            }
+            System.out.println("Enter deadline time (HH-mm):");
+            String timeStr = scanner.nextLine().trim();
+            deadlineTime = LocalTime.parse(timeStr, timeFormatter);
         }
+        // state 3 → both stay null
 
-        // ===== DURATION =====
         System.out.println("Expected duration in hours (default 2):");
-        String durationString = scanner.nextLine();
-        int duration = 2;
-        if(!durationString.isBlank()){
-            duration = Integer.parseInt(durationString);
-        }
-        try{
-            ValidateAddTaskInput.validateAddTaskInput(taskName, duration,state,
-                    startingDate, startingTime, ddate, dtime);
-            thisTask = new Task(taskName, duration,state, startingDate, startingTime, ddate, dtime);
-        }catch(Exception ignored){
-            System.out.printf("\nSome thing went wrong, %s is not created.\n",taskName);
-        }
+        String durationString = scanner.nextLine().trim();
+        int duration = durationString.isBlank() ? 2 : Integer.parseInt(durationString);
 
-        System.out.println("Task created successfully.");
+        try {
+            ValidateAddTaskInput.validateAddTaskInput(
+                    taskName, duration, state,
+                    startDate, startTime, deadlineDate, deadlineTime);
 
+            thisTask = new Task(taskName, duration, state,
+                    startDate, startTime, deadlineDate, deadlineTime);
+
+            System.out.println("Task created successfully.");
+        } catch (Exception ignored) {
+            System.out.printf("\nSome thing went wrong, %s is not created.\n", taskName);
+        }
     }
 
     @Override
     public boolean execute() {
-        if(thisTask != null){
+        if (thisTask != null) {
             theSystem.getPendingTasks().add(thisTask);
             RecordedCommand.getRedoList().clear();
             RecordedCommand.getUndoList().add(this);
@@ -129,20 +110,22 @@ public class AddTask extends RecordedCommand {
     }
 
     @Override
-    public void undo(){
-        if(thisTask != null){
-            theSystem.getPendingTasks().remove(thisTask);
+    public void undo() {
+        if (thisTask != null) {
+            theSystem.getPlacedTasks().remove(thisTask);
             RecordedCommand.getRedoList().add(this);
             RecordedCommand.getUndoList().remove(this);
+            theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
         }
     }
 
     @Override
-    public void redo(){
-        if(thisTask != null){
+    public void redo() {
+        if (thisTask != null) {
             theSystem.getPendingTasks().add(thisTask);
             RecordedCommand.getRedoList().removeLast();
             RecordedCommand.getUndoList().add(this);
+            theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
         }
     }
 }

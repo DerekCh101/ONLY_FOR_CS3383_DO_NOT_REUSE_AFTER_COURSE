@@ -90,14 +90,14 @@ public class TaskManagementSystem {
 
             case "addTask":
 
-                if(!ValidateAddTaskInput.validateAddTaskInput(
+                if (!ValidateAddTaskInput.validateAddTaskInput(
                         popupTask.getTaskName(),
                         popupTask.getDuration(),
                         popupTask.getState(),
-                        popupTask.getClickedDate(),
-                        popupTask.getClickedTime(),
-                        popupTask.getSecDate(),
-                        popupTask.getSecTime())){
+                        popupTask.getStartDate(),
+                        popupTask.getStartTime(),
+                        popupTask.getDeadlineDate(),
+                        popupTask.getDeadlineTime())) {
                     return false;
                 }
 
@@ -105,10 +105,10 @@ public class TaskManagementSystem {
                         popupTask.getTaskName(),
                         popupTask.getDuration(),
                         popupTask.getState(),
-                        popupTask.getClickedDate(),
-                        popupTask.getClickedTime(),
-                        popupTask.getSecDate(),
-                        popupTask.getSecTime()
+                        popupTask.getStartDate(),
+                        popupTask.getStartTime(),
+                        popupTask.getDeadlineDate(),
+                        popupTask.getDeadlineTime()
                 );
 
                 if (!addTaskFromGUI.execute()) {

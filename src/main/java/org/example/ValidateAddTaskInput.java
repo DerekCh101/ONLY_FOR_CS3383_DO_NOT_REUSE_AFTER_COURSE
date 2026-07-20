@@ -3,20 +3,16 @@ package org.example;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
-// Fixed task has clickedDate, clickedTime, null, null
-// deadline task has clickedDate, clickedTime, secDate, secTime
-// flexible task has clickedDate, clickedTime, null, null
 public class ValidateAddTaskInput {
 
-    //this didn't check time conflict between tasks
     public static boolean validateAddTaskInput(
             String tName,
             int duration,
             int state,
-            LocalDate clickedDate,
-            LocalTime clickedTime,
-            LocalDate secDate,
-            LocalTime secTime
+            LocalDate startDate,
+            LocalTime startTime,
+            LocalDate deadlineDate,
+            LocalTime deadlineTime
     ) {
 
         TaskManagementSystem theSystem = TaskManagementSystem.getInstance();
@@ -35,53 +31,55 @@ public class ValidateAddTaskInput {
             return false;
         }
 
-        // Basic date/time required
-        if (clickedDate == null || clickedTime == null) {
-            return false;
-        }
-
-        // Cannot be in the past
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now();
-
-        if (clickedDate.isBefore(today)) {
-            return false;
-        }
-
-        if (clickedDate.equals(today) && clickedTime.isBefore(now)) {
-            return false;
-        }
-
-        // State validation
+        // State must be valid
         if (state < 1 || state > 3) {
             return false;
         }
 
+        LocalDate today = LocalDate.now();
+        LocalTime now = LocalTime.now();
+
         switch (state) {
 
-            case 1: // Fixed
-                if (secDate != null || secTime != null) {
+            case 1: // Fixed → must have start, must NOT have deadline
+                if (startDate == null || startTime == null) {
+                    return false;
+                }
+                if (deadlineDate != null || deadlineTime != null) {
+                    return false;
+                }
+
+                // Cannot be in the past
+                if (startDate.isBefore(today)) {
+                    return false;
+                }
+                if (startDate.equals(today) && startTime.isBefore(now)) {
                     return false;
                 }
                 break;
 
-            case 2: // Deadline
-                if (secDate == null || secTime == null) {
+            case 2: // Deadline → must have deadline, must NOT have start
+                if (deadlineDate == null || deadlineTime == null) {
+                    return false;
+                }
+                if (startDate != null || startTime != null) {
                     return false;
                 }
 
-                if (secDate.isBefore(clickedDate)) {
+                // Cannot be in the past
+                if (deadlineDate.isBefore(today)) {
                     return false;
                 }
-
-                if (secDate.equals(clickedDate) &&
-                        secTime.isBefore(clickedTime)) {
+                if (deadlineDate.equals(today) && deadlineTime.isBefore(now)) {
                     return false;
                 }
                 break;
 
-            case 3: // Flexible
-                if (secDate != null || secTime != null) {
+            case 3: // Flexible → must have neither
+                if (startDate != null || startTime != null) {
+                    return false;
+                }
+                if (deadlineDate != null || deadlineTime != null) {
                     return false;
                 }
                 break;

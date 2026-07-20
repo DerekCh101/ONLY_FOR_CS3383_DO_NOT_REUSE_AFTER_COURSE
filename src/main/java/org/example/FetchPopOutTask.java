@@ -8,29 +8,27 @@ public class FetchPopOutTask {
     private String taskName;
     private int duration;
     private int state; // 1 = Fixed, 2 = Deadline, 3 = Flexible
-    private LocalDate clickedDate;
-    private LocalTime clickedTime;
-    private LocalDate secDate;
-    private LocalTime secTime;
+    private LocalDate startDate;
+    private LocalTime startTime;
+    private LocalDate deadlineDate;
+    private LocalTime deadlineTime;
 
     public FetchPopOutTask(String taskName,
                            int duration,
                            int state,
-                           LocalDate clickedDate,
-                           LocalTime clickedTime,
-                           LocalDate secDate,
-                           LocalTime secTime) {
+                           LocalDate startDate,
+                           LocalTime startTime,
+                           LocalDate deadlineDate,
+                           LocalTime deadlineTime) {
 
         this.taskName = taskName;
         this.duration = duration;
         this.state = state;
-        this.clickedDate = clickedDate;
-        this.clickedTime = clickedTime;
-        this.secDate = secDate;
-        this.secTime = secTime;
+        this.startDate = startDate;
+        this.startTime = startTime;
+        this.deadlineDate = deadlineDate;
+        this.deadlineTime = deadlineTime;
     }
-
-    // ==================== GETTERS ====================
 
     public String getTaskName() {
         return taskName;
@@ -44,23 +42,21 @@ public class FetchPopOutTask {
         return state;
     }
 
-    public LocalDate getClickedDate() {
-        return clickedDate;
+    public LocalDate getStartDate() {
+        return startDate;
     }
 
-    public LocalTime getClickedTime() {
-        return clickedTime;
+    public LocalTime getStartTime() {
+        return startTime;
     }
 
-    public LocalDate getSecDate() {
-        return secDate;
+    public LocalDate getDeadlineDate() {
+        return deadlineDate;
     }
 
-    public LocalTime getSecTime() {
-        return secTime;
+    public LocalTime getDeadlineTime() {
+        return deadlineTime;
     }
-
-    // Optional helper methods (cleaner than checking state everywhere)
 
     public boolean isFixed() {
         return state == 1;
@@ -80,10 +76,10 @@ public class FetchPopOutTask {
                 "taskName='" + taskName + '\'' +
                 ", duration=" + duration +
                 ", state=" + state +
-                ", clickedDate=" + clickedDate +
-                ", clickedTime=" + clickedTime +
-                ", secDate=" + secDate +
-                ", secTime=" + secTime +
+                ", startDate=" + startDate +
+                ", startTime=" + startTime +
+                ", deadlineDate=" + deadlineDate +
+                ", deadlineTime=" + deadlineTime +
                 '}';
     }
 }
