@@ -34,7 +34,6 @@ public class SchedulerEngine {
         system.getPlacedTasks().removeAll(system.getPlacedTasks());
         system.getGrid().clear();
         if(tasks.isEmpty()){
-            system.getGrid().clear();
             unscheduledTasks.clear();
             return;
         }
@@ -60,9 +59,9 @@ public class SchedulerEngine {
             int dateCompare = t1.getDeadLineDate()
                     .compareTo(t2.getDeadLineDate());
             if (dateCompare != 0) return dateCompare;//if not equal, then earlier is first
-            return Integer.compare(//if equal i.e.==0,compare the duration, if t1 is greater than t2 then function would return +ve t1 will be placed behind
-                    getDuration(t1),
-                    getDuration(t2)
+            return Integer.compare(//if equal i.e.==0,compare the duration, if t1 is longer than t2 then function would return +ve t1 will be placed earlier, descending order
+                    getDuration(t2),
+                    getDuration(t1)
             );
         });
 
@@ -95,12 +94,13 @@ public class SchedulerEngine {
 
             int hourSearch = task.getStartingTime().getHour() - START_HOUR;
             int duration = getDuration(task);
-            System.out.printf(task.getStartingDate().toString());
             daysGrid.putIfAbsent(task.getStartingDate(), new Day(blockedTime));
 
             Day theDay = daysGrid.get(task.getStartingDate());
 
-            if (theDay.canPlace(hourSearch, duration, true,task.getStartingDate(), task)) {
+            boolean ignoredBlocked = true;
+            boolean ignoreOverload = true;
+            if (theDay.canPlace(task, task.getStartingDate(), hourSearch, ignoredBlocked, ignoreOverload)) {
                 theDay.placeTask(hourSearch, duration, task);
                 system.getPlacedTasks().add(task);
             } else {
@@ -114,7 +114,7 @@ public class SchedulerEngine {
 
         for (Task task : tasks) {
 
-            long lastDay = ChronoUnit.DAYS.between(baseDate, task.getDeadLineDate());
+            long lastDay = ChronoUnit.DAYS.between(baseDate, task.getDeadLineDate()) + 1;
 
             if (lastDay < 0) {
                 unscheduledTasks.add(task);
@@ -125,67 +125,72 @@ public class SchedulerEngine {
                 lastDay = TOTAL_DAYS - 1;
             }
 
-            int duration = getDuration(task);
             boolean placed = false;
-
-            // Pre-loop to find next non-overloaded day
+            boolean ignoredBlocked = false;
+            boolean ignoreOverload = false;
+            // ========== 1st pass: respect blocked + respect overload ==========
             for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(lastDay));
-                 thisDay = thisDay.plusDays(1)) {
-
-                daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                Day theDay = daysGrid.get(thisDay);
-
-                if (theDay != null && !theDay.getOverloadFlag()) {
-                    daySearchCurrently = thisDay;
-                    break;
-                }
-            }
-
-            // First pass: respect blocked time
-            for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(lastDay));
+                 thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
                  thisDay = thisDay.plusDays(1)) {
 
                 daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                 Day theDay = daysGrid.get(thisDay);
 
                 for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay != null && theDay.canPlace(hour, duration, false,thisDay, task)
-                            && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
-
-                        theDay.placeTask(hour, duration, task);
+                    if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
+                            && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
+                        theDay.placeTask(hour, getDuration(task), task);
                         placed = true;
+                        daySearchCurrently = thisDay;
                     }
                 }
             }
-            if(placed){
-                system.getPlacedTasks().add(task);
-            }
 
-            // Second pass: allow blocked override
+            // ========== 2nd pass: ignore blocked + respect overload ==========
             if (!placed) {
+                ignoredBlocked = true;
                 for (LocalDate thisDay = daySearchCurrently;
-                     thisDay.isBefore(baseDate.plusDays(lastDay));
+                     thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
                      thisDay = thisDay.plusDays(1)) {
 
                     daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                     Day theDay = daysGrid.get(thisDay);
 
                     for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                        if (theDay != null && theDay.canPlace(hour, duration, true,thisDay, task)
-                                && respectsDeadlineTime(task, thisDay, hour, duration, lastDay)) {
-                            theDay.placeTask(hour, duration, task);
-                            system.getPlacedTasks().add(task);
+                        if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
+                                && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
+                            theDay.placeTask(hour, getDuration(task), task);
                             placed = true;
+                            daySearchCurrently = thisDay;
                         }
                     }
                 }
             }
 
-
-
+            // ========== 3rd pass: ignore blocked + ignore overload (from baseDate) ==========
             if (!placed) {
+                ignoreOverload = true;
+                for (LocalDate thisDay = baseDate;
+                     thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
+                     thisDay = thisDay.plusDays(1)) {
+
+                    daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
+                    Day theDay = daysGrid.get(thisDay);
+
+                    for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
+                        if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
+                                && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
+                            theDay.placeTask(hour, getDuration(task), task);
+                            placed = true;
+                            daySearchCurrently = thisDay;
+                        }
+                    }
+                }
+            }
+
+            if (placed) {
+                system.getPlacedTasks().add(task);
+            } else {
                 unscheduledTasks.add(task);
             }
         }
@@ -224,8 +229,10 @@ public class SchedulerEngine {
                 if(thisDay == baseDate){
                     hourIdx = LocalTime.now().getHour() - getStartingHour();
                 }
+                boolean ignoredBlocked = false;
+                boolean ignoreOverload = false;
                 for (int hour = hourIdx; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay != null && theDay.canPlace(hour, duration, false,thisDay, task)) {
+                    if (theDay != null && theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)) {
                         theDay.placeTask(hour, duration, task);
                         placed = true;
                         system.getPlacedTasks().add(task);

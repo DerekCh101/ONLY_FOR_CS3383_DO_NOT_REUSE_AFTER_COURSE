@@ -43,12 +43,13 @@
                 </MenuBar>
 
                 <HBox alignment="CENTER_LEFT" spacing="5" style="-fx-padding: 8;">
-                <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
-                <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
-                <HBox prefHeight="25.0" prefWidth="451.0" />
-                <Button mnemonicParsing="false" text="Monthly View" />
+                    <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
+                    <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
+                    <HBox prefHeight="25.0" prefWidth="451.0" />
+                    <Button mnemonicParsing="false" text="Monthly View" />
                     <Button fx:id="btnPrev" text="Prev Week" />
                     <Button fx:id="btnNext" text="Next Week" />
+                    <Button fx:id="btnAdd" text="Add Task" />
 
                     <MenuButton text="Action">
                         <items>

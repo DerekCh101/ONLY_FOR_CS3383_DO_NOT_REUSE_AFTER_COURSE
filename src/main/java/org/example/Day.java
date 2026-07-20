@@ -20,7 +20,12 @@ public class Day {
     }
 
     // Main improved version - validates current time on today
-    public boolean canPlace(int hour, int duration, boolean ignoreBlocked, LocalDate thisDay, Task task) {
+    public boolean canPlace(Task task, LocalDate thisDay, int hour,
+                            boolean ignoreBlocked, boolean ignoreOverload) {
+
+        int duration = task.getDurationHours();
+        if (duration <= 0) duration = 2;
+
         if (hour < 0 || hour + duration > HOURS_PER_DAY) {
             return false;
         }
@@ -34,17 +39,20 @@ public class Day {
             }
         }
 
-        if (!ignoreBlocked && overloadFlag) {//deadline task can get in overload day
+        // Overload check
+        if (!ignoreOverload && overloadFlag) {
             return false;
         }
 
         for (int i = 0; i < duration; i++) {
             int slot = hour + i;
 
+            // Time conflict with another task
             if (todayTaskGrid[slot] != null && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
             }
 
+            // Blocked time check
             if (!ignoreBlocked) {
                 LocalTime checkTime = LocalTime.of(START_HOUR + slot, 0);
                 if (blockedTime.isBlocked(checkTime)) {
