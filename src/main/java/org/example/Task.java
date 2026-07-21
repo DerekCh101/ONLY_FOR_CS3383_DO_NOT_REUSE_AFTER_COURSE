@@ -17,6 +17,8 @@ public class Task {
     private boolean isFixed;
     private boolean isFlexible;
     private boolean hasDeadline;
+    private LocalDate placedDate;
+    private LocalTime placedTime;
     private int state;
 //        while (repository.existsById(uuid)) {   // Very rare loop
 //            uuid = UUID.randomUUID();
@@ -76,6 +78,8 @@ public class Task {
     public boolean isFixedTime() { return isFixed;}
     public boolean isFlexible(){ return isFlexible;}
     public boolean hasDeadline(){ return hasDeadline;}
+    public LocalDate getPlacedDate(){return placedDate;}
+    public LocalTime getPlacedTime(){return placedTime;}
 
 
     @Override

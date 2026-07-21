@@ -40,33 +40,33 @@ public class SchedulerController {
         system.attachGUI(this);
         baseDate = LocalDate.now();
 
-        btnPrev.setOnAction(e -> { weekOffset--; renderGrid(); });
-        btnNext.setOnAction(e -> { weekOffset++; renderGrid(); });
+        btnPrev.setOnAction(e -> { weekOffset--; refresh(); });
+        btnNext.setOnAction(e -> { weekOffset++; refresh(); });
 
         btnImport.setOnAction(e -> {
             system.command("addTaskFromFile");
-            renderGrid();
+            refresh();
         });
 
         btnRun.setOnAction(e -> {
             system.command("runScheduler");
             system.command("printAllTask");
-            renderGrid();
+            refresh();
         });
 
         btnUndo.setOnAction(e -> {
             system.command("undo");
             system.command("printAllTask");
-            renderGrid();
+            refresh();
         });
 
         btnRedo.setOnAction(e -> {
             system.command("redo");
             system.command("printAllTask");
-            renderGrid();
+            refresh();
         });
 
-        btnAdd.setOnAction(e -> showFreeAddTaskPopup());
+        btnAdd.setOnAction(e -> showTaskPopup(false, null, -1));
 
         Platform.runLater(this::renderGrid);
     }
@@ -106,7 +106,7 @@ public class SchedulerController {
 
                 cell.setOnMouseEntered(e -> cell.setStyle("-fx-background-color: #ffccdd; -fx-border-color: black;"));
                 cell.setOnMouseExited(e -> cell.setStyle("-fx-background-color: transparent; -fx-border-color: black;"));
-                cell.setOnMouseClicked(e -> showTaskInputPopup(date, hourIndex));
+                cell.setOnMouseClicked(e -> showTaskPopup(true, date, hourIndex));
 
                 grid.add(cell, col, row);
             }
@@ -242,9 +242,13 @@ public class SchedulerController {
         return box;
     }
 
-    // ==================== Free Add Popup ====================
-
-    private void showFreeAddTaskPopup() {
+    // ==================== MERGED POPUP ====================
+    /**
+     * @param fromGrid     true = user clicked a cell, false = clicked Add button
+     * @param clickedDate  only used when fromGrid == true
+     * @param hourIndex    only used when fromGrid == true
+     */
+    private void showTaskPopup(boolean fromGrid, LocalDate clickedDate, int hourIndex) {
         Scene scene = root.getScene();
         removeMainEscHandler(scene);
 
@@ -252,15 +256,17 @@ public class SchedulerController {
         root.getChildren().add(currentDimmedOverlay);
 
         currentPopup = new Pane();
-        currentPopup.setPrefSize(480, 480);
+        currentPopup.setPrefSize(480, 500);
         GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
         root.getChildren().add(currentPopup);
 
         VBox content = GuiHelper.createWhiteBox();
 
-        Label title = new Label("Add New Task");
+        // Title
+        Label title = new Label(fromGrid ? "New Task @ " + clickedDate : "Add New Task");
         title.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
 
+        // Common fields
         TextField nameField = new TextField();
         nameField.setPromptText("Task name");
 
@@ -277,27 +283,35 @@ public class SchedulerController {
         fixedRadio.setSelected(true);
         HBox typeBox = new HBox(12, fixedRadio, deadlineRadio, flexibleRadio);
 
-        // ===== Fixed section =====
+        // ===== Fixed section (only needed in free-add mode) =====
         DatePicker startDatePicker = new DatePicker(LocalDate.now());
         ComboBox<String> startHourBox = createHourCombo(6, 22, 9);
-
         HBox startRow = new HBox(10, startDatePicker, startHourBox);
         VBox fixedBox = new VBox(6, new Label("Start Date & Time:"), startRow);
 
         // ===== Deadline section =====
         DatePicker deadlineDatePicker = new DatePicker(LocalDate.now());
         ComboBox<String> deadlineHourBox = createHourCombo(6, 23, 18);
-
         HBox deadlineRow = new HBox(10, deadlineDatePicker, deadlineHourBox);
         VBox deadlineBox = new VBox(6, new Label("Deadline Date & Time:"), deadlineRow);
         deadlineBox.setVisible(false);
         deadlineBox.setManaged(false);
 
+        // Show/hide logic
+        if (fromGrid) {
+            // In grid mode we don't show the Fixed date/time pickers
+            fixedBox.setVisible(false);
+            fixedBox.setManaged(false);
+        }
+
         typeGroup.selectedToggleProperty().addListener((o, old, neo) -> {
             boolean isFixed = neo == fixedRadio;
             boolean isDeadline = neo == deadlineRadio;
-            fixedBox.setVisible(isFixed);
-            fixedBox.setManaged(isFixed);
+
+            if (!fromGrid) {
+                fixedBox.setVisible(isFixed);
+                fixedBox.setManaged(isFixed);
+            }
             deadlineBox.setVisible(isDeadline);
             deadlineBox.setManaged(isDeadline);
         });
@@ -319,6 +333,7 @@ public class SchedulerController {
         currentPopup.getChildren().add(content);
         popupIsOpen = true;
 
+        // ========== SAVE LOGIC ==========
         saveBtn.setOnAction(e -> {
             String name = nameField.getText().trim();
             if (name.isEmpty()) {
@@ -348,13 +363,20 @@ public class SchedulerController {
 
             try {
                 if (isFixed) {
-                    startDate = startDatePicker.getValue();
-                    if (startDate == null) {
-                        showAlertPopup(scene, "Please select a start date.");
-                        return;
+                    if (fromGrid) {
+                        // Use the clicked cell
+                        startDate = clickedDate;
+                        startTime = LocalTime.of(hourIndex + system.getEngine().getStartingHour(), 0);
+                    } else {
+                        // User must pick
+                        startDate = startDatePicker.getValue();
+                        if (startDate == null) {
+                            showAlertPopup(scene, "Please select a start date.");
+                            return;
+                        }
+                        int hour = Integer.parseInt(startHourBox.getValue().substring(0, 2));
+                        startTime = LocalTime.of(hour, 0);
                     }
-                    int hour = Integer.parseInt(startHourBox.getValue().substring(0, 2));
-                    startTime = LocalTime.of(hour, 0);
 
                     if (startDate.isBefore(today) || (startDate.equals(today) && startTime.isBefore(now))) {
                         showAlertPopup(scene, "Cannot create Fixed task in the past.");
@@ -379,143 +401,8 @@ public class SchedulerController {
                 return;
             }
 
-            int state = isFixed ? 1 : (isDeadline ? 2 : 3);
-            FetchPopOutTask pop = new FetchPopOutTask(name, duration, state, startDate, startTime, deadlineDate, deadlineTime);
-            system.fetchPopupTask(pop);
-
-            if (!system.command("addTask")) {
-                showAlertPopup(scene, "Failed to create task.");
-                return;
-            }
-
-            renderGrid();
-            closeEverything(scene);
-        });
-
-        cancelBtn.setOnAction(e -> closeEverything(scene));
-        setupEscHandler(scene);
-    }
-
-    // ==================== Grid Click Popup ====================
-
-    private void showTaskInputPopup(LocalDate clickedDate, int hourIndex) {
-        Scene scene = root.getScene();
-        removeMainEscHandler(scene);
-
-        currentDimmedOverlay = GuiHelper.createDimmedOverlay(root);
-        root.getChildren().add(currentDimmedOverlay);
-
-        currentPopup = new Pane();
-        currentPopup.setPrefSize(460, 420);
-        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
-        root.getChildren().add(currentPopup);
-
-        VBox content = GuiHelper.createWhiteBox();
-
-        Label title = new Label("New Task @ " + clickedDate);
-        title.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
-
-        TextField nameField = new TextField();
-        nameField.setPromptText("Task name");
-
-        TextField durationField = new TextField("2");
-        durationField.setPrefWidth(70);
-
-        ToggleGroup typeGroup = new ToggleGroup();
-        RadioButton fixedRadio = new RadioButton("Fixed");
-        RadioButton deadlineRadio = new RadioButton("Deadline");
-        RadioButton flexibleRadio = new RadioButton("Flexible");
-        fixedRadio.setToggleGroup(typeGroup);
-        deadlineRadio.setToggleGroup(typeGroup);
-        flexibleRadio.setToggleGroup(typeGroup);
-        fixedRadio.setSelected(true);
-        HBox typeBox = new HBox(12, fixedRadio, deadlineRadio, flexibleRadio);
-
-        // Deadline row (DatePicker + Hour on the same line)
-        DatePicker deadlineDatePicker = new DatePicker(LocalDate.now());
-        ComboBox<String> deadlineHourBox = createHourCombo(6, 23, 18);
-        HBox deadlineRow = new HBox(10, deadlineDatePicker, deadlineHourBox);
-
-        VBox deadlineBox = new VBox(6, new Label("Deadline Date & Time:"), deadlineRow);
-        deadlineBox.setVisible(false);
-        deadlineBox.setManaged(false);
-
-        typeGroup.selectedToggleProperty().addListener((o, old, neo) -> {
-            boolean show = neo == deadlineRadio;
-            deadlineBox.setVisible(show);
-            deadlineBox.setManaged(show);
-        });
-
-        Button saveBtn = new Button("Save Task");
-        Button cancelBtn = new Button("Cancel");
-        HBox btnBox = new HBox(10, saveBtn, cancelBtn);
-
-        content.getChildren().addAll(
-                title,
-                new Label("Task Name:"), nameField,
-                new Label("Duration (hours):"), durationField,
-                new Label("Type:"), typeBox,
-                deadlineBox,
-                btnBox
-        );
-
-        currentPopup.getChildren().add(content);
-        popupIsOpen = true;
-
-        saveBtn.setOnAction(e -> {
-            String name = nameField.getText().trim();
-            if (name.isEmpty()) {
-                showAlertPopup(scene, "Task name cannot be empty.");
-                return;
-            }
-
-            int duration;
-            try {
-                duration = Integer.parseInt(durationField.getText().trim());
-                if (duration <= 0) throw new Exception();
-            } catch (Exception ex) {
-                showAlertPopup(scene, "Duration must be a positive number.");
-                return;
-            }
-
-            boolean isFixed = fixedRadio.isSelected();
-            boolean isDeadline = deadlineRadio.isSelected();
-
-            LocalDate nowDate = LocalDate.now();
-            LocalTime nowTime = LocalTime.now();
-            LocalTime clickedTime = LocalTime.of(hourIndex + system.getEngine().getStartingHour(), 0);
-
-            if (isFixed) {
-                if (clickedDate.isBefore(nowDate) || (clickedDate.equals(nowDate) && clickedTime.isBefore(nowTime))) {
-                    showAlertPopup(scene, "Cannot add Fixed task into the past.");
-                    return;
-                }
-            }
-
-            LocalDate startDate = null;
-            LocalTime startTime = null;
-            LocalDate deadlineDate = null;
-            LocalTime deadlineTime = null;
-
-            if (isFixed) {
-                startDate = clickedDate;
-                startTime = clickedTime;
-            } else if (isDeadline) {
-                deadlineDate = deadlineDatePicker.getValue();
-                if (deadlineDate == null) {
-                    showAlertPopup(scene, "Please select a deadline date.");
-                    return;
-                }
-                int hour = Integer.parseInt(deadlineHourBox.getValue().substring(0, 2));
-                deadlineTime = LocalTime.of(hour, 0);
-
-                if (deadlineDate.isBefore(nowDate) || (deadlineDate.equals(nowDate) && deadlineTime.isBefore(nowTime))) {
-                    showAlertPopup(scene, "Cannot set deadline in the past.");
-                    return;
-                }
-            }
-
-            if (isFixed) {
+            // Conflict check only when coming from grid + Fixed
+            if (fromGrid && isFixed) {
                 for (int i = 0; i < duration; i++) {
                     int checkHour = hourIndex + i;
                     if (checkHour >= system.getEngine().getTotalHours()) {
@@ -531,7 +418,11 @@ public class SchedulerController {
             }
 
             int state = isFixed ? 1 : (isDeadline ? 2 : 3);
-            FetchPopOutTask pop = new FetchPopOutTask(name, duration, state, startDate, startTime, deadlineDate, deadlineTime);
+            FetchPopOutTask pop = new FetchPopOutTask(
+                    name, duration, state,
+                    startDate, startTime,
+                    deadlineDate, deadlineTime
+            );
             system.fetchPopupTask(pop);
 
             if (!system.command("addTask")) {
