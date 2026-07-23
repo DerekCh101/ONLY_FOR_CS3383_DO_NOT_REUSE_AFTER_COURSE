@@ -17,9 +17,13 @@ public class AddTaskWithFile implements Command {
     private TaskManagementSystem theSystem;
 
     public AddTaskWithFile(TaskManagementSystem theSystem) throws FileNotFoundException {
-
         this.theSystem = theSystem;
+
         InputStream input = getClass().getClassLoader().getResourceAsStream("taskInput1.txt");
+        if (input == null) {
+            throw new FileNotFoundException("taskInput1.txt not found in resources");
+        }
+
         Scanner file = new Scanner(input);
 
         DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
@@ -43,7 +47,11 @@ public class AddTaskWithFile implements Command {
             if (file.hasNextLine()) {
                 String durationString = file.nextLine().trim();
                 if (!durationString.isBlank()) {
-                    duration = Integer.parseInt(durationString);
+                    try {
+                        duration = Integer.parseInt(durationString);
+                    } catch (NumberFormatException e) {
+                        duration = 2;
+                    }
                 }
             }
 
@@ -51,7 +59,11 @@ public class AddTaskWithFile implements Command {
             if (file.hasNextLine()) {
                 String stateString = file.nextLine().trim();
                 if (!stateString.isBlank()) {
-                    state = Integer.parseInt(stateString);
+                    try {
+                        state = Integer.parseInt(stateString);
+                    } catch (NumberFormatException e) {
+                        state = 3; // default to Flexible
+                    }
                 }
             }
 
@@ -60,49 +72,71 @@ public class AddTaskWithFile implements Command {
                 if (file.hasNextLine()) {
                     String dateStr = file.nextLine().trim();
                     if (!dateStr.isBlank()) {
-                        startDate = LocalDate.parse(dateStr, dateFormatter);
+                        try {
+                            startDate = LocalDate.parse(dateStr, dateFormatter);
+                        } catch (Exception e) {
+                            startDate = null;
+                        }
                     }
                 }
                 if (file.hasNextLine()) {
                     String timeStr = file.nextLine().trim();
                     if (!timeStr.isBlank()) {
-                        startTime = LocalTime.parse(timeStr, timeFormatter);
+                        try {
+                            startTime = LocalTime.parse(timeStr, timeFormatter);
+                        } catch (Exception e) {
+                            startTime = null;
+                        }
                     }
                 }
             } else if (state == 2) { // Deadline → needs deadline date + time
                 if (file.hasNextLine()) {
                     String dateStr = file.nextLine().trim();
                     if (!dateStr.isBlank()) {
-                        deadlineDate = LocalDate.parse(dateStr, dateFormatter);
+                        try {
+                            deadlineDate = LocalDate.parse(dateStr, dateFormatter);
+                        } catch (Exception e) {
+                            deadlineDate = null;
+                        }
                     }
                 }
                 if (file.hasNextLine()) {
                     String timeStr = file.nextLine().trim();
                     if (!timeStr.isBlank()) {
-                        deadlineTime = LocalTime.parse(timeStr, timeFormatter);
+                        try {
+                            deadlineTime = LocalTime.parse(timeStr, timeFormatter);
+                        } catch (Exception e) {
+                            deadlineTime = LocalTime.of(23, 59);
+                        }
+                    } else {
+                        deadlineTime = LocalTime.of(23, 59);
                     }
                 }
             }
             // state 3 (Flexible) → nothing more to read
 
             try {
-                ValidateAddTaskInput.validateAddTaskInput(
+                boolean valid = ValidateAddTaskInput.validateAddTaskInput(
                         taskName, duration, state,
                         startDate, startTime, deadlineDate, deadlineTime);
 
-                Task thisTask = new Task(
-                        taskName, duration, state,
-                        startDate, startTime, deadlineDate, deadlineTime);
+                if (valid) {
+                    Task thisTask = new Task(
+                            taskName, duration, state,
+                            startDate, startTime, deadlineDate, deadlineTime);
 
-                addedTaskList.add(thisTask);
+                    addedTaskList.add(thisTask);
+                } else {
+                    System.out.printf("Validation failed, %s is not created.\n", taskName);
+                }
 
-            } catch (Exception ignored) {
-                System.out.printf("\nSome thing went wrong, %s is not created.\n", taskName);
+            } catch (Exception e) {
+                System.out.printf("Something went wrong, %s is not created.\n", taskName);
             }
         }
 
         file.close();
-        System.out.println("File loading complete.");
+        System.out.println("File loading complete. Tasks prepared: " + addedTaskList.size());
     }
 
     @Override
@@ -119,9 +153,20 @@ public class AddTaskWithFile implements Command {
     @Override
     public void undo() {
         for (Task task : addedTaskList) {
+            theSystem.getPendingTasks().remove(task);
             theSystem.getPlacedTasks().remove(task);
+            theSystem.getUnscheduledTasks().remove(task);
+
+            // Also clear from grid
+            for (var day : theSystem.getGrid().values()) {
+                Task[] slots = day.returnDayGrid();
+                for (int i = 0; i < slots.length; i++) {
+                    if (slots[i] == task) {
+                        slots[i] = null;
+                    }
+                }
+            }
         }
-        theSystem.getEngine().scheduleTasks(theSystem.getPlacedTasks());
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
@@ -131,7 +176,6 @@ public class AddTaskWithFile implements Command {
         for (Task task : addedTaskList) {
             theSystem.getPendingTasks().add(task);
         }
-        theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
         RecordedCommand.getRedoList().removeLast();
         RecordedCommand.getUndoList().add(this);
     }

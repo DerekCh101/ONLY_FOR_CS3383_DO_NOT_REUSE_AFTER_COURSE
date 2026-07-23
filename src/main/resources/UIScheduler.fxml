@@ -12,14 +12,17 @@
 <?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.VBox?>
-
 <?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.Pane?>
 
-<StackPane fx:id="root" prefHeight="700.0" prefWidth="1200.0" xmlns="http://javafx.com/javafx/23" xmlns:fx="http://javafx.com/fxml/1" fx:controller="org.example.SchedulerController">
+<StackPane fx:id="root"
+           prefHeight="700.0" prefWidth="1200.0"
+           xmlns="http://javafx.com/javafx/23"
+           xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="org.example.GUI.SchedulerController">
 
-    <BorderPane>
+    <BorderPane fx:id="borderPane">
 
-        <!-- Top Toolbar -->
         <top>
             <VBox>
                 <MenuBar>
@@ -45,7 +48,7 @@
                 <HBox alignment="CENTER_LEFT" spacing="5" style="-fx-padding: 8;">
                     <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
                     <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
-                    <HBox prefHeight="25.0" prefWidth="451.0" />
+                    <HBox HBox.hgrow="ALWAYS" />
                     <Button mnemonicParsing="false" text="Monthly View" />
                     <Button fx:id="btnPrev" text="Prev Week" />
                     <Button fx:id="btnNext" text="Next Week" />
@@ -61,19 +64,27 @@
             </VBox>
         </top>
 
-        <!-- Main Content: Calendar + Side Panel -->
         <center>
-            <SplitPane dividerPositions="0.75" orientation="HORIZONTAL">
+            <SplitPane fx:id="mainSplit" dividerPositions="0.82" orientation="HORIZONTAL">
 
-                <!-- Left: Big Calendar -->
-                <ScrollPane fitToHeight="true" fitToWidth="true">
-                    <GridPane fx:id="grid" hgap="1" style="-fx-border-color: black;" vgap="1" />
-                </ScrollPane>
+                <!-- Calendar + week-edge panes -->
+                <BorderPane>
+                    <left>
+                        <Pane fx:id="prevPane" style="-fx-background-color: #e8e8e8;" />
+                    </left>
+                    <center>
+                        <ScrollPane fitToHeight="true" fitToWidth="true">
+                            <GridPane fx:id="grid" hgap="1" vgap="1" style="-fx-border-color: black;" />
+                        </ScrollPane>
+                    </center>
+                    <right>
+                        <Pane fx:id="nextPane" style="-fx-background-color: #e8e8e8;" />
+                    </right>
+                </BorderPane>
 
-                <!-- Right: Side Panel -->
-                <VBox fx:id="sidePanelContainer" prefWidth="250.0" spacing="10" style="-fx-padding: 10;">
+                <!-- Side panel -->
+                <VBox fx:id="sidePanelContainer" spacing="10" style="-fx-padding: 10;">
                     <Label fx:id="sidePanel" style="-fx-font-weight: bold;" text="Unscheduled Tasks:" />
-                    <!-- Add more controls here later (ListView, etc.) -->
                 </VBox>
 
             </SplitPane>

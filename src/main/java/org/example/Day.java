@@ -1,6 +1,7 @@
 package org.example;
 
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalTime;
 
 public class Day {
 
@@ -12,14 +13,13 @@ public class Day {
     private static final int START_HOUR = 6;
     private static final int HOURS_PER_DAY = 17;
 
-    public Day(BlockedTimePeriod blockedTime){
+    public Day(BlockedTimePeriod blockedTime) {
         this.todayTaskGrid = new Task[HOURS_PER_DAY];
         this.blockedTime = blockedTime;
         this.availableHours = HOURS_PER_DAY - blockedTime.returnTotalBlockedTime();
         this.overloadFlag = false;
     }
 
-    // Main improved version - validates current time on today
     public boolean canPlace(Task task, LocalDate thisDay, int hour,
                             boolean ignoreBlocked, boolean ignoreOverload) {
 
@@ -63,7 +63,6 @@ public class Day {
         return true;
     }
 
-
     public void placeTask(int hour, int duration, Task task) {
         for (int i = 0; i < duration; i++) {
             todayTaskGrid[hour + i] = task;
@@ -74,11 +73,15 @@ public class Day {
         }
     }
 
-    public Task[] returnDayGrid(){
+    public Task[] returnDayGrid() {
         return todayTaskGrid;
     }
 
-    public boolean getOverloadFlag(){
+    public boolean getOverloadFlag() {
         return overloadFlag;
+    }
+
+    public int getAvailableHours() {
+        return availableHours;
     }
 }

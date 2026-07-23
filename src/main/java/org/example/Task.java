@@ -1,91 +1,134 @@
 package org.example;
 
-import java.util.UUID;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.UUID;
 
 public class Task {
 
-    private UUID uuid;
     private final String id;
     private String taskName;
-    private LocalDate deadLineDate; // optional
-    private LocalTime deadLineTime; // optional
-    private int durationHours;      // optional, default 2
-    private LocalDate startingDate; // optional
-    private LocalTime startingTime; // optional
-    private boolean isFixed;
-    private boolean isFlexible;
-    private boolean hasDeadline;
+    private int durationHours;
+    private int state; // 1 = Fixed, 2 = Deadline, 3 = Flexible
+
+    private LocalDate startingDate;   // only for Fixed
+    private LocalTime startingTime;   // only for Fixed
+    private LocalDate deadLineDate;   // only for Deadline
+    private LocalTime deadLineTime;   // only for Deadline
+
+    // Actual position on the grid (used by all types)
     private LocalDate placedDate;
     private LocalTime placedTime;
-    private int state;
-//        while (repository.existsById(uuid)) {   // Very rare loop
-//            uuid = UUID.randomUUID();
-//        }
 
-    public Task(String tName, int duration, int state,
-                LocalDate startDate, LocalTime startTime,
-                LocalDate deadlineDate, LocalTime deadlineTime) {
+    public Task(String taskName,
+                int durationHours,
+                int state,
+                LocalDate startingDate,
+                LocalTime startingTime,
+                LocalDate deadLineDate,
+                LocalTime deadLineTime) {
 
-        this.uuid = UUID.randomUUID();
-        this.id = uuid.toString();
-        this.taskName = tName;
-        this.durationHours = duration;
+        this.id = UUID.randomUUID().toString();
+        this.taskName = taskName;
+        this.durationHours = durationHours;
         this.state = state;
-
-        if (state == 1) { // Fixed
-            isFixed = true;
-            hasDeadline = false;
-            isFlexible = false;
-            this.startingDate = startDate;
-            this.startingTime = startTime;
-            this.deadLineDate = null;
-            this.deadLineTime = null;
-        } else if (state == 2) { // Deadline
-            isFixed = false;
-            hasDeadline = true;
-            isFlexible = false;
-            this.startingDate = null;
-            this.startingTime = null;
-            this.deadLineDate = deadlineDate;
-            this.deadLineTime = deadlineTime;
-        } else if (state == 3) { // Flexible
-            isFixed = false;
-            hasDeadline = false;
-            isFlexible = true;
-            this.startingDate = null;
-            this.startingTime = null;
-            this.deadLineDate = null;
-            this.deadLineTime = null;
-        }
+        this.startingDate = startingDate;
+        this.startingTime = startingTime;
+        this.deadLineDate = deadLineDate;
+        this.deadLineTime = deadLineTime;
     }
 
+    // ==================== Getters ====================
 
-
-    public String getTaskName() {return taskName;}
-    public LocalDate getDeadLineDate() {return deadLineDate;}
-    public LocalTime getDeadLineTime() { return deadLineTime;}
-    public int getDurationHours() { return durationHours;}
-    public LocalDate getStartingDate() { return startingDate;}
-    public LocalTime getStartingTime() { return startingTime;}
-
-
-    public String getID(){
+    public String getID() {
         return id;
     }
 
-    public boolean isFixedTime() { return isFixed;}
-    public boolean isFlexible(){ return isFlexible;}
-    public boolean hasDeadline(){ return hasDeadline;}
-    public LocalDate getPlacedDate(){return placedDate;}
-    public LocalTime getPlacedTime(){return placedTime;}
+    public String getTaskName() {
+        return taskName;
+    }
 
+    public int getDurationHours() {
+        return durationHours;
+    }
+
+    public int getState() {
+        return state;
+    }
+
+    public LocalDate getStartingDate() {
+        return startingDate;
+    }
+
+    public LocalTime getStartingTime() {
+        return startingTime;
+    }
+
+    public LocalDate getDeadLineDate() {
+        return deadLineDate;
+    }
+
+    public LocalTime getDeadLineTime() {
+        return deadLineTime;
+    }
+
+    public LocalDate getPlacedDate() {
+        return placedDate;
+    }
+
+    public LocalTime getPlacedTime() {
+        return placedTime;
+    }
+
+    // ==================== Setters ====================
+
+    public void setPlacedDate(LocalDate placedDate) {
+        this.placedDate = placedDate;
+    }
+
+    public void setPlacedTime(LocalTime placedTime) {
+        this.placedTime = placedTime;
+    }
+
+    public void setTaskName(String taskName) {
+        this.taskName = taskName;
+    }
+
+    public void setDurationHours(int durationHours) {
+        this.durationHours = durationHours;
+    }
+
+    // ==================== Type helpers ====================
+
+    public boolean isFixedTime() {
+        return state == 1;
+    }
+
+    public boolean hasDeadline() {
+        return state == 2;
+    }
+
+    public boolean isFlexible() {
+        return state == 3;
+    }
+
+    public void setStartingDate(LocalDate startingDate) {
+        this.startingDate = startingDate;
+    }
+
+    public void setStartingTime(LocalTime startingTime) {
+        this.startingTime = startingTime;
+    }
 
     @Override
     public String toString() {
-        return String.format("{%s},{%d},{%d},{%s},{%s},{%s},{%s}",
-                taskName, durationHours, state, startingDate, startingTime,
-                deadLineDate,deadLineTime);
+        return "Task{" +
+                "name='" + taskName + '\'' +
+                ", duration=" + durationHours +
+                ", state=" + state +
+                ", start=" + startingDate + " " + startingTime +
+                ", deadline=" + deadLineDate + " " + deadLineTime +
+                ", placed=" + placedDate + " " + placedTime +
+                '}';
     }
 }

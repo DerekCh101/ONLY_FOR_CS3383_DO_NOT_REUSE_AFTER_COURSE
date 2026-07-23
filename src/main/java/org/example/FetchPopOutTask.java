@@ -8,10 +8,17 @@ public class FetchPopOutTask {
     private String taskName;
     private int duration;
     private int state; // 1 = Fixed, 2 = Deadline, 3 = Flexible
+
     private LocalDate startDate;
     private LocalTime startTime;
     private LocalDate deadlineDate;
     private LocalTime deadlineTime;
+
+    // These two are used when the task is created from a grid click
+    private LocalDate placedDate;
+    private LocalTime placedTime;
+
+    private Task task; //used when wanted to clear a task
 
     public FetchPopOutTask(String taskName,
                            int duration,
@@ -19,7 +26,9 @@ public class FetchPopOutTask {
                            LocalDate startDate,
                            LocalTime startTime,
                            LocalDate deadlineDate,
-                           LocalTime deadlineTime) {
+                           LocalTime deadlineTime,
+                           LocalDate placedDate,
+                           LocalTime placedTime) {
 
         this.taskName = taskName;
         this.duration = duration;
@@ -28,14 +37,35 @@ public class FetchPopOutTask {
         this.startTime = startTime;
         this.deadlineDate = deadlineDate;
         this.deadlineTime = deadlineTime;
+        this.placedDate = placedDate;
+        this.placedTime = placedTime;
     }
 
+    // Convenience constructor when placedDate/Time are not needed
+    public FetchPopOutTask(String taskName,
+                           int duration,
+                           int state,
+                           LocalDate startDate,
+                           LocalTime startTime,
+                           LocalDate deadlineDate,
+                           LocalTime deadlineTime) {
+        this(taskName, duration, state, startDate, startTime, deadlineDate, deadlineTime, null, null);
+    }
+
+    //when wanted to clear a task from GUI
+    public FetchPopOutTask(Task task){
+        this.task = task;
+    }
     public String getTaskName() {
         return taskName;
     }
 
     public int getDuration() {
         return duration;
+    }
+
+    public Task getTask() {
+        return task;
     }
 
     public int getState() {
@@ -56,6 +86,14 @@ public class FetchPopOutTask {
 
     public LocalTime getDeadlineTime() {
         return deadlineTime;
+    }
+
+    public LocalDate getPlacedDate() {
+        return placedDate;
+    }
+
+    public LocalTime getPlacedTime() {
+        return placedTime;
     }
 
     public boolean isFixed() {
@@ -80,6 +118,8 @@ public class FetchPopOutTask {
                 ", startTime=" + startTime +
                 ", deadlineDate=" + deadlineDate +
                 ", deadlineTime=" + deadlineTime +
+                ", placedDate=" + placedDate +
+                ", placedTime=" + placedTime +
                 '}';
     }
 }

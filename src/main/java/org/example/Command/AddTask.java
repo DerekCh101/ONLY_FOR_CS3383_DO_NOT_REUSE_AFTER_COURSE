@@ -1,131 +1,152 @@
 package org.example.Command;
 
-import org.example.Task;
-import org.example.TaskManagementSystem;
-import org.example.ValidateAddTaskInput;
-
-import java.util.*;
-import java.time.format.DateTimeFormatter;
+import org.example.*;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
-public class AddTask extends RecordedCommand {
+public class AddTask implements Command {
 
-    private Task thisTask;
-    private TaskManagementSystem theSystem;
+    private final TaskManagementSystem theSystem;
+    private final Task theTask;
+    private final LocalDate placedDate;
+    private final LocalTime placedTime;
+
+    /** true when this task was created from Add button as Deadline/Flexible and we auto-scheduled it */
+    private boolean autoScheduled = false;
+
+    public AddTask(String taskName, int duration, int state,
+                   LocalDate startDate, LocalTime startTime,
+                   LocalDate deadlineDate, LocalTime deadlineTime,
+                   LocalDate placedDate, LocalTime placedTime) {
+
+        this.theSystem = TaskManagementSystem.getInstance();
+        this.placedDate = placedDate;
+        this.placedTime = placedTime;
+
+        this.theTask = new Task(
+                taskName, duration, state,
+                startDate, startTime,
+                deadlineDate, deadlineTime
+        );
+    }
 
     public AddTask(String taskName, int duration, int state,
                    LocalDate startDate, LocalTime startTime,
                    LocalDate deadlineDate, LocalTime deadlineTime) {
-
-        theSystem = TaskManagementSystem.getInstance();
-
-        if (duration <= 0) {
-            duration = 2;
-        }
-
-        try {
-            ValidateAddTaskInput.validateAddTaskInput(
-                    taskName, duration, state,
-                    startDate, startTime, deadlineDate, deadlineTime);
-
-            thisTask = new Task(taskName, duration, state,
-                    startDate, startTime, deadlineDate, deadlineTime);
-
-        } catch (Exception ignored) {
-            System.out.printf("\nSome thing went wrong, %s is not created.\n", taskName);
-        }
+        this(taskName, duration, state, startDate, startTime, deadlineDate, deadlineTime, null, null);
     }
 
-    // ===== CLI version (for debugging) =====
-    public AddTask(TaskManagementSystem theSystem) {
-        this.theSystem = theSystem;
-        Scanner scanner = new Scanner(System.in);
+    private void doAdd() {
+        if (placedDate != null && placedTime != null) {
+            // Created by clicking a grid cell → place immediately
+            int hourIndex = placedTime.getHour() - theSystem.getEngine().getStartingHour();
+            int duration = theTask.getDurationHours();
+            if (duration <= 0) duration = 2;
 
-        System.out.println("Enter the task name:");
-        String taskName = scanner.nextLine().trim();
-        while (taskName.isBlank()) {
-            System.out.println("Task name cannot be blank. Enter again:");
-            taskName = scanner.nextLine().trim();
-        }
+            theSystem.getGrid().putIfAbsent(placedDate, new Day(theSystem.getBlockedTime()));
+            Day day = theSystem.getGrid().get(placedDate);
 
-        DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
-        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH-mm");
+            boolean canPlace = true;
+            for (int i = 0; i < duration; i++) {
+                int h = hourIndex + i;
+                if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
+                    canPlace = false;
+                    break;
+                }
+            }
 
-        LocalDate startDate = null;
-        LocalTime startTime = null;
-        LocalDate deadlineDate = null;
-        LocalTime deadlineTime = null;
+            if (canPlace) {
+                for (int i = 0; i < duration; i++) {
+                    day.returnDayGrid()[hourIndex + i] = theTask;
+                }
+                theTask.setPlacedDate(placedDate);
+                theTask.setPlacedTime(placedTime);
+                theSystem.getPlacedTasks().add(theTask);
+            } else {
+                theSystem.getUnscheduledTasks().add(theTask);
+            }
+        } else {
+            // Created from Add button
+            if (theTask.isFixedTime()) {
+                LocalDate date = theTask.getStartingDate();
+                LocalTime time = theTask.getStartingTime();
 
-        System.out.println("Enter the type of task (1 = Fixed, 2 = Deadline, 3 = Flexible):");
-        int state = Integer.parseInt(scanner.nextLine().trim());
+                if (date != null && time != null) {
+                    int hourIndex = time.getHour() - theSystem.getEngine().getStartingHour();
+                    int duration = theTask.getDurationHours();
+                    if (duration <= 0) duration = 2;
 
-        if (state == 1) {
-            System.out.println("Enter starting date (dd-MM-yyyy):");
-            String dateStr = scanner.nextLine().trim();
-            startDate = LocalDate.parse(dateStr, dateFormatter);
+                    theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
+                    Day day = theSystem.getGrid().get(date);
 
-            System.out.println("Enter starting time (HH-mm):");
-            String timeStr = scanner.nextLine().trim();
-            startTime = LocalTime.parse(timeStr, timeFormatter);
+                    boolean canPlace = true;
+                    for (int i = 0; i < duration; i++) {
+                        int h = hourIndex + i;
+                        if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
+                            canPlace = false;
+                            break;
+                        }
+                    }
 
-        } else if (state == 2) {
-            System.out.println("Enter deadline date (dd-MM-yyyy):");
-            String dateStr = scanner.nextLine().trim();
-            deadlineDate = LocalDate.parse(dateStr, dateFormatter);
-
-            System.out.println("Enter deadline time (HH-mm):");
-            String timeStr = scanner.nextLine().trim();
-            deadlineTime = LocalTime.parse(timeStr, timeFormatter);
-        }
-        // state 3 → both stay null
-
-        System.out.println("Expected duration in hours (default 2):");
-        String durationString = scanner.nextLine().trim();
-        int duration = durationString.isBlank() ? 2 : Integer.parseInt(durationString);
-
-        try {
-            ValidateAddTaskInput.validateAddTaskInput(
-                    taskName, duration, state,
-                    startDate, startTime, deadlineDate, deadlineTime);
-
-            thisTask = new Task(taskName, duration, state,
-                    startDate, startTime, deadlineDate, deadlineTime);
-
-            System.out.println("Task created successfully.");
-        } catch (Exception ignored) {
-            System.out.printf("\nSome thing went wrong, %s is not created.\n", taskName);
+                    if (canPlace) {
+                        for (int i = 0; i < duration; i++) {
+                            day.returnDayGrid()[hourIndex + i] = theTask;
+                        }
+                        theTask.setPlacedDate(date);
+                        theTask.setPlacedTime(time);
+                        theSystem.getPlacedTasks().add(theTask);
+                    } else {
+                        theSystem.getUnscheduledTasks().add(theTask);
+                    }
+                } else {
+                    theSystem.getUnscheduledTasks().add(theTask);
+                }
+            } else {
+                // Deadline or Flexible from Add button → pending, then auto-schedule
+                theSystem.getPendingTasks().add(theTask);
+                autoScheduled = true;
+                theSystem.updateSchedule();
+            }
         }
     }
 
     @Override
     public boolean execute() {
-        if (thisTask != null) {
-            theSystem.getPendingTasks().add(thisTask);
-            RecordedCommand.getRedoList().clear();
-            RecordedCommand.getUndoList().add(this);
-            return true;
-        }
-        return false;
+        doAdd();
+        RecordedCommand.getRedoList().clear();
+        RecordedCommand.getUndoList().add(this);
+        return true;
     }
 
     @Override
     public void undo() {
-        if (thisTask != null) {
-            theSystem.getPlacedTasks().remove(thisTask);
-            RecordedCommand.getRedoList().add(this);
-            RecordedCommand.getUndoList().remove(this);
-            theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
+        theSystem.getPendingTasks().remove(theTask);
+        theSystem.getPlacedTasks().remove(theTask);
+        theSystem.getUnscheduledTasks().remove(theTask);
+
+        for (Day day : theSystem.getGrid().values()) {
+            Task[] slots = day.returnDayGrid();
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == theTask) {
+                    slots[i] = null;
+                }
+            }
         }
+
+        // If we auto-scheduled, other Deadline/Flexible may have been moved.
+        // Re-run schedule without this task so the rest settle again.
+        if (autoScheduled) {
+            theSystem.updateSchedule();
+        }
+
+        RecordedCommand.getRedoList().add(this);
+        RecordedCommand.getUndoList().remove(this);
     }
 
     @Override
     public void redo() {
-        if (thisTask != null) {
-            theSystem.getPendingTasks().add(thisTask);
-            RecordedCommand.getRedoList().removeLast();
-            RecordedCommand.getUndoList().add(this);
-            theSystem.getEngine().scheduleTasks(theSystem.getPendingTasks());
-        }
+        doAdd();
+        RecordedCommand.getRedoList().remove(this);
+        RecordedCommand.getUndoList().add(this);
     }
 }

@@ -1,8 +1,12 @@
-package org.example;
+package org.example.GUI;
 
-import javafx.scene.layout.*;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 
 public class GuiHelper {
+
     public static StackPane createDimmedOverlay(Region root) {
         StackPane overlay = new StackPane();
         overlay.prefWidthProperty().bind(root.widthProperty());

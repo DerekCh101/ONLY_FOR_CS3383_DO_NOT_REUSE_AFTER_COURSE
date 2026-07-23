@@ -1,5 +1,5 @@
-//Last being maintained 14/7/2026
-//Meant to be early-debug only
+// Last being maintained 21/7/2026
+//for early-debug only
 
 package org.example.CliRunner;
 
@@ -11,7 +11,7 @@ import java.util.Scanner;
 
 public class CLIRunner {
 
-    TaskManagementSystem theSystem = TaskManagementSystem.getInstance();
+    private final TaskManagementSystem theSystem = TaskManagementSystem.getInstance();
 
     public void command(String cmdString) {
 
@@ -32,8 +32,8 @@ public class CLIRunner {
             switch (cmdString) {
 
                 case "addTask":
-                    Command addTask = new AddTask(theSystem);
-                    addTask.execute();
+                    System.out.println("CLI addTask is currently disabled.");
+                    System.out.println("Please use the GUI to add tasks.");
                     cmdString = null;
                     break;
 
@@ -73,7 +73,7 @@ public class CLIRunner {
 
                 case "update":
                     theSystem.updateSchedule();
-                    System.out.println("GUI updated.");
+                    System.out.println("Schedule updated.");
                     cmdString = null;
                     break;
 
@@ -90,10 +90,9 @@ public class CLIRunner {
             }
         }
     }
-    public static void main(String[] arg){
-        TaskManagementSystem theSystem;
-        theSystem = TaskManagementSystem.getInstance();
-        String startingMessage = null;
+
+    public static void main(String[] args) {
+        TaskManagementSystem theSystem = TaskManagementSystem.getInstance();
         theSystem.getCliMode().command(null);
     }
 }
