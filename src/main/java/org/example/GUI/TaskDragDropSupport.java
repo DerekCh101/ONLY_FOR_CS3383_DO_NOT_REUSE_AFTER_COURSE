@@ -7,6 +7,7 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import org.example.AppTimeReference;
 import org.example.Day;
 import org.example.Task;
 import org.example.TaskManagementSystem;
@@ -104,11 +105,10 @@ public class TaskDragDropSupport {
             dbContainer.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
             dbContainer.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
 
-            LocalDate baseDate = LocalDate.now();
 
-            if(fromDate.equals(baseDate)){
+            if(fromDate.equals(org.example.AppTimeReference.getCurrentDate())){
                 cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
-            }else if (fromDate.isBefore(baseDate)){
+            }else if (fromDate.isBefore(org.example.AppTimeReference.getCurrentDate())){
                 cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
             }else{
                 cell.setStyle("-fx-border-color: black;");
@@ -162,12 +162,11 @@ public class TaskDragDropSupport {
             event.consume();
         });
 
-        LocalDate baseDate = LocalDate.now();
 
         cell.setOnDragExited(event -> {
-            if(targetDate.equals(baseDate)){
+            if(targetDate.equals(org.example.AppTimeReference.getCurrentDate())){
                 cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
-            }else if (targetDate.isBefore(baseDate)){
+            }else if (targetDate.isBefore(org.example.AppTimeReference.getCurrentDate())){
                 cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
             }else{
                 cell.setStyle("-fx-border-color: black;");

@@ -3,7 +3,7 @@ package org.example.GUI;
 import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Pane;
-import org.example.Calendar;
+import org.example.AppTimeReference;
 import org.example.Task;
 import org.example.TaskManagementSystem;
 
@@ -30,7 +30,7 @@ public class WeekGridBuilder {
         // Header row
         for (int col = 0; col < 7; col++) {
             int weekDayIndex = weekOffset * 7 + col;
-            LocalDate date = Calendar.getStartOfWeek(baseDate).plusDays(weekDayIndex);
+            LocalDate date = AppTimeReference.getStartOfWeek(baseDate).plusDays(weekDayIndex);
             String text = date.getDayOfWeek().toString().substring(0, 3) + " "
                         + date.getMonthValue() + "/"
                         + date.getDayOfMonth();
@@ -44,7 +44,7 @@ public class WeekGridBuilder {
 
             for (int col = 1; col <= 7; col++) {
                 int dayIndex = weekOffset * 7 + (col - 1);
-                LocalDate date = Calendar.getStartOfWeek(baseDate).plusDays(dayIndex);
+                LocalDate date = AppTimeReference.getStartOfWeek(baseDate).plusDays(dayIndex);
 
                 Pane cell = new Pane();
                 cell.setPrefSize(150, 100);
