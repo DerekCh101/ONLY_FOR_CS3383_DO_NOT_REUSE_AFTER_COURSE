@@ -99,10 +99,20 @@ public class TaskDragDropSupport {
             // Ghost image
             VBox dbContainer = new VBox(1);
             root.getChildren().add(dbContainer);
-            dbContainer.setOpacity(0);
+            dbContainer.setOpacity(100);
             dbContainer.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
             dbContainer.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
             dbContainer.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+
+            LocalDate baseDate = LocalDate.now();
+
+            if(fromDate.equals(baseDate)){
+                cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
+            }else if (fromDate.isBefore(baseDate)){
+                cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
+            }else{
+                cell.setStyle("-fx-border-color: black;");
+            }
 
             for (int i = 0; i < duration; i++) {
                 Pane virtualDbCell = new Pane();
@@ -152,8 +162,16 @@ public class TaskDragDropSupport {
             event.consume();
         });
 
+        LocalDate baseDate = LocalDate.now();
+
         cell.setOnDragExited(event -> {
-            cell.setStyle("-fx-background-color: transparent; -fx-border-color: black;");
+            if(targetDate.equals(baseDate)){
+                cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
+            }else if (targetDate.isBefore(baseDate)){
+                cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
+            }else{
+                cell.setStyle("-fx-border-color: black;");
+            }
             event.consume();
         });
 

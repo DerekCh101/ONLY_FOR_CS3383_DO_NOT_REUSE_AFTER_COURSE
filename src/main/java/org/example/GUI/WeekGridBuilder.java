@@ -32,7 +32,8 @@ public class WeekGridBuilder {
             int weekDayIndex = weekOffset * 7 + col;
             LocalDate date = Calendar.getStartOfWeek(baseDate).plusDays(weekDayIndex);
             String text = date.getDayOfWeek().toString().substring(0, 3) + " "
-                    + date.getMonthValue() + "/" + date.getDayOfMonth();
+                        + date.getMonthValue() + "/"
+                        + date.getDayOfMonth();
             grid.add(new Label(text), col + 1, 0);
         }
 
@@ -47,7 +48,13 @@ public class WeekGridBuilder {
 
                 Pane cell = new Pane();
                 cell.setPrefSize(150, 100);
-                cell.setStyle("-fx-border-color: black;");
+                if(date.equals(baseDate)){
+                    cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
+                }else if (date.isBefore(baseDate)){
+                    cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
+                }else{
+                    cell.setStyle("-fx-border-color: black;");
+                }
 
                 Task taskInCell = null;
                 if (gridData != null && gridData.containsKey(date)) {
@@ -90,7 +97,13 @@ public class WeekGridBuilder {
                     }
                 });
                 cell.setOnMouseExited(e -> {
-                    cell.setStyle("-fx-background-color: transparent; -fx-border-color: black;");
+                    if(date.equals(baseDate)){
+                        cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
+                    }else if (date.isBefore(baseDate)){
+                        cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
+                    }else{
+                        cell.setStyle("-fx-border-color: black;");
+                    }
                 });
 
                 dragDrop.setupDropTarget(cell, date, hourIndex);

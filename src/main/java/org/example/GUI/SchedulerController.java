@@ -2,6 +2,7 @@ package org.example.GUI;
 
 import javafx.application.Platform;
 import javafx.fxml.FXML;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -11,7 +12,9 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import org.example.TaskManagementSystem;
 
+import javax.swing.*;
 import java.time.LocalDate;
+import java.util.Stack;
 
 public class SchedulerController {
 
@@ -93,6 +96,32 @@ public class SchedulerController {
             weekOffset += delta;
             refresh();
         });
+
+        Label prevPaneLabel = new Label("PREV");
+        prevPaneLabel.setRotate(90);
+        Label nextPaneLabel = new Label("NEXT");
+        nextPaneLabel.setRotate(90);
+
+        StackPane prevStack = new StackPane(prevPaneLabel);
+        StackPane nextStack = new StackPane(nextPaneLabel);
+
+        prevStack.prefWidthProperty().bind(prevPane.widthProperty());
+        prevStack.prefHeightProperty().bind(prevPane.heightProperty());
+        nextStack.prefWidthProperty().bind(nextPane.widthProperty());
+        nextStack.prefHeightProperty().bind(nextPane.heightProperty());     // default        // default
+        prevPane.getChildren().setAll(prevStack);
+        nextPane.getChildren().setAll(nextStack);
+
+        prevPane.setOnMouseClicked(event -> {
+                weekOffset--;
+                refresh();
+
+        });
+        nextPane.setOnMouseClicked(event -> {
+                weekOffset++;
+                refresh();
+        });
+
 
 
 
