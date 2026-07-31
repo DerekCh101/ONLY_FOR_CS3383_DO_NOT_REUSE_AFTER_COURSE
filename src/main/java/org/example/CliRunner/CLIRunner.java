@@ -1,9 +1,10 @@
 // Last being maintained 21/7/2026
-//for early-debug only
+// for early-debug only
 
 package org.example.CliRunner;
 
 import org.example.Command.*;
+import org.example.Task;
 import org.example.TaskManagementSystem;
 
 import java.io.FileNotFoundException;
@@ -48,8 +49,38 @@ public class CLIRunner {
                     break;
 
                 case "clearTask":
-                    Command clearTask = new ClearTask(theSystem);
-                    clearTask.execute();
+                    System.out.print("Enter task name to clear: ");
+                    String name = input.nextLine().trim();
+                    Task found = null;
+                    for (Task t : theSystem.getPlacedTasks()) {
+                        if (t.getTaskName().equals(name)) {
+                            found = t;
+                            break;
+                        }
+                    }
+                    if (found == null) {
+                        for (Task t : theSystem.getPendingTasks()) {
+                            if (t.getTaskName().equals(name)) {
+                                found = t;
+                                break;
+                            }
+                        }
+                    }
+                    if (found == null) {
+                        for (Task t : theSystem.getUnscheduledTasks()) {
+                            if (t.getTaskName().equals(name)) {
+                                found = t;
+                                break;
+                            }
+                        }
+                    }
+                    if (found == null) {
+                        System.out.println("Task not found: " + name);
+                    } else {
+                        Command clearTask = new ClearTask(found);
+                        clearTask.execute();
+                        System.out.println("Cleared: " + name);
+                    }
                     cmdString = null;
                     break;
 

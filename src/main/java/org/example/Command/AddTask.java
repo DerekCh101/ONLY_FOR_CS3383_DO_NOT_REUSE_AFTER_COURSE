@@ -10,11 +10,9 @@ public class AddTask implements Command {
     private final Task theTask;
     private final LocalDate placedDate;
     private final LocalTime placedTime;
-
-    /** true when this task was created from Add button as Deadline/Flexible and we auto-scheduled it */
     private boolean autoScheduled = false;
 
-    public AddTask(String taskName, int duration, int state,
+    public AddTask(String taskName, double durationHours, int state,
                    LocalDate startDate, LocalTime startTime,
                    LocalDate deadlineDate, LocalTime deadlineTime,
                    LocalDate placedDate, LocalTime placedTime) {
@@ -24,89 +22,62 @@ public class AddTask implements Command {
         this.placedTime = placedTime;
 
         this.theTask = new Task(
-                taskName, duration, state,
+                taskName, durationHours, state,
                 startDate, startTime,
                 deadlineDate, deadlineTime
         );
     }
 
-    public AddTask(String taskName, int duration, int state,
+    public AddTask(String taskName, double durationHours, int state,
                    LocalDate startDate, LocalTime startTime,
                    LocalDate deadlineDate, LocalTime deadlineTime) {
-        this(taskName, duration, state, startDate, startTime, deadlineDate, deadlineTime, null, null);
+        this(taskName, durationHours, state, startDate, startTime, deadlineDate, deadlineTime, null, null);
     }
 
     private void doAdd() {
         if (placedDate != null && placedTime != null) {
-            // Created by clicking a grid cell → place immediately
-            int hourIndex = placedTime.getHour() - theSystem.getEngine().getStartingHour();
-            int duration = theTask.getDurationHours();
-            if (duration <= 0) duration = 2;
-
-            theSystem.getGrid().putIfAbsent(placedDate, new Day(theSystem.getBlockedTime()));
-            Day day = theSystem.getGrid().get(placedDate);
-
-            boolean canPlace = true;
-            for (int i = 0; i < duration; i++) {
-                int h = hourIndex + i;
-                if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
-                    canPlace = false;
-                    break;
-                }
-            }
-
-            if (canPlace) {
-                for (int i = 0; i < duration; i++) {
-                    day.returnDayGrid()[hourIndex + i] = theTask;
-                }
-                theTask.setPlacedDate(placedDate);
-                theTask.setPlacedTime(placedTime);
-                theSystem.getPlacedTasks().add(theTask);
+            placeOnGrid(placedDate, placedTime);
+        } else if (theTask.isFixedTime()) {
+            LocalDate date = theTask.getStartingDate();
+            LocalTime time = theTask.getStartingTime();
+            if (date != null && time != null) {
+                placeOnGrid(date, time);
             } else {
                 theSystem.getUnscheduledTasks().add(theTask);
             }
         } else {
-            // Created from Add button
-            if (theTask.isFixedTime()) {
-                LocalDate date = theTask.getStartingDate();
-                LocalTime time = theTask.getStartingTime();
+            theSystem.getPendingTasks().add(theTask);
+            autoScheduled = true;
+            theSystem.updateSchedule();
+        }
+    }
 
-                if (date != null && time != null) {
-                    int hourIndex = time.getHour() - theSystem.getEngine().getStartingHour();
-                    int duration = theTask.getDurationHours();
-                    if (duration <= 0) duration = 2;
+    private void placeOnGrid(LocalDate date, LocalTime time) {
+        int slotIndex = AppTimeReference.localTimeToSlot(time);
+        int slotCount = theTask.getDurationSlots();
 
-                    theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
-                    Day day = theSystem.getGrid().get(date);
+        theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
+        Day day = theSystem.getGrid().get(date);
 
-                    boolean canPlace = true;
-                    for (int i = 0; i < duration; i++) {
-                        int h = hourIndex + i;
-                        if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
-                            canPlace = false;
-                            break;
-                        }
-                    }
-
-                    if (canPlace) {
-                        for (int i = 0; i < duration; i++) {
-                            day.returnDayGrid()[hourIndex + i] = theTask;
-                        }
-                        theTask.setPlacedDate(date);
-                        theTask.setPlacedTime(time);
-                        theSystem.getPlacedTasks().add(theTask);
-                    } else {
-                        theSystem.getUnscheduledTasks().add(theTask);
-                    }
-                } else {
-                    theSystem.getUnscheduledTasks().add(theTask);
+        boolean canPlace = true;
+        if (slotIndex < 0 || slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
+            canPlace = false;
+        } else {
+            for (int i = 0; i < slotCount; i++) {
+                if (day.returnDayGrid()[slotIndex + i] != null) {
+                    canPlace = false;
+                    break;
                 }
-            } else {
-                // Deadline or Flexible from Add button → pending, then auto-schedule
-                theSystem.getPendingTasks().add(theTask);
-                autoScheduled = true;
-                theSystem.updateSchedule();
             }
+        }
+
+        if (canPlace) {
+            day.placeTask(slotIndex, theTask);
+            theTask.setPlacedDate(date);
+            theTask.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
+            theSystem.getPlacedTasks().add(theTask);
+        } else {
+            theSystem.getUnscheduledTasks().add(theTask);
         }
     }
 
@@ -133,8 +104,6 @@ public class AddTask implements Command {
             }
         }
 
-        // If we auto-scheduled, other Deadline/Flexible may have been moved.
-        // Re-run schedule without this task so the rest settle again.
         if (autoScheduled) {
             theSystem.updateSchedule();
         }

@@ -67,13 +67,12 @@
         <center>
             <SplitPane fx:id="mainSplit" dividerPositions="0.82" orientation="HORIZONTAL">
 
-                <!-- Calendar + week-edge panes -->
                 <BorderPane>
                     <left>
                         <Pane fx:id="prevPane" style="-fx-background-color: #e8e8e8;" />
                     </left>
                     <center>
-                        <ScrollPane fitToHeight="true" fitToWidth="true">
+                        <ScrollPane fx:id="gridScroll" fitToHeight="true" fitToWidth="true">
                             <GridPane fx:id="grid" hgap="1" vgap="1" style="-fx-border-color: black;" />
                         </ScrollPane>
                     </center>
@@ -82,7 +81,6 @@
                     </right>
                 </BorderPane>
 
-                <!-- Side panel -->
                 <VBox fx:id="sidePanelContainer" spacing="10" style="-fx-padding: 10;">
                     <Label fx:id="sidePanel" style="-fx-font-weight: bold;" text="Unscheduled Tasks:" />
                 </VBox>

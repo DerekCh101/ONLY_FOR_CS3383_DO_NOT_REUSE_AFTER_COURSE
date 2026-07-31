@@ -1,5 +1,6 @@
 package org.example.Command;
 
+import org.example.AppTimeReference;
 import org.example.Day;
 import org.example.Task;
 import org.example.TaskManagementSystem;
@@ -13,26 +14,30 @@ public class MoveTask implements Command {
     private final Task task;
 
     private final LocalDate oldDate;
-    private final int oldStartHour;
+    private final int oldStartSlot;
     private final LocalDate newDate;
-    private final int newStartHour;
-    private final int duration;
+    private final int newStartSlot;
 
     private LocalDate oldStartingDate;
     private LocalTime oldStartingTime;
 
     public MoveTask(Task task,
-                    LocalDate oldDate, int oldStartHour,
-                    LocalDate newDate, int newStartHour,
-                    int duration) {
+                    LocalDate oldDate, int oldStartSlot,
+                    LocalDate newDate, int newStartSlot,
+                    int ignoredDurationHoursForCompat) {
+        this(task, oldDate, oldStartSlot, newDate, newStartSlot);
+    }
+
+    public MoveTask(Task task,
+                    LocalDate oldDate, int oldStartSlot,
+                    LocalDate newDate, int newStartSlot) {
 
         this.theSystem = TaskManagementSystem.getInstance();
         this.task = task;
         this.oldDate = oldDate;
-        this.oldStartHour = oldStartHour;
+        this.oldStartSlot = oldStartSlot;
         this.newDate = newDate;
-        this.newStartHour = newStartHour;
-        this.duration = duration;
+        this.newStartSlot = newStartSlot;
 
         if (task.isFixedTime()) {
             this.oldStartingDate = task.getStartingDate();
@@ -40,29 +45,27 @@ public class MoveTask implements Command {
         }
     }
 
-    private void doMove() {
-        // Clear old position
-        Day oldDay = theSystem.getGrid().get(oldDate);
-        if (oldDay != null) {
-            for (int i = 0; i < duration; i++) {
-                int h = oldStartHour + i;
-                if (h < theSystem.getEngine().getTotalHours()) {
-                    oldDay.returnDayGrid()[h] = null;
-                }
+    private void clearSlots(LocalDate date, int startSlot) {
+        Day day = theSystem.getGrid().get(date);
+        if (day == null) return;
+        int slotCount = task.getDurationSlots();
+        Task[] slots = day.returnDayGrid();
+        for (int i = 0; i < slotCount; i++) {
+            int s = startSlot + i;
+            if (s >= 0 && s < slots.length && slots[s] == task) {
+                slots[s] = null;
             }
         }
+    }
 
-        // Place at new position
+    private void doMove() {
+        clearSlots(oldDate, oldStartSlot);
+
         theSystem.getGrid().putIfAbsent(newDate, new Day(theSystem.getBlockedTime()));
         Day newDay = theSystem.getGrid().get(newDate);
+        newDay.placeTask(newStartSlot, task);
 
-        for (int i = 0; i < duration; i++) {
-            newDay.returnDayGrid()[newStartHour + i] = task;
-        }
-
-        LocalTime newTime = LocalTime.of(
-                theSystem.getEngine().getStartingHour() + newStartHour, 0);
-
+        LocalTime newTime = AppTimeReference.slotToLocalTime(newStartSlot);
         task.setPlacedDate(newDate);
         task.setPlacedTime(newTime);
 
@@ -86,28 +89,13 @@ public class MoveTask implements Command {
 
     @Override
     public void undo() {
-        // Clear new position
-        Day newDay = theSystem.getGrid().get(newDate);
-        if (newDay != null) {
-            for (int i = 0; i < duration; i++) {
-                int h = newStartHour + i;
-                if (h < theSystem.getEngine().getTotalHours()) {
-                    newDay.returnDayGrid()[h] = null;
-                }
-            }
-        }
+        clearSlots(newDate, newStartSlot);
 
-        // Restore old position
         theSystem.getGrid().putIfAbsent(oldDate, new Day(theSystem.getBlockedTime()));
         Day oldDay = theSystem.getGrid().get(oldDate);
+        oldDay.placeTask(oldStartSlot, task);
 
-        for (int i = 0; i < duration; i++) {
-            oldDay.returnDayGrid()[oldStartHour + i] = task;
-        }
-
-        LocalTime oldTime = LocalTime.of(
-                theSystem.getEngine().getStartingHour() + oldStartHour, 0);
-
+        LocalTime oldTime = AppTimeReference.slotToLocalTime(oldStartSlot);
         task.setPlacedDate(oldDate);
         task.setPlacedTime(oldTime);
 

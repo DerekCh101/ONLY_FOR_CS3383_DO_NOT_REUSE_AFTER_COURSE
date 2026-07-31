@@ -6,7 +6,7 @@ import java.time.LocalTime;
 public class FetchPopOutTask {
 
     private String taskName;
-    private int duration;
+    private double duration;
     private int state; // 1 = Fixed, 2 = Deadline, 3 = Flexible
 
     private LocalDate startDate;
@@ -21,7 +21,7 @@ public class FetchPopOutTask {
     private Task task; //used when wanted to clear a task
 
     public FetchPopOutTask(String taskName,
-                           int duration,
+                           double duration,
                            int state,
                            LocalDate startDate,
                            LocalTime startTime,
@@ -43,7 +43,7 @@ public class FetchPopOutTask {
 
     // Convenience constructor when placedDate/Time are not needed
     public FetchPopOutTask(String taskName,
-                           int duration,
+                           double duration,
                            int state,
                            LocalDate startDate,
                            LocalTime startTime,
@@ -60,7 +60,7 @@ public class FetchPopOutTask {
         return taskName;
     }
 
-    public int getDuration() {
+    public double getDuration() {
         return duration;
     }
 

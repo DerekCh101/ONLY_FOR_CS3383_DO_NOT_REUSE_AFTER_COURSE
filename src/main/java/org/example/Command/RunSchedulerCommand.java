@@ -92,14 +92,14 @@ public class RunSchedulerCommand implements Command {
 
             if (snap.wasPlaced && snap.placedDate != null && snap.placedTime != null) {
                 int hourIndex = snap.placedTime.getHour() - theSystem.getEngine().getStartingHour();
-                int duration = t.getDurationHours();
-                if (duration <= 0) duration = 2;
+                int durationSlots = t.getDurationSlots();
+                if (durationSlots <= 0) durationSlots = 2;
 
                 theSystem.getGrid().putIfAbsent(snap.placedDate, new Day(theSystem.getBlockedTime()));
                 Day day = theSystem.getGrid().get(snap.placedDate);
 
                 boolean canPlace = true;
-                for (int i = 0; i < duration; i++) {
+                for (int i = 0; i < durationSlots; i++) {
                     int h = hourIndex + i;
                     if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
                         canPlace = false;
@@ -108,7 +108,7 @@ public class RunSchedulerCommand implements Command {
                 }
 
                 if (canPlace) {
-                    for (int i = 0; i < duration; i++) {
+                    for (int i = 0; i < durationSlots; i++) {
                         day.returnDayGrid()[hourIndex + i] = t;
                     }
                     t.setPlacedDate(snap.placedDate);

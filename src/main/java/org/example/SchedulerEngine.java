@@ -1,8 +1,11 @@
 package org.example;
 
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 public class SchedulerEngine {
 
@@ -12,10 +15,6 @@ public class SchedulerEngine {
     private LocalDate daySearchCurrently;
     private BlockedTimePeriod blockedTime;
     private TaskManagementSystem system;
-
-    private static final int TOTAL_DAYS = 365 * 5;
-    private static final int START_HOUR = 6;
-    private static final int HOURS_PER_DAY = 17;
 
     public SchedulerEngine(TaskManagementSystem system, LocalDate baseDate, Map<LocalDate, Day> daysGrid) {
         this.baseDate = baseDate;
@@ -44,14 +43,12 @@ public class SchedulerEngine {
             } else if (task.isFlexible()) {
                 flexibleTasks.add(task);
             }
-            // Fixed tasks are ignored here
         }
 
-        // Sort deadline: earliest deadline first, then longer duration first
         deadlineTasks.sort((t1, t2) -> {
             int dateCompare = t1.getDeadLineDate().compareTo(t2.getDeadLineDate());
             if (dateCompare != 0) return dateCompare;
-            return Integer.compare(getDuration(t2), getDuration(t1));
+            return Integer.compare(t2.getDurationSlots(), t1.getDurationSlots());
         });
 
         placeDeadlineTasks(deadlineTasks);
@@ -63,91 +60,26 @@ public class SchedulerEngine {
 
     private void placeDeadlineTasks(ArrayList<Task> tasks) {
         for (Task task : tasks) {
-
             long lastDay = ChronoUnit.DAYS.between(baseDate, task.getDeadLineDate()) + 1;
 
             if (lastDay < 0) {
                 unscheduledTasks.add(task);
                 continue;
             }
-            if (lastDay >= TOTAL_DAYS) {
-                lastDay = TOTAL_DAYS - 1;
+            if (lastDay >= AppTimeReference.TOTAL_DAY_HORIZON) {
+                lastDay = AppTimeReference.TOTAL_DAY_HORIZON - 1;
             }
 
             boolean placed = false;
-            boolean ignoredBlocked = false;
-            boolean ignoreOverload = false;
 
-            // 1st pass
-            for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
-                 thisDay = thisDay.plusDays(1)) {
+            placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, false, false);
 
-                daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                Day theDay = daysGrid.get(thisDay);
-
-                for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
-                            && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
-
-                        theDay.placeTask(hour, getDuration(task), task);
-                        task.setPlacedDate(thisDay);
-                        task.setPlacedTime(LocalTime.of(START_HOUR + hour, 0));
-                        system.getPlacedTasks().add(task);
-                        placed = true;
-                        daySearchCurrently = thisDay;
-                    }
-                }
+            if (!placed) {
+                placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, true, false);
             }
 
-            // 2nd pass
             if (!placed) {
-                ignoredBlocked = true;
-                for (LocalDate thisDay = daySearchCurrently;
-                     thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
-                     thisDay = thisDay.plusDays(1)) {
-
-                    daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                    Day theDay = daysGrid.get(thisDay);
-
-                    for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                        if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
-                                && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
-
-                            theDay.placeTask(hour, getDuration(task), task);
-                            task.setPlacedDate(thisDay);
-                            task.setPlacedTime(LocalTime.of(START_HOUR + hour, 0));
-                            system.getPlacedTasks().add(task);
-                            placed = true;
-                            daySearchCurrently = thisDay;
-                        }
-                    }
-                }
-            }
-
-            // 3rd pass
-            if (!placed) {
-                ignoreOverload = true;
-                for (LocalDate thisDay = baseDate;
-                     thisDay.isBefore(baseDate.plusDays(lastDay)) && !placed;
-                     thisDay = thisDay.plusDays(1)) {
-
-                    daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                    Day theDay = daysGrid.get(thisDay);
-
-                    for (int hour = 0; hour < HOURS_PER_DAY && !placed; hour++) {
-                        if (theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)
-                                && respectsDeadlineTime(task, thisDay, hour, getDuration(task), lastDay)) {
-
-                            theDay.placeTask(hour, getDuration(task), task);
-                            task.setPlacedDate(thisDay);
-                            task.setPlacedTime(LocalTime.of(START_HOUR + hour, 0));
-                            system.getPlacedTasks().add(task);
-                            placed = true;
-                            daySearchCurrently = thisDay;
-                        }
-                    }
-                }
+                placed = tryPlaceDeadline(task, baseDate, lastDay, true, true);
             }
 
             if (!placed) {
@@ -156,20 +88,41 @@ public class SchedulerEngine {
         }
     }
 
+    private boolean tryPlaceDeadline(Task task, LocalDate fromDay, long lastDay,
+                                     boolean ignoreBlocked, boolean ignoreOverload) {
+        for (LocalDate thisDay = fromDay;
+             thisDay.isBefore(baseDate.plusDays(lastDay));
+             thisDay = thisDay.plusDays(1)) {
+
+            daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
+            Day theDay = daysGrid.get(thisDay);
+
+            for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+                if (theDay.canPlace(task, thisDay, slot, ignoreBlocked, ignoreOverload)
+                        && respectsDeadlineTime(task, thisDay, slot)) {
+
+                    theDay.placeTask(slot, task);
+                    task.setPlacedDate(thisDay);
+                    task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
+                    system.getPlacedTasks().add(task);
+                    daySearchCurrently = thisDay;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private void placeFlexibleTasks(ArrayList<Task> tasks) {
         for (Task task : tasks) {
-
-            int duration = getDuration(task);
             boolean placed = false;
 
-            // Find next non-overloaded day
             for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(TOTAL_DAYS));
+                 thisDay.isBefore(baseDate.plusDays(AppTimeReference.TOTAL_DAY_HORIZON));
                  thisDay = thisDay.plusDays(1)) {
 
                 daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                 Day theDay = daysGrid.get(thisDay);
-
                 if (theDay != null && !theDay.getOverloadFlag()) {
                     daySearchCurrently = thisDay;
                     break;
@@ -177,26 +130,23 @@ public class SchedulerEngine {
             }
 
             for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(TOTAL_DAYS)) && !placed;
+                 thisDay.isBefore(baseDate.plusDays(AppTimeReference.TOTAL_DAY_HORIZON)) && !placed;
                  thisDay = thisDay.plusDays(1)) {
 
                 daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                 Day theDay = daysGrid.get(thisDay);
 
-                int hourIdx = 0;
-                if (thisDay.equals(baseDate)) {
-                    hourIdx = LocalTime.now().getHour() - getStartingHour();
-                    if (hourIdx < 0) hourIdx = 0;
+                int startSlot = 0;
+                if (thisDay.equals(AppTimeReference.getCurrentDate())) {
+                    startSlot = AppTimeReference.currentSlotIndex() + 1;
+                    if (startSlot < 0) startSlot = 0;
                 }
 
-                boolean ignoredBlocked = false;
-                boolean ignoreOverload = false;
-
-                for (int hour = hourIdx; hour < HOURS_PER_DAY && !placed; hour++) {
-                    if (theDay != null && theDay.canPlace(task, thisDay, hour, ignoredBlocked, ignoreOverload)) {
-                        theDay.placeTask(hour, duration, task);
+                for (int slot = startSlot; slot < AppTimeReference.SLOTS_PER_DAY && !placed; slot++) {
+                    if (theDay != null && theDay.canPlace(task, thisDay, slot, false, false)) {
+                        theDay.placeTask(slot, task);
                         task.setPlacedDate(thisDay);
-                        task.setPlacedTime(LocalTime.of(START_HOUR + hour, 0));
+                        task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
                         system.getPlacedTasks().add(task);
                         placed = true;
                     }
@@ -209,17 +159,15 @@ public class SchedulerEngine {
         }
     }
 
-    private int getDuration(Task task) {
-        int d = task.getDurationHours();
-        return d <= 0 ? 2 : d;
-    }
-
-    private boolean respectsDeadlineTime(Task task, LocalDate day, int hour, int duration, long lastDay) {
+    private boolean respectsDeadlineTime(Task task, LocalDate day, int startSlot) {
         if (task.getDeadLineTime() == null) return true;
         if (day.isBefore(task.getDeadLineDate())) return true;
 
-        int finishHour = START_HOUR + hour + duration;
-        return finishHour <= task.getDeadLineTime().getHour();
+        LocalTime start = AppTimeReference.slotToLocalTime(startSlot);
+        LocalTime finish = start.plusMinutes(
+                (long) task.getDurationSlots() * AppTimeReference.MINUTES_PER_SLOT);
+
+        return !finish.isAfter(task.getDeadLineTime());
     }
 
     public String printUnscheduledTask() {
@@ -230,11 +178,16 @@ public class SchedulerEngine {
         return text.toString();
     }
 
+    /** @deprecated use AppTimeReference; kept so old callers compile */
     public int getStartingHour() {
-        return START_HOUR;
+        return AppTimeReference.GRID_START_HOUR;
     }
 
     public int getTotalHours() {
-        return HOURS_PER_DAY;
+        return AppTimeReference.SLOTS_PER_DAY;
+    }
+
+    public int getSlotsPerDay() {
+        return AppTimeReference.SLOTS_PER_DAY;
     }
 }

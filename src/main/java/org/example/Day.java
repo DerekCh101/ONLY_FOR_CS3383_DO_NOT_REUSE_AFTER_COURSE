@@ -6,55 +6,47 @@ import java.time.LocalTime;
 public class Day {
 
     private final BlockedTimePeriod blockedTime;
-    private int availableHours;
+    private int availableSlots;
     private final Task[] todayTaskGrid;
     private boolean overloadFlag;
 
-    private static final int START_HOUR = 6;
-    private static final int HOURS_PER_DAY = 17;
-
     public Day(BlockedTimePeriod blockedTime) {
-        this.todayTaskGrid = new Task[HOURS_PER_DAY];
+        this.todayTaskGrid = new Task[AppTimeReference.SLOTS_PER_DAY];
         this.blockedTime = blockedTime;
-        this.availableHours = HOURS_PER_DAY - blockedTime.returnTotalBlockedTime();
+        this.availableSlots = AppTimeReference.SLOTS_PER_DAY
+                - blockedTime.returnTotalBlockedTime() * AppTimeReference.SLOTS_PER_HOUR;
         this.overloadFlag = false;
     }
 
-    public boolean canPlace(Task task, LocalDate thisDay, int hour,
+    public boolean canPlace(Task task, LocalDate thisDay, int slotIndex,
                             boolean ignoreBlocked, boolean ignoreOverload) {
 
-        int duration = task.getDurationHours();
-        if (duration <= 0) duration = 2;
+        int slotCount = task.getDurationSlots();
 
-        if (hour < 0 || hour + duration > HOURS_PER_DAY) {
+        if (slotIndex < 0 || slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
             return false;
         }
 
-        // Prevent scheduling in the past on the current day
-        if (thisDay.equals(LocalDate.now())) {
-            int currentHour = LocalTime.now().getHour();
-            int taskStartHour = START_HOUR + hour;
-            if (taskStartHour < currentHour) {
+        if (thisDay.equals(AppTimeReference.getCurrentDate())) {
+            if (slotIndex <= AppTimeReference.currentSlotIndex()) {
                 return false;
             }
         }
 
-        // Overload check
         if (!ignoreOverload && overloadFlag) {
             return false;
         }
 
-        for (int i = 0; i < duration; i++) {
-            int slot = hour + i;
+        for (int i = 0; i < slotCount; i++) {
+            int slot = slotIndex + i;
 
-            // Time conflict with another task
-            if (todayTaskGrid[slot] != null && !task.getID().equals(todayTaskGrid[slot].getID())) {
+            if (todayTaskGrid[slot] != null
+                    && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
             }
 
-            // Blocked time check
             if (!ignoreBlocked) {
-                LocalTime checkTime = LocalTime.of(START_HOUR + slot, 0);
+                LocalTime checkTime = AppTimeReference.slotToLocalTime(slot);
                 if (blockedTime.isBlocked(checkTime)) {
                     return false;
                 }
@@ -63,12 +55,13 @@ public class Day {
         return true;
     }
 
-    public void placeTask(int hour, int duration, Task task) {
-        for (int i = 0; i < duration; i++) {
-            todayTaskGrid[hour + i] = task;
+    public void placeTask(int slotIndex, Task task) {
+        int slotCount = task.getDurationSlots();
+        for (int i = 0; i < slotCount; i++) {
+            todayTaskGrid[slotIndex + i] = task;
         }
-        availableHours = availableHours - duration;
-        if (availableHours <= 2) {
+        availableSlots -= slotCount;
+        if (availableSlots <= AppTimeReference.SLOTS_PER_HOUR) {
             overloadFlag = true;
         }
     }
@@ -81,7 +74,7 @@ public class Day {
         return overloadFlag;
     }
 
-    public int getAvailableHours() {
-        return availableHours;
+    public int getAvailableSlots() {
+        return availableSlots;
     }
 }

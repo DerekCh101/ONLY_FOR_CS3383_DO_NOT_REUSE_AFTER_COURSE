@@ -7,7 +7,7 @@ public class ValidateAddTaskInput {
 
     public static boolean validateAddTaskInput(
             String tName,
-            int duration,
+            double duration,
             int state,
             LocalDate startDate,
             LocalTime startTime,

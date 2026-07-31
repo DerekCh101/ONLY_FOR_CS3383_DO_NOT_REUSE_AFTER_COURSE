@@ -21,7 +21,7 @@ public class TaskDragDropSupport {
 
     private final TaskManagementSystem system;
     private final StackPane root;
-    private final Runnable onMoved; // usually controller::refresh
+    private final Runnable onMoved;
 
     private long lastWeekSwitchMs = 0;
     private static final long WEEK_SWITCH_COOLDOWN_MS = 600;
@@ -32,15 +32,9 @@ public class TaskDragDropSupport {
         this.onMoved = onMoved;
     }
 
-    // ==================== Week edge panes ====================
-
     public void setupWeekEdgePanes(Pane prevPane, Pane nextPane, IntConsumer onWeekDelta) {
-        if (prevPane != null) {
-            wireWeekEdgePane(prevPane, -1, onWeekDelta);
-        }
-        if (nextPane != null) {
-            wireWeekEdgePane(nextPane, +1, onWeekDelta);
-        }
+        if (prevPane != null) wireWeekEdgePane(prevPane, -1, onWeekDelta);
+        if (nextPane != null) wireWeekEdgePane(nextPane, +1, onWeekDelta);
     }
 
     private void wireWeekEdgePane(Pane edgePane, int weekDelta, IntConsumer onWeekDelta) {
@@ -56,14 +50,12 @@ public class TaskDragDropSupport {
                 event.consume();
                 return;
             }
-
             long now = System.currentTimeMillis();
             if (now - lastWeekSwitchMs < WEEK_SWITCH_COOLDOWN_MS) {
                 event.consume();
                 return;
             }
             lastWeekSwitchMs = now;
-
             onWeekDelta.accept(weekDelta);
             edgePane.setStyle("-fx-background-color: #cce0ff;");
             event.consume();
@@ -80,43 +72,32 @@ public class TaskDragDropSupport {
         });
     }
 
-    // ==================== Make cell draggable ====================
-
-    public void makeDraggable(Pane cell, Task task, LocalDate fromDate, int clickedHourIndex) {
+    public void makeDraggable(Pane cell, Task task, LocalDate fromDate, int clickedSlotIndex) {
         cell.setOnDragDetected(event -> {
             Day day = system.getGrid().get(fromDate);
             if (day == null) return;
 
             Task[] slots = day.returnDayGrid();
-            int realStartHour = clickedHourIndex;
-
-            while (realStartHour > 0 && slots[realStartHour - 1] == task) {
-                realStartHour--;
+            int realStartSlot = clickedSlotIndex;
+            while (realStartSlot > 0 && slots[realStartSlot - 1] == task) {
+                realStartSlot--;
             }
 
-            int duration = task.getDurationHours();
-            if (duration <= 0) duration = 2;
+            int slotCount = task.getDurationSlots();
 
-            // Ghost image
             VBox dbContainer = new VBox(1);
             root.getChildren().add(dbContainer);
-            dbContainer.setOpacity(100);
+            dbContainer.setOpacity(20);
             dbContainer.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
             dbContainer.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
             dbContainer.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
 
+            applyDayStyle(cell, fromDate);
 
-            if(fromDate.equals(org.example.AppTimeReference.getCurrentDate())){
-                cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
-            }else if (fromDate.isBefore(org.example.AppTimeReference.getCurrentDate())){
-                cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
-            }else{
-                cell.setStyle("-fx-border-color: black;");
-            }
-
-            for (int i = 0; i < duration; i++) {
+            for (int i = 0; i < slotCount; i++) {
                 Pane virtualDbCell = new Pane();
                 Label taskName = new Label(task.getTaskName());
+                taskName.setStyle("-fx-font-size: 10px;");
                 virtualDbCell.getChildren().add(taskName);
                 virtualDbCell.setStyle(cell.getStyle());
                 virtualDbCell.setPrefSize(cell.getWidth(), cell.getHeight());
@@ -136,8 +117,8 @@ public class TaskDragDropSupport {
                     task.getID() + "|" +
                             task.getTaskName() + "|" +
                             fromDate.toString() + "|" +
-                            realStartHour + "|" +
-                            duration
+                            realStartSlot + "|" +
+                            task.getDurationMinutes()
             );
             db.setContent(content);
 
@@ -151,9 +132,7 @@ public class TaskDragDropSupport {
         });
     }
 
-    // ==================== Drop target ====================
-
-    public void setupDropTarget(Pane cell, LocalDate targetDate, int targetHourIndex) {
+    public void setupDropTarget(Pane cell, LocalDate targetDate, int targetSlotIndex) {
 
         cell.setOnDragOver(event -> {
             if (event.getGestureSource() != cell && event.getDragboard().hasString()) {
@@ -162,27 +141,18 @@ public class TaskDragDropSupport {
             event.consume();
         });
 
-
         cell.setOnDragExited(event -> {
-            if(targetDate.equals(org.example.AppTimeReference.getCurrentDate())){
-                cell.setStyle("-fx-background-color: #70d9f1;-fx-border-color: black;");
-            }else if (targetDate.isBefore(org.example.AppTimeReference.getCurrentDate())){
-                cell.setStyle("-fx-background-color: #bdc8c8;-fx-border-color: black;");
-            }else{
-                cell.setStyle("-fx-border-color: black;");
-            }
+            applyDayStyle(cell, targetDate);
             event.consume();
         });
 
         cell.setOnDragEntered(event -> {
             if (event.getGestureSource() != cell && event.getDragboard().hasString()) {
                 Task movingTask = resolveMovingTask(event.getDragboard());
-                boolean ok = canDropOn(targetDate, targetHourIndex, movingTask);
-                if (ok) {
-                    cell.setStyle("-fx-background-color: #a0e7a0; -fx-border-color: black;");
-                } else {
-                    cell.setStyle("-fx-background-color: #f38888; -fx-border-color: black;");
-                }
+                boolean ok = canDropOn(targetDate, targetSlotIndex, movingTask);
+                cell.setStyle(ok
+                        ? "-fx-background-color: #a0e7a0; -fx-border-color: #999999;"
+                        : "-fx-background-color: #f38888; -fx-border-color: #999999;");
             }
             event.consume();
         });
@@ -194,29 +164,24 @@ public class TaskDragDropSupport {
             if (db.hasString()) {
                 try {
                     String[] parts = db.getString().split("\\|");
-                    // id|name|fromDate|fromHour|duration
                     String taskId = parts[0];
                     LocalDate fromDate = LocalDate.parse(parts[2]);
-                    int fromStartHour = Integer.parseInt(parts[3]);
-                    int duration = Integer.parseInt(parts[4]);
+                    int fromStartSlot = Integer.parseInt(parts[3]);
 
                     Task movingTask = findTaskById(taskId);
                     if (movingTask == null) {
-                        // fallback to old grid lookup
                         Day fromDay = system.getGrid().get(fromDate);
                         if (fromDay != null) {
-                            movingTask = fromDay.returnDayGrid()[fromStartHour];
+                            movingTask = fromDay.returnDayGrid()[fromStartSlot];
                         }
                     }
 
-                    if (movingTask != null && canDropOn(targetDate, targetHourIndex, movingTask)) {
-                        MoveTask moveCmd = new MoveTask(
+                    if (movingTask != null && canDropOn(targetDate, targetSlotIndex, movingTask)) {
+                        new MoveTask(
                                 movingTask,
-                                fromDate, fromStartHour,
-                                targetDate, targetHourIndex,
-                                duration
-                        );
-                        moveCmd.execute();
+                                fromDate, fromStartSlot,
+                                targetDate, targetSlotIndex
+                        ).execute();
                         success = true;
                     }
                 } catch (Exception ex) {
@@ -226,84 +191,71 @@ public class TaskDragDropSupport {
 
             event.setDropCompleted(success);
             event.consume();
-
-            if (success && onMoved != null) {
-                onMoved.run();
-            }
+            if (success && onMoved != null) onMoved.run();
         });
     }
 
-    // ==================== Validation ====================
-
-    public boolean canDropOn(LocalDate targetDate, int targetHourIndex, Task movingTask) {
+    public boolean canDropOn(LocalDate targetDate, int targetSlotIndex, Task movingTask) {
         if (movingTask == null) return false;
 
         try {
             system.getGrid().putIfAbsent(targetDate, new Day(system.getBlockedTime()));
             Day targetDay = system.getGrid().get(targetDate);
 
-            int duration = movingTask.getDurationHours();
-            if (duration <= 0) duration = 2;
+            int slotCount = movingTask.getDurationSlots();
+            LocalTime targetStart = AppTimeReference.slotToLocalTime(targetSlotIndex);
 
-            LocalDate today = LocalDate.now();
-            LocalTime now = LocalTime.now();
-            int targetClockHour = system.getEngine().getStartingHour() + targetHourIndex;
-            LocalTime targetStartTime = LocalTime.of(targetClockHour, 0);
-
-            // Past
-            if (targetDate.isBefore(today) ||
-                    (targetDate.equals(today) && !targetStartTime.isAfter(now))) {
+            if (targetDate.isBefore(AppTimeReference.getCurrentDate())
+                    || (targetDate.equals(AppTimeReference.getCurrentDate())
+                    && !targetStart.isAfter(AppTimeReference.getCurrentTime()))) {
                 return false;
             }
 
-            // Exceeds day
-            if (targetHourIndex + duration > system.getEngine().getTotalHours()) {
+            if (targetSlotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
                 return false;
             }
 
-            // Deadline
             if (movingTask.hasDeadline()) {
                 LocalDate deadlineDate = movingTask.getDeadLineDate();
                 LocalTime deadlineTime = movingTask.getDeadLineTime();
                 if (deadlineDate == null) return false;
                 if (targetDate.isAfter(deadlineDate)) return false;
                 if (targetDate.equals(deadlineDate) && deadlineTime != null) {
-                    LocalTime finishTime = targetStartTime.plusHours(duration);
-                    if (finishTime.isAfter(deadlineTime)) return false;
+                    LocalTime finish = targetStart.plusMinutes(
+                            (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
+                    if (finish.isAfter(deadlineTime)) return false;
                 }
             }
 
-            // Conflicts
-            for (int i = 0; i < duration; i++) {
-                Task existing = targetDay.returnDayGrid()[targetHourIndex + i];
-                if (existing != null && existing != movingTask) {
-                    return false;
-                }
+            for (int i = 0; i < slotCount; i++) {
+                Task existing = targetDay.returnDayGrid()[targetSlotIndex + i];
+                if (existing != null && existing != movingTask) return false;
             }
-
             return true;
         } catch (Exception e) {
             return false;
         }
     }
 
-    // ==================== Helpers ====================
+    private void applyDayStyle(Pane cell, LocalDate date) {
+        if (date.equals(AppTimeReference.getCurrentDate())) {
+            cell.setStyle("-fx-background-color: #70d9f1; -fx-border-color: #999999;");
+        } else if (date.isBefore(AppTimeReference.getCurrentDate())) {
+            cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
+        } else {
+            cell.setStyle("-fx-border-color: #999999;");
+        }
+    }
 
     private Task resolveMovingTask(Dragboard db) {
         try {
             String[] parts = db.getString().split("\\|");
-            if (parts.length >= 1) {
-                Task byId = findTaskById(parts[0]);
-                if (byId != null) return byId;
-            }
-            if (parts.length >= 4) {
-                LocalDate fromDate = LocalDate.parse(parts[2]);
-                int fromStartHour = Integer.parseInt(parts[3]);
-                Day fromDay = system.getGrid().get(fromDate);
-                if (fromDay != null) {
-                    return fromDay.returnDayGrid()[fromStartHour];
-                }
-            }
+            Task byId = findTaskById(parts[0]);
+            if (byId != null) return byId;
+            LocalDate fromDate = LocalDate.parse(parts[2]);
+            int fromStartSlot = Integer.parseInt(parts[3]);
+            Day fromDay = system.getGrid().get(fromDate);
+            if (fromDay != null) return fromDay.returnDayGrid()[fromStartSlot];
         } catch (Exception ignored) {
         }
         return null;
