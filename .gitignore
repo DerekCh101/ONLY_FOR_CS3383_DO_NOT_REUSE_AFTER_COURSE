@@ -12,3 +12,8 @@ javafx-sdk-26/
 
 # OS
 .DS_Store
+
+db.properties
+**/db.properties
+.env
+.env.*

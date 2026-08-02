@@ -20,6 +20,9 @@ javafx {
     version = "23"
     modules = listOf("javafx.controls", "javafx.fxml")
 }
+dependencies {
+    implementation("org.postgresql:postgresql:42.7.4")
+}
 
 application {
     mainClass = "org.example.SchedulerApp"

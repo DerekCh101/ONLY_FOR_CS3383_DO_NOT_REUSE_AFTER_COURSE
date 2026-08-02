@@ -11,6 +11,7 @@ import javafx.application.Platform;
 import org.example.CliRunner.CLIRunner;
 import org.example.Command.*;
 import org.example.GUI.SchedulerController;
+import org.example.db.TaskRepository;
 
 public class TaskManagementSystem {
 
@@ -25,6 +26,7 @@ public class TaskManagementSystem {
     private boolean cliFlag;
     private Map<LocalDate, Day> daysGrid;
     private FetchPopOutTask popupTask;
+    private TaskRepository repo;
 
     private TaskManagementSystem() {
         System.out.println("System Created - with RunSchedulerCommand");
@@ -36,6 +38,7 @@ public class TaskManagementSystem {
         daysGrid = new TreeMap<>();
         engine = new SchedulerEngine(this, baseDate, daysGrid);
         cliFlag = false;
+        repo = new TaskRepository();
     }
 
     public static TaskManagementSystem getInstance() {
