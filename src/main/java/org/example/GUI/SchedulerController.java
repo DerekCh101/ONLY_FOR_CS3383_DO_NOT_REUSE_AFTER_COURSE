@@ -13,25 +13,30 @@ import javafx.scene.layout.StackPane;
 import org.example.AppTimeReference;
 import org.example.TaskManagementSystem;
 
-import java.time.LocalDate;
-
 public class SchedulerController {
 
+    private enum ViewMode { WEEK, MONTH }
+
+    @FXML private MenuItem resetAll;
     @FXML private StackPane root;
     @FXML private BorderPane borderPane;
     @FXML private GridPane grid;
     @FXML private Label sidePanel;
-    @FXML private Button btnPrev, btnNext, btnUndo, btnRedo, btnAdd;
+    @FXML private Button btnPrev, btnNext, btnUndo, btnRedo, btnAdd, btnMonthView;
     @FXML private MenuItem btnImport, btnRun;
     @FXML private Pane prevPane, nextPane;
-    @FXML private ScrollPane gridScroll; // add fx:id="gridScroll" on ScrollPane in FXML
+    @FXML private ScrollPane gridScroll;
 
     private TaskManagementSystem system;
+
+    private ViewMode viewMode = ViewMode.WEEK;
     private int weekOffset = 0;
+    private int monthOffset = 0;
 
     private TaskDragDropSupport dragDrop;
     private TaskDialogs dialogs;
-    private WeekGridBuilder gridBuilder;
+    private WeekGridBuilder weekGridBuilder;
+    private MonthGridBuilder monthGridBuilder;
 
     @FXML
     public void initialize() {
@@ -59,10 +64,13 @@ public class SchedulerController {
 
         dragDrop = new TaskDragDropSupport(system, root, this::refresh);
         dialogs = new TaskDialogs(root, system, this::refresh);
-        gridBuilder = new WeekGridBuilder(system, dragDrop, dialogs);
+        weekGridBuilder = new WeekGridBuilder(system, dragDrop, dialogs);
+        monthGridBuilder = new MonthGridBuilder(system, dialogs);
 
-        btnPrev.setOnAction(e -> { weekOffset--; refresh(); });
-        btnNext.setOnAction(e -> { weekOffset++; refresh(); });
+        btnPrev.setOnAction(e -> step(-1));
+        btnNext.setOnAction(e -> step(+1));
+
+        btnMonthView.setOnAction(e -> toggleViewMode());
 
         btnImport.setOnAction(e -> {
             system.command("addTaskFromFile");
@@ -87,11 +95,22 @@ public class SchedulerController {
             refresh();
         });
 
+        resetAll.setOnAction(e -> {
+            system.command("clearAllTask");
+            refresh();
+        });
+
         btnAdd.setOnAction(e -> dialogs.showTaskPopup(false, null, -1));
 
+        // Edge panes: only shift week when in week mode (hour drag week-switch)
         dragDrop.setupWeekEdgePanes(prevPane, nextPane, delta -> {
-            weekOffset += delta;
-            refresh();
+            if (viewMode == ViewMode.WEEK) {
+                weekOffset += delta;
+                refresh();
+            } else {
+                monthOffset += delta;
+                refresh();
+            }
         });
 
         Label prevPaneLabel = new Label("PREV");
@@ -108,24 +127,62 @@ public class SchedulerController {
         prevPane.getChildren().setAll(prevStack);
         nextPane.getChildren().setAll(nextStack);
 
-        prevPane.setOnMouseClicked(event -> {
-            weekOffset--;
-            refresh();
-        });
-        nextPane.setOnMouseClicked(event -> {
-            weekOffset++;
-            refresh();
-        });
+        prevPane.setOnMouseClicked(event -> step(-1));
+        nextPane.setOnMouseClicked(event -> step(+1));
 
+        updateNavLabels();
         Platform.runLater(this::refresh);
     }
 
+    private void toggleViewMode() {
+        if (viewMode == ViewMode.WEEK) {
+            viewMode = ViewMode.MONTH;
+            // Jump month so current week’s month is visible
+            monthOffset = 0;
+        } else {
+            viewMode = ViewMode.WEEK;
+            weekOffset = 0;
+        }
+        updateNavLabels();
+        refresh();
+    }
+
+    private void step(int delta) {
+        if (viewMode == ViewMode.WEEK) {
+            weekOffset += delta;
+        } else {
+            monthOffset += delta;
+        }
+        refresh();
+    }
+
+    private void updateNavLabels() {
+        if (viewMode == ViewMode.WEEK) {
+            btnPrev.setText("Prev Week");
+            btnNext.setText("Next Week");
+            btnMonthView.setText("Monthly View");
+        } else {
+            btnPrev.setText("Prev Month");
+            btnNext.setText("Next Month");
+            btnMonthView.setText("Weekly View");
+        }
+    }
+
     public void refresh() {
-        gridBuilder.build(grid, sidePanel, weekOffset);
-        Platform.runLater(this::scrollToCurrentTime);
+        if (viewMode == ViewMode.WEEK) {
+            weekGridBuilder.build(grid, sidePanel, weekOffset);
+            Platform.runLater(this::scrollToCurrentTime);
+        } else {
+            monthGridBuilder.build(grid, sidePanel, monthOffset);
+            if (gridScroll != null) {
+                gridScroll.setVvalue(0);
+            }
+        }
     }
 
     private void scrollToCurrentTime() {
+        if (viewMode != ViewMode.WEEK) return;
+
         ScrollPane scroll = gridScroll;
         if (scroll == null && grid.getParent() instanceof ScrollPane sp) {
             scroll = sp;

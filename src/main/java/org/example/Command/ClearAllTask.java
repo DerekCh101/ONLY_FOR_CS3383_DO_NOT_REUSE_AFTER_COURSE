@@ -4,67 +4,67 @@ import org.example.Day;
 import org.example.Task;
 import org.example.TaskManagementSystem;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 
 public class ClearAllTask implements Command {
 
-    private TaskManagementSystem theSystem;
-    private ArrayList<Task> savedTasks = new ArrayList<>();
+    private final TaskManagementSystem theSystem;
+    private final List<Task> savedTasks = new ArrayList<>();
 
     public ClearAllTask(TaskManagementSystem theSystem) {
         this.theSystem = theSystem;
+    }
 
-        // Save current state so we can undo
+    @Override
+    public boolean execute() throws SQLException {
+        savedTasks.clear();
         savedTasks.addAll(theSystem.getPlacedTasks());
         savedTasks.addAll(theSystem.getPendingTasks());
         savedTasks.addAll(theSystem.getUnscheduledTasks());
 
-        System.out.println("Preparing to clear all tasks...");
-    }
-
-    @Override
-    public boolean execute() {
-        // Clear all lists
         theSystem.getPlacedTasks().clear();
         theSystem.getPendingTasks().clear();
         theSystem.getUnscheduledTasks().clear();
 
-        // Clear the entire grid
-        for (Day day : theSystem.getGrid().values()) {
-            Task[] slots = day.returnDayGrid();
-            for (int i = 0; i < slots.length; i++) {
-                slots[i] = null;
-            }
-        }
+        // CRITICAL: drop Day objects so overload flags cannot linger
+        theSystem.getGrid().clear();
+
+        theSystem.getTaskRepo().dbCleanAll();
 
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
-        System.out.println("All tasks cleared from calendar.");
+        System.out.println("All tasks cleared.");
         return true;
     }
 
     @Override
-    public void undo() {
-        // Restore the lists
-        theSystem.getPlacedTasks().clear();
-        theSystem.getPendingTasks().clear();
-        theSystem.getUnscheduledTasks().clear();
-
+    public void undo() throws SQLException {
         for (Task t : savedTasks) {
-            if (t.isFixedTime()) {
+            if (t.getPlacedDate() != null && t.getPlacedTime() != null) {
+                theSystem.getGrid().putIfAbsent(
+                        t.getPlacedDate(),
+                        new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(t.getPlacedDate());
+                int slot = org.example.AppTimeReference.localTimeToSlot(t.getPlacedTime());
+                day.placeTask(slot, t);
                 theSystem.getPlacedTasks().add(t);
+            } else if (t.getLifeCycle() == org.example.TaskLifeCycle.UNSCHEDULED) {
+                theSystem.getUnscheduledTasks().add(t);
             } else {
                 theSystem.getPendingTasks().add(t);
             }
+            org.example.RefreshLifeCycle.refreshLifeCycle(t);
+            theSystem.getTaskRepo().dbAddTask(t);
         }
 
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
-        System.out.println("Clear All has been undone.");
     }
 
     @Override
-    public void redo() {
+    public void redo() throws SQLException {
         execute();
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);

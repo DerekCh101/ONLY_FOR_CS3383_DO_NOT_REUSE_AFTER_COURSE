@@ -2,11 +2,12 @@ package org.example.Command;
 
 import org.example.AppTimeReference;
 import org.example.Day;
+import org.example.RefreshLifeCycle;
 import org.example.Task;
 import org.example.TaskManagementSystem;
 
+import java.sql.SQLException;
 import java.time.LocalDate;
-import java.time.LocalTime;
 
 public class ClearTask implements Command {
 
@@ -23,7 +24,7 @@ public class ClearTask implements Command {
     }
 
     @Override
-    public boolean execute() {
+    public boolean execute() throws SQLException {
         if (thisTask == null) return false;
 
         wasPlaced = false;
@@ -41,12 +42,19 @@ public class ClearTask implements Command {
 
         for (Day day : theSystem.getGrid().values()) {
             Task[] slots = day.returnDayGrid();
+            boolean touched = false;
             for (int i = 0; i < slots.length; i++) {
                 if (slots[i] == thisTask) {
                     slots[i] = null;
+                    touched = true;
                 }
             }
+            if (touched) {
+                day.recomputeLoadFromGrid();
+            }
         }
+
+        theSystem.getTaskRepo().dbClearTask(thisTask);
 
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
@@ -54,7 +62,7 @@ public class ClearTask implements Command {
     }
 
     @Override
-    public void undo() {
+    public void undo() throws SQLException {
         if (thisTask == null) return;
 
         if (wasPlaced && savedDate != null) {
@@ -68,18 +76,21 @@ public class ClearTask implements Command {
             if (!theSystem.getPlacedTasks().contains(thisTask)) {
                 theSystem.getPlacedTasks().add(thisTask);
             }
+            RefreshLifeCycle.refreshLifeCycle(thisTask);
         } else {
             if (!theSystem.getPendingTasks().contains(thisTask)) {
                 theSystem.getPendingTasks().add(thisTask);
             }
         }
 
+        theSystem.getTaskRepo().dbAddTask(thisTask);
+
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
 
     @Override
-    public void redo() {
+    public void redo() throws SQLException {
         execute();
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);

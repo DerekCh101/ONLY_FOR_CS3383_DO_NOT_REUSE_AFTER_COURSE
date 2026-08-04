@@ -110,7 +110,6 @@ public class TaskDialogs {
         TextField nameField = new TextField();
         nameField.setPromptText("Task name");
 
-        // Duration: up/down, 0.5 hour steps
         Spinner<Double> durationSpinner = new Spinner<>();
         SpinnerValueFactory.DoubleSpinnerValueFactory durationFactory =
                 new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 12.0, 1.0, 0.5);
@@ -128,13 +127,13 @@ public class TaskDialogs {
         fixedRadio.setSelected(true);
         HBox typeBox = new HBox(12, fixedRadio, deadlineRadio, flexibleRadio);
 
-        DatePicker startDatePicker = new DatePicker(AppTimeReference.getCurrentDate());
+        DatePicker startDatePicker = new DatePicker((clickedDate==null?AppTimeReference.getCurrentDate():clickedDate));
         ComboBox<String> startSlotBox = createSlotCombo(
                 AppTimeReference.localTimeToSlot(LocalTime.of(9, 0)));
         HBox startRow = new HBox(10, startDatePicker, startSlotBox);
         VBox fixedBox = new VBox(6, new Label("Start Date & Time:"), startRow);
 
-        DatePicker deadlineDatePicker = new DatePicker(AppTimeReference.getCurrentDate());
+        DatePicker deadlineDatePicker = new DatePicker(clickedDate==null?AppTimeReference.getCurrentDate():clickedDate);
         ComboBox<String> deadlineSlotBox = createSlotCombo(
                 AppTimeReference.localTimeToSlot(LocalTime.of(18, 0)));
         HBox deadlineRow = new HBox(10, deadlineDatePicker, deadlineSlotBox);
@@ -202,6 +201,7 @@ public class TaskDialogs {
 
             boolean isFixed = fixedRadio.isSelected();
             boolean isDeadline = deadlineRadio.isSelected();
+            boolean isFlexible = flexibleRadio.isSelected();
 
             LocalDate startDate = null;
             LocalTime startTime = null;
@@ -239,10 +239,13 @@ public class TaskDialogs {
                         return;
                     }
                     if (fromGridClick) {
-                        LocalTime finish = clickedTime.plusMinutes(
-                                (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
+                        long durationMin = (long) slotCount * AppTimeReference.MINUTES_PER_SLOT;
+                        LocalTime finish = clickedTime.plusMinutes(durationMin);
+                        boolean wrappedPastMidnight = finish.isBefore(clickedTime);
+
                         if (clickedDate.isAfter(deadlineDate)
-                                || (clickedDate.equals(deadlineDate) && finish.isAfter(deadlineTime))) {
+                                || (clickedDate.equals(deadlineDate)
+                                && (wrappedPastMidnight || finish.isAfter(deadlineTime)))) {
                             showAlertPopup(scene, "Cannot place deadline task after its deadline.");
                             return;
                         }
@@ -253,15 +256,29 @@ public class TaskDialogs {
                 return;
             }
 
+            LocalDate placeDate = null;
+            LocalTime placeTime = null;
+            int placeSlot = -1;
+
             if (fromGridClick) {
-                if (slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
+                placeDate = clickedDate;
+                placeTime = clickedTime;
+                placeSlot = slotIndex;
+            } else if (isFixed && startDate != null && startTime != null) {
+                placeDate = startDate;
+                placeTime = startTime;
+                placeSlot = AppTimeReference.localTimeToSlot(startTime);
+            }
+
+            if (placeDate != null && placeTime != null && placeSlot >= 0) {
+                if (placeSlot + slotCount > AppTimeReference.SLOTS_PER_DAY) {
                     showAlertPopup(scene, "Task exceeds daily time range.");
                     return;
                 }
-                system.getGrid().putIfAbsent(clickedDate, new Day(system.getBlockedTime()));
-                Day day = system.getGrid().get(clickedDate);
+                system.getGrid().putIfAbsent(placeDate, new Day(system.getBlockedTime()));
+                Day day = system.getGrid().get(placeDate);
                 for (int i = 0; i < slotCount; i++) {
-                    if (day.returnDayGrid()[slotIndex + i] != null) {
+                    if (day.returnDayGrid()[placeSlot + i] != null) {
                         showAlertPopup(scene, "Time conflict with another task.");
                         return;
                     }
@@ -281,7 +298,15 @@ public class TaskDialogs {
             system.fetchPopupTask(pop);
 
             if (!system.command("addTask")) {
-                showAlertPopup(scene, "Failed to create task.");
+                if (isDeadline) {
+                    showAlertPopup(scene,
+                            "Could not fit this deadline task before its deadline.\nTask was not created.");
+                } else if (isFlexible) {
+                    showAlertPopup(scene,
+                            "Could not place this flexible task.\nTask was not created.");
+                } else {
+                    showAlertPopup(scene, "Failed to create task.");
+                }
                 return;
             }
 
@@ -302,6 +327,7 @@ public class TaskDialogs {
 
         Label msg = new Label(message);
         msg.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+        msg.setWrapText(true);
         Button ok = new Button("Okay");
 
         box.getChildren().addAll(msg, ok);

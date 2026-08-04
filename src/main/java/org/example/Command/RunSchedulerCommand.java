@@ -1,9 +1,8 @@
 package org.example.Command;
 
-import org.example.Day;
-import org.example.Task;
-import org.example.TaskManagementSystem;
+import org.example.*;
 
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -52,12 +51,19 @@ public class RunSchedulerCommand implements Command {
         }
     }
 
-    private void doSchedule() {
+    private void doSchedule() throws SQLException {
         theSystem.updateSchedule();
+
+        // Engine only touched memory; persist non-fixed tasks from this run
+        for (TaskSnapshot snap : previousState) {
+            Task t = snap.task;
+            RefreshLifeCycle.refreshLifeCycle(t);
+            theSystem.getTaskRepo().dbAddTask(t);
+        }
     }
 
     @Override
-    public boolean execute() {
+    public boolean execute() throws SQLException {
         doSchedule();
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
@@ -65,8 +71,7 @@ public class RunSchedulerCommand implements Command {
     }
 
     @Override
-    public void undo() {
-        // Clear all non-Fixed tasks
+    public void undo() throws SQLException {
         List<Task> toRemove = new ArrayList<>();
         for (Task t : theSystem.getPlacedTasks()) {
             if (!t.isFixedTime()) {
@@ -86,31 +91,29 @@ public class RunSchedulerCommand implements Command {
             }
         }
 
-        // Restore previous state
         for (TaskSnapshot snap : previousState) {
             Task t = snap.task;
 
             if (snap.wasPlaced && snap.placedDate != null && snap.placedTime != null) {
-                int hourIndex = snap.placedTime.getHour() - theSystem.getEngine().getStartingHour();
+                int slotIndex = AppTimeReference.localTimeToSlot(snap.placedTime);
                 int durationSlots = t.getDurationSlots();
-                if (durationSlots <= 0) durationSlots = 2;
+                if (durationSlots <= 0) durationSlots = 1;
 
                 theSystem.getGrid().putIfAbsent(snap.placedDate, new Day(theSystem.getBlockedTime()));
                 Day day = theSystem.getGrid().get(snap.placedDate);
 
                 boolean canPlace = true;
                 for (int i = 0; i < durationSlots; i++) {
-                    int h = hourIndex + i;
-                    if (h < 0 || h >= theSystem.getEngine().getTotalHours() || day.returnDayGrid()[h] != null) {
+                    int s = slotIndex + i;
+                    if (s < 0 || s >= AppTimeReference.SLOTS_PER_DAY
+                            || day.returnDayGrid()[s] != null) {
                         canPlace = false;
                         break;
                     }
                 }
 
                 if (canPlace) {
-                    for (int i = 0; i < durationSlots; i++) {
-                        day.returnDayGrid()[hourIndex + i] = t;
-                    }
+                    day.placeTask(slotIndex, t);
                     t.setPlacedDate(snap.placedDate);
                     t.setPlacedTime(snap.placedTime);
                     theSystem.getPlacedTasks().add(t);
@@ -124,6 +127,9 @@ public class RunSchedulerCommand implements Command {
                 t.setPlacedDate(null);
                 t.setPlacedTime(null);
             }
+
+            RefreshLifeCycle.refreshLifeCycle(t);
+            theSystem.getTaskRepo().dbAddTask(t);
         }
 
         RecordedCommand.getRedoList().add(this);
@@ -131,7 +137,7 @@ public class RunSchedulerCommand implements Command {
     }
 
     @Override
-    public void redo() {
+    public void redo() throws SQLException {
         doSchedule();
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);

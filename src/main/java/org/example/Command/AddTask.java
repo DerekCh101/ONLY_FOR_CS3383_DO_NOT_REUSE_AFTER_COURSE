@@ -1,6 +1,8 @@
 package org.example.Command;
 
 import org.example.*;
+
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 
@@ -31,28 +33,46 @@ public class AddTask implements Command {
     public AddTask(String taskName, double durationHours, int state,
                    LocalDate startDate, LocalTime startTime,
                    LocalDate deadlineDate, LocalTime deadlineTime) {
-        this(taskName, durationHours, state, startDate, startTime, deadlineDate, deadlineTime, null, null);
+        this(taskName, durationHours, state, startDate, startTime,
+                deadlineDate, deadlineTime, null, null);
     }
 
-    private void doAdd() {
+    /**
+     * @return false if rejected (nothing left in lists / DB)
+     */
+    private boolean doAdd() throws SQLException {
         if (placedDate != null && placedTime != null) {
-            placeOnGrid(placedDate, placedTime);
-        } else if (theTask.isFixedTime()) {
+            return placeOnGrid(placedDate, placedTime);
+        }
+
+        if (theTask.isFixedTime()) {
             LocalDate date = theTask.getStartingDate();
             LocalTime time = theTask.getStartingTime();
             if (date != null && time != null) {
-                placeOnGrid(date, time);
-            } else {
-                theSystem.getUnscheduledTasks().add(theTask);
+                return placeOnGrid(date, time);
             }
-        } else {
-            theSystem.getPendingTasks().add(theTask);
-            autoScheduled = true;
-            theSystem.updateSchedule();
+            // Fixed with no start: reject (do not dump to unscheduled)
+            return false;
         }
+
+        // Deadline or Flexible: try schedule once; if not placed → reject entirely
+        theSystem.getPendingTasks().add(theTask);
+        autoScheduled = true;
+        theSystem.updateSchedule();
+
+        if (!theSystem.getPlacedTasks().contains(theTask)) {
+            rollbackTask();
+            return false;
+        }
+        RefreshLifeCycle.refreshLifeCycle(theTask);
+        theSystem.getTaskRepo().dbAddTask(theTask);
+        return true;
     }
 
-    private void placeOnGrid(LocalDate date, LocalTime time) {
+    /**
+     * @return false if cannot place (does NOT add to unscheduled)
+     */
+    private boolean placeOnGrid(LocalDate date, LocalTime time) throws SQLException {
         int slotIndex = AppTimeReference.localTimeToSlot(time);
         int slotCount = theTask.getDurationSlots();
 
@@ -71,26 +91,21 @@ public class AddTask implements Command {
             }
         }
 
-        if (canPlace) {
-            day.placeTask(slotIndex, theTask);
-            theTask.setPlacedDate(date);
-            theTask.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
-            theSystem.getPlacedTasks().add(theTask);
-        } else {
-            theSystem.getUnscheduledTasks().add(theTask);
+        if (!canPlace) {
+            return false;
         }
-    }
 
-    @Override
-    public boolean execute() {
-        doAdd();
-        RecordedCommand.getRedoList().clear();
-        RecordedCommand.getUndoList().add(this);
+        day.placeTask(slotIndex, theTask);
+        theTask.setPlacedDate(date);
+        theTask.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
+        theSystem.getPlacedTasks().add(theTask);
+        RefreshLifeCycle.refreshLifeCycle(theTask);
+        theSystem.getTaskRepo().dbAddTask(theTask);
         return true;
     }
 
-    @Override
-    public void undo() {
+    /** Remove task from every list/grid after a failed auto-schedule. */
+    private void rollbackTask() {
         theSystem.getPendingTasks().remove(theTask);
         theSystem.getPlacedTasks().remove(theTask);
         theSystem.getUnscheduledTasks().remove(theTask);
@@ -104,6 +119,36 @@ public class AddTask implements Command {
             }
         }
 
+        theTask.setPlacedDate(null);
+        theTask.setPlacedTime(null);
+    }
+
+    @Override
+    public boolean execute() throws SQLException {
+        if (!doAdd()) {
+            return false;
+        }
+        RecordedCommand.getRedoList().clear();
+        RecordedCommand.getUndoList().add(this);
+        return true;
+    }
+
+    @Override
+    public void undo() throws SQLException {
+        theSystem.getPendingTasks().remove(theTask);
+        theSystem.getPlacedTasks().remove(theTask);
+        theSystem.getUnscheduledTasks().remove(theTask);
+
+        for (Day day : theSystem.getGrid().values()) {
+            Task[] slots = day.returnDayGrid();
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == theTask) {
+                    slots[i] = null;
+                }
+            }
+        }
+        theSystem.getTaskRepo().dbClearTask(theTask);
+
         if (autoScheduled) {
             theSystem.updateSchedule();
         }
@@ -113,8 +158,10 @@ public class AddTask implements Command {
     }
 
     @Override
-    public void redo() {
-        doAdd();
+    public void redo() throws SQLException {
+        if (!doAdd()) {
+            return;
+        }
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);
     }

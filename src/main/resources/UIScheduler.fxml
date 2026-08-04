@@ -30,6 +30,7 @@
                         <Menu text="File">
                             <items>
                                 <MenuItem text="Close" />
+                                <MenuItem fx:id="resetAll" text="Reset All (Wipe All Data)"/>
                             </items>
                         </Menu>
                         <Menu text="Edit">
@@ -49,7 +50,7 @@
                     <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
                     <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
                     <HBox HBox.hgrow="ALWAYS" />
-                    <Button mnemonicParsing="false" text="Monthly View" />
+                    <Button fx:id="btnMonthView" mnemonicParsing="false" text="Monthly View" />
                     <Button fx:id="btnPrev" text="Prev Week" />
                     <Button fx:id="btnNext" text="Next Week" />
                     <Button fx:id="btnAdd" text="Add Task" />
@@ -82,7 +83,8 @@
                 </BorderPane>
 
                 <VBox fx:id="sidePanelContainer" spacing="10" style="-fx-padding: 10;">
-                    <Label fx:id="sidePanel" style="-fx-font-weight: bold;" text="Unscheduled Tasks:" />
+                    <Label fx:id="sidePanel" style="-fx-font-weight: bold;"
+                           text="Unscheduled Tasks: (Tasks that were once placed on grid but cannot refit after using the scheduling algorithm)" />
                 </VBox>
 
             </SplitPane>

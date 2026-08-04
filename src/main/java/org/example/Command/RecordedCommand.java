@@ -1,6 +1,7 @@
 package org.example.Command;
 
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 public class RecordedCommand implements Command {
 
@@ -13,16 +14,16 @@ public class RecordedCommand implements Command {
         return redoList;
     }
     @Override
-    public boolean execute() {
+    public boolean execute() throws SQLException{
         // TODO Auto-generated method stub
         return true;
     }
     @Override
-    public void undo(){
+    public void undo() throws SQLException{
 
     }
     @Override
-    public void redo(){
+    public void redo() throws SQLException {
 
     }
 }

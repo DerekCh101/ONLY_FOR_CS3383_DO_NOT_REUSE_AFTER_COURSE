@@ -25,6 +25,37 @@ public class SchedulerEngine {
         this.system = system;
     }
 
+    /**
+     * Restore tasks that already have placedDate + placedTime onto the grid.
+     * Does NOT run deadline/flexible packing.
+     */
+    public void placeAlreadyPlacedTasks(List<Task> tasks) {
+        if (tasks == null || tasks.isEmpty()) return;
+
+        for (Task task : tasks) {
+            LocalDate date = task.getPlacedDate();
+            LocalTime time = task.getPlacedTime();
+            if (date == null || time == null) continue;
+
+            daysGrid.putIfAbsent(date, new Day(blockedTime));
+            Day day = daysGrid.get(date);
+            int slot = AppTimeReference.localTimeToSlot(time);
+
+            if (!day.canPlace(task, date, slot, true, true)
+                    || !respectsDeadlineTime(task, date, slot)) {
+                markUnscheduled(task);
+                continue;
+            }
+
+            day.placeTask(slot, task);
+            if (!system.getPlacedTasks().contains(task)) {
+                system.getPlacedTasks().add(task);
+            }
+            system.getPendingTasks().remove(task);
+            system.getUnscheduledTasks().remove(task);
+        }
+    }
+
     public void scheduleTasks(List<Task> tasks) {
         if (tasks == null || tasks.isEmpty()) {
             unscheduledTasks.clear();
@@ -60,19 +91,22 @@ public class SchedulerEngine {
 
     private void placeDeadlineTasks(ArrayList<Task> tasks) {
         for (Task task : tasks) {
+            if (task.getDeadLineDate() == null) {
+                markUnscheduled(task);
+                continue;
+            }
+
             long lastDay = ChronoUnit.DAYS.between(baseDate, task.getDeadLineDate()) + 1;
 
             if (lastDay < 0) {
-                unscheduledTasks.add(task);
+                markUnscheduled(task);
                 continue;
             }
             if (lastDay >= AppTimeReference.TOTAL_DAY_HORIZON) {
                 lastDay = AppTimeReference.TOTAL_DAY_HORIZON - 1;
             }
 
-            boolean placed = false;
-
-            placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, false, false);
+            boolean placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, false, false);
 
             if (!placed) {
                 placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, true, false);
@@ -83,7 +117,7 @@ public class SchedulerEngine {
             }
 
             if (!placed) {
-                unscheduledTasks.add(task);
+                markUnscheduled(task);
             }
         }
     }
@@ -104,7 +138,9 @@ public class SchedulerEngine {
                     theDay.placeTask(slot, task);
                     task.setPlacedDate(thisDay);
                     task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
-                    system.getPlacedTasks().add(task);
+                    if (!system.getPlacedTasks().contains(task)) {
+                        system.getPlacedTasks().add(task);
+                    }
                     daySearchCurrently = thisDay;
                     return true;
                 }
@@ -147,26 +183,74 @@ public class SchedulerEngine {
                         theDay.placeTask(slot, task);
                         task.setPlacedDate(thisDay);
                         task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
-                        system.getPlacedTasks().add(task);
+                        if (!system.getPlacedTasks().contains(task)) {
+                            system.getPlacedTasks().add(task);
+                        }
                         placed = true;
                     }
                 }
             }
 
             if (!placed) {
-                unscheduledTasks.add(task);
+                markUnscheduled(task);
             }
         }
     }
 
+    private void markUnscheduled(Task task) {
+        removeFromGrid(task);
+        system.getPlacedTasks().remove(task);
+        task.setPlacedDate(null);
+        task.setPlacedTime(null);
+        if (!unscheduledTasks.contains(task)) {
+            unscheduledTasks.add(task);
+            task.setLifeCycle(TaskLifeCycle.UNSCHEDULED);
+        }
+    }
+
+    private void removeFromGrid(Task task) {
+        for (Day day : daysGrid.values()) {
+            Task[] slots = day.returnDayGrid();
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == task) {
+                    slots[i] = null;
+                }
+            }
+        }
+    }
+
+    /**
+     * Finish-by deadline.
+     * Uses plusMinutes; if finish wraps past midnight (finish before start), reject on deadline day.
+     */
     private boolean respectsDeadlineTime(Task task, LocalDate day, int startSlot) {
-        if (task.getDeadLineTime() == null) return true;
-        if (day.isBefore(task.getDeadLineDate())) return true;
+        if (!task.hasDeadline() || task.getDeadLineDate() == null) {
+            return true;
+        }
+        if (day.isAfter(task.getDeadLineDate())) {
+            return false;
+        }
+        if (day.isBefore(task.getDeadLineDate())) {
+            return true;
+        }
+
+        // Same calendar day as deadline
+        if (task.getDeadLineTime() == null) {
+            return true;
+        }
 
         LocalTime start = AppTimeReference.slotToLocalTime(startSlot);
-        LocalTime finish = start.plusMinutes(
-                (long) task.getDurationSlots() * AppTimeReference.MINUTES_PER_SLOT);
+        long durationMin = (long) task.getDurationSlots() * AppTimeReference.MINUTES_PER_SLOT;
+        if (durationMin <= 0) {
+            durationMin = AppTimeReference.MINUTES_PER_SLOT;
+        }
 
+        LocalTime finish = start.plusMinutes(durationMin);
+        boolean wrappedPastMidnight = finish.isBefore(start);
+
+        if (wrappedPastMidnight) {
+            return false;
+        }
         return !finish.isAfter(task.getDeadLineTime());
     }
 
@@ -178,7 +262,6 @@ public class SchedulerEngine {
         return text.toString();
     }
 
-    /** @deprecated use AppTimeReference; kept so old callers compile */
     public int getStartingHour() {
         return AppTimeReference.GRID_START_HOUR;
     }

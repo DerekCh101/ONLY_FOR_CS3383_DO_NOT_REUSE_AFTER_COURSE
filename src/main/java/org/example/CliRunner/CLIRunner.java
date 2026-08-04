@@ -8,6 +8,7 @@ import org.example.Task;
 import org.example.TaskManagementSystem;
 
 import java.io.FileNotFoundException;
+import java.sql.SQLException;
 import java.util.Scanner;
 
 public class CLIRunner {
@@ -30,95 +31,95 @@ public class CLIRunner {
                 continue;
             }
 
-            switch (cmdString) {
+            try {
+                switch (cmdString) {
 
-                case "addTask":
-                    System.out.println("CLI addTask is currently disabled.");
-                    System.out.println("Please use the GUI to add tasks.");
-                    cmdString = null;
-                    break;
+                    case "addTask":
+                        System.out.println("CLI addTask is currently disabled.");
+                        System.out.println("Please use the GUI to add tasks.");
+                        break;
 
-                case "addTaskFromFile":
-                    try {
-                        Command addTaskWithFile = new AddTaskWithFile(theSystem);
-                        addTaskWithFile.execute();
-                    } catch (FileNotFoundException e) {
-                        System.out.println("File Not Found!");
-                    }
-                    cmdString = null;
-                    break;
-
-                case "clearTask":
-                    System.out.print("Enter task name to clear: ");
-                    String name = input.nextLine().trim();
-                    Task found = null;
-                    for (Task t : theSystem.getPlacedTasks()) {
-                        if (t.getTaskName().equals(name)) {
-                            found = t;
-                            break;
+                    case "addTaskFromFile":
+                        try {
+                            Command addTaskWithFile = new AddTaskWithFile(theSystem);
+                            addTaskWithFile.execute();
+                        } catch (FileNotFoundException e) {
+                            System.out.println("File Not Found!");
                         }
-                    }
-                    if (found == null) {
-                        for (Task t : theSystem.getPendingTasks()) {
+                        break;
+
+                    case "clearTask":
+                        System.out.print("Enter task name to clear: ");
+                        String name = input.nextLine().trim();
+                        Task found = null;
+                        for (Task t : theSystem.getPlacedTasks()) {
                             if (t.getTaskName().equals(name)) {
                                 found = t;
                                 break;
                             }
                         }
-                    }
-                    if (found == null) {
-                        for (Task t : theSystem.getUnscheduledTasks()) {
-                            if (t.getTaskName().equals(name)) {
-                                found = t;
-                                break;
+                        if (found == null) {
+                            for (Task t : theSystem.getPendingTasks()) {
+                                if (t.getTaskName().equals(name)) {
+                                    found = t;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    if (found == null) {
-                        System.out.println("Task not found: " + name);
-                    } else {
-                        Command clearTask = new ClearTask(found);
-                        clearTask.execute();
-                        System.out.println("Cleared: " + name);
-                    }
-                    cmdString = null;
-                    break;
+                        if (found == null) {
+                            for (Task t : theSystem.getUnscheduledTasks()) {
+                                if (t.getTaskName().equals(name)) {
+                                    found = t;
+                                    break;
+                                }
+                            }
+                        }
+                        if (found == null) {
+                            System.out.println("Task not found: " + name);
+                        } else {
+                            Command clearTask = new ClearTask(found);
+                            clearTask.execute();
+                            System.out.println("Cleared: " + name);
+                        }
+                        break;
 
-                case "printAll":
-                    Command printAll = new PrintAllTask(theSystem);
-                    printAll.execute();
-                    cmdString = null;
-                    break;
+                    case "printAll":
+                        Command printAll = new PrintAllTask(theSystem);
+                        printAll.execute();
+                        break;
 
-                case "undo":
-                    RecordedCommand undo = new Undo(theSystem);
-                    undo.execute();
-                    cmdString = null;
-                    break;
+                    case "undo":
+                        RecordedCommand undo = new Undo(theSystem);
+                        undo.execute();
+                        break;
 
-                case "redo":
-                    RecordedCommand redo = new Redo(theSystem);
-                    redo.execute();
-                    cmdString = null;
-                    break;
+                    case "redo":
+                        RecordedCommand redo = new Redo(theSystem);
+                        redo.execute();
+                        break;
 
-                case "update":
-                    theSystem.updateSchedule();
-                    System.out.println("Schedule updated.");
-                    cmdString = null;
-                    break;
+                    case "update":
+                        theSystem.updateSchedule();
+                        System.out.println("Schedule updated.");
+                        break;
 
-                case "exit":
-                    running = false;
-                    input.close();
-                    System.exit(0);
-                    break;
+                    case "exit":
+                        running = false;
+                        input.close();
+                        System.exit(0);
+                        break;
 
-                default:
-                    System.out.println("Invalid Command.");
-                    cmdString = null;
-                    break;
+                    default:
+                        System.out.println("Invalid Command.");
+                        break;
+                }
+            } catch (SQLException e) {
+                System.out.println("Database error: " + e.getMessage());
+            } catch (Exception e) {
+                System.out.println("Command failed: " + e.getMessage());
             }
+
+            cmdString = null;
         }
     }
 

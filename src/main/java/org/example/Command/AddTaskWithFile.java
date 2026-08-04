@@ -1,20 +1,20 @@
 package org.example.Command;
 
-import org.example.Task;
-import org.example.TaskManagementSystem;
-import org.example.ValidateAddTaskInput;
+import org.example.*;
 
-import java.io.InputStream;
-import java.util.*;
-import java.time.format.DateTimeFormatter;
 import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Scanner;
 
 public class AddTaskWithFile implements Command {
 
-    private ArrayList<Task> addedTaskList = new ArrayList<>();
-    private TaskManagementSystem theSystem;
+    private final ArrayList<Task> addedTaskList = new ArrayList<>();
+    private final TaskManagementSystem theSystem;
 
     public AddTaskWithFile(TaskManagementSystem theSystem) throws FileNotFoundException {
         this.theSystem = theSystem;
@@ -25,16 +25,12 @@ public class AddTaskWithFile implements Command {
         }
 
         Scanner file = new Scanner(input);
-
         DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
         DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("HH-mm");
 
         while (file.hasNextLine()) {
-
             String taskName = file.nextLine().trim();
-            if (taskName.isBlank()) {
-                continue;
-            }
+            if (taskName.isBlank()) continue;
 
             int duration = 2;
             int state = 0;
@@ -43,7 +39,6 @@ public class AddTaskWithFile implements Command {
             LocalDate deadlineDate = null;
             LocalTime deadlineTime = null;
 
-            // Duration
             if (file.hasNextLine()) {
                 String durationString = file.nextLine().trim();
                 if (!durationString.isBlank()) {
@@ -55,20 +50,18 @@ public class AddTaskWithFile implements Command {
                 }
             }
 
-            // State
             if (file.hasNextLine()) {
                 String stateString = file.nextLine().trim();
                 if (!stateString.isBlank()) {
                     try {
                         state = Integer.parseInt(stateString);
                     } catch (NumberFormatException e) {
-                        state = 3; // default to Flexible
+                        state = 3;
                     }
                 }
             }
 
-            // Read extra fields according to state
-            if (state == 1) { // Fixed → needs start date + time
+            if (state == 1) {
                 if (file.hasNextLine()) {
                     String dateStr = file.nextLine().trim();
                     if (!dateStr.isBlank()) {
@@ -89,7 +82,7 @@ public class AddTaskWithFile implements Command {
                         }
                     }
                 }
-            } else if (state == 2) { // Deadline → needs deadline date + time
+            } else if (state == 2) {
                 if (file.hasNextLine()) {
                     String dateStr = file.nextLine().trim();
                     if (!dateStr.isBlank()) {
@@ -113,25 +106,20 @@ public class AddTaskWithFile implements Command {
                     }
                 }
             }
-            // state 3 (Flexible) → nothing more to read
 
             try {
                 boolean valid = ValidateAddTaskInput.validateAddTaskInput(
                         taskName, duration, state,
                         startDate, startTime, deadlineDate, deadlineTime);
-
                 if (valid) {
-                    Task thisTask = new Task(
+                    addedTaskList.add(new Task(
                             taskName, duration, state,
-                            startDate, startTime, deadlineDate, deadlineTime);
-
-                    addedTaskList.add(thisTask);
+                            startDate, startTime, deadlineDate, deadlineTime));
                 } else {
-                    System.out.printf("Validation failed, %s is not created.\n", taskName);
+                    System.out.printf("Validation failed, %s is not created.%n", taskName);
                 }
-
             } catch (Exception e) {
-                System.out.printf("Something went wrong, %s is not created.\n", taskName);
+                System.out.printf("Something went wrong, %s is not created.%n", taskName);
             }
         }
 
@@ -139,44 +127,104 @@ public class AddTaskWithFile implements Command {
         System.out.println("File loading complete. Tasks prepared: " + addedTaskList.size());
     }
 
-    @Override
-    public boolean execute() {
-        for (Task task : addedTaskList) {
+    private void placeFixedIfPossible(Task task) {
+        LocalDate date = task.getStartingDate();
+        LocalTime time = task.getStartingTime();
+        if (date == null || time == null) {
             theSystem.getPendingTasks().add(task);
+            return;
+        }
+
+        int slotIndex = AppTimeReference.localTimeToSlot(time);
+        int slotCount = task.getDurationSlots();
+
+        theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
+        Day day = theSystem.getGrid().get(date);
+
+        boolean canPlace = slotIndex >= 0
+                && slotIndex + slotCount <= AppTimeReference.SLOTS_PER_DAY;
+        if (canPlace) {
+            for (int i = 0; i < slotCount; i++) {
+                if (day.returnDayGrid()[slotIndex + i] != null) {
+                    canPlace = false;
+                    break;
+                }
+            }
+        }
+
+        if (canPlace) {
+            day.placeTask(slotIndex, task);
+            task.setPlacedDate(date);
+            task.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
+            theSystem.getPlacedTasks().add(task);
+        } else {
+            theSystem.getPendingTasks().add(task);
+        }
+    }
+
+    private void applyToSystem() {
+        for (Task task : addedTaskList) {
+            if (task.isFixedTime()) {
+                placeFixedIfPossible(task);
+            } else {
+                theSystem.getPendingTasks().add(task);
+            }
+        }
+        theSystem.updateSchedule();
+    }
+
+    private void removeFromSystem(Task task) {
+        theSystem.getPendingTasks().remove(task);
+        theSystem.getPlacedTasks().remove(task);
+        theSystem.getUnscheduledTasks().remove(task);
+        for (Day day : theSystem.getGrid().values()) {
+            Task[] slots = day.returnDayGrid();
+            boolean touched = false;
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == task) {
+                    slots[i] = null;
+                    touched = true;
+                }
+            }
+            if (touched) {
+                day.recomputeLoadFromGrid();
+            }
+        }
+        task.setPlacedDate(null);
+        task.setPlacedTime(null);
+    }
+
+    @Override
+    public boolean execute() throws SQLException {
+        applyToSystem();
+        for (Task task : addedTaskList) {
+            RefreshLifeCycle.refreshLifeCycle(task);
+            theSystem.getTaskRepo().dbAddTask(task);
         }
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
-        System.out.println("Tasks added from file.");
+        System.out.println("Tasks added from file (DB saved).");
         return true;
     }
 
     @Override
-    public void undo() {
+    public void undo() throws SQLException {
         for (Task task : addedTaskList) {
-            theSystem.getPendingTasks().remove(task);
-            theSystem.getPlacedTasks().remove(task);
-            theSystem.getUnscheduledTasks().remove(task);
-
-            // Also clear from grid
-            for (var day : theSystem.getGrid().values()) {
-                Task[] slots = day.returnDayGrid();
-                for (int i = 0; i < slots.length; i++) {
-                    if (slots[i] == task) {
-                        slots[i] = null;
-                    }
-                }
-            }
+            removeFromSystem(task);
+            theSystem.getTaskRepo().dbClearTask(task);
         }
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
 
     @Override
-    public void redo() {
+    public void redo() throws SQLException {
+        applyToSystem();
         for (Task task : addedTaskList) {
-            theSystem.getPendingTasks().add(task);
+            RefreshLifeCycle.refreshLifeCycle(task);
+            theSystem.getTaskRepo().dbAddTask(task);
         }
-        RecordedCommand.getRedoList().removeLast();
+        RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);
     }
 }

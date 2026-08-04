@@ -177,12 +177,11 @@ public class TaskDragDropSupport {
                     }
 
                     if (movingTask != null && canDropOn(targetDate, targetSlotIndex, movingTask)) {
-                        new MoveTask(
+                        success = new MoveTask(
                                 movingTask,
                                 fromDate, fromStartSlot,
                                 targetDate, targetSlotIndex
                         ).execute();
-                        success = true;
                     }
                 } catch (Exception ex) {
                     success = false;
@@ -195,6 +194,10 @@ public class TaskDragDropSupport {
         });
     }
 
+    /**
+     * Shared drop rules: not in the past, fits in day, no conflict,
+     * deadline finish-by (with midnight wrap).
+     */
     public boolean canDropOn(LocalDate targetDate, int targetSlotIndex, Task movingTask) {
         if (movingTask == null) return false;
 
@@ -203,8 +206,11 @@ public class TaskDragDropSupport {
             Day targetDay = system.getGrid().get(targetDate);
 
             int slotCount = movingTask.getDurationSlots();
+            if (slotCount <= 0) return false;
+
             LocalTime targetStart = AppTimeReference.slotToLocalTime(targetSlotIndex);
 
+            // Reject past (and "now" as start)
             if (targetDate.isBefore(AppTimeReference.getCurrentDate())
                     || (targetDate.equals(AppTimeReference.getCurrentDate())
                     && !targetStart.isAfter(AppTimeReference.getCurrentTime()))) {
@@ -215,15 +221,27 @@ public class TaskDragDropSupport {
                 return false;
             }
 
+            // Deadline: must finish on/before deadline (same rules as add/grid)
             if (movingTask.hasDeadline()) {
                 LocalDate deadlineDate = movingTask.getDeadLineDate();
                 LocalTime deadlineTime = movingTask.getDeadLineTime();
                 if (deadlineDate == null) return false;
-                if (targetDate.isAfter(deadlineDate)) return false;
+
+                if (targetDate.isAfter(deadlineDate)) {
+                    return false;
+                }
+
                 if (targetDate.equals(deadlineDate) && deadlineTime != null) {
-                    LocalTime finish = targetStart.plusMinutes(
-                            (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
-                    if (finish.isAfter(deadlineTime)) return false;
+                    long durationMin = (long) slotCount * AppTimeReference.MINUTES_PER_SLOT;
+                    LocalTime finish = targetStart.plusMinutes(durationMin);
+                    boolean wrappedPastMidnight = finish.isBefore(targetStart);
+
+                    // start already after deadline, or finish after deadline, or wrapped to next day
+                    if (targetStart.isAfter(deadlineTime)
+                            || wrappedPastMidnight
+                            || finish.isAfter(deadlineTime)) {
+                        return false;
+                    }
                 }
             }
 

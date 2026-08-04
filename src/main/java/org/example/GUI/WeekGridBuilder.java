@@ -7,9 +7,7 @@ import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
-import org.example.AppTimeReference;
-import org.example.Task;
-import org.example.TaskManagementSystem;
+import org.example.*;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -83,7 +81,9 @@ public class WeekGridBuilder {
                         label.setWrapText(true);
                         label.setStyle("-fx-font-size: 10px;");
                         cell.getChildren().add(label);
-                        dragDrop.makeDraggable(cell, taskInCell, date, slotIndex);
+                        if(!(taskInCell.getWorkflow()== Workflow.FINISHED||taskInCell.getLifeCycle()== TaskLifeCycle.PAST)){
+                            dragDrop.makeDraggable(cell, taskInCell, date, slotIndex);
+                        }
                     }
                 }
 
@@ -143,7 +143,24 @@ public class WeekGridBuilder {
         // 17:15 → halfway down the 17:00 row, etc.
         nowBar.setTranslateY(fractionInSlot * CELL_HEIGHT);
 
-        sidePanel.setText("Unscheduled task:\n" + system.getEngine().printUnscheduledTask());
+        StringBuilder sb = new StringBuilder("Unscheduled task:\n"); //side panel showing unscheudled task after fetching db
+        try {
+            java.time.format.DateTimeFormatter fmt =
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            for (Task t : system.getTaskRepo().fetchUnscheduledTasks()) {
+                sb.append(t.getTaskName()).append(t.getState()==1?" Fixed Task":t.getState()==2?" Deadline Task":" Flexible Task");
+                if (t.getPlacementUpdatedAt() != null) {
+                    java.time.LocalDateTime local = java.time.LocalDateTime.ofInstant(
+                            t.getPlacementUpdatedAt(),
+                            java.time.ZoneId.systemDefault());
+                    sb.append("  ( ").append(local.format(fmt)).append(" )");
+                }
+                sb.append('\n');
+            }
+        } catch (java.sql.SQLException e) {
+            sb.append("(failed to load)\n");
+        }
+        sidePanel.setText(sb.toString());
     }
 
     /**
