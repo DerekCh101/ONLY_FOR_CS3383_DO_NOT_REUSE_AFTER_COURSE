@@ -10,7 +10,7 @@ import java.util.List;
 
 public class TaskRepository {
 
-    private final String url = "jdbc:postgresql://localhost:5432/Scheduler";
+    private final String url = "jdbc:postgresql://100.113.239.82:5432/Scheduler";
     private final String user = "postgres";
     private final String password = System.getenv("postgres_pw");
 
