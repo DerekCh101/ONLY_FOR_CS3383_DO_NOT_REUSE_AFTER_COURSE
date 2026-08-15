@@ -256,9 +256,12 @@ public class TaskRepository {
      */
     private boolean isLocalInstallStale() throws SQLException {
         String last = sqlite.getMeta("last_postgres_sync_at");
-        if (last == null || last.isBlank()) return false;
+        if (last == null || last.isBlank()) return false; // first run
+
         Instant then = Instant.parse(last);
-        return ChronoUnit.MONTHS.between(then, Instant.now()) >= STALE_MONTHS;
+        long days = ChronoUnit.DAYS.between(then, Instant.now());
+        // ~3 months (STALE_MONTHS * 30 days)
+        return days >= (long) STALE_MONTHS * 30L;
     }
 
     /**
