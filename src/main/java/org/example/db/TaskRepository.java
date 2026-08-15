@@ -6,11 +6,19 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class TaskRepository {
+
+    /** No Postgres sync this long → wipe local SQLite, require reconnect. */
+    public static final int STALE_MONTHS = 3;
+    /** No active device this long → wipe Postgres app data (abandoned). */
+    public static final int ABANDONED_MONTHS = 12;
 
     private final SqliteTaskRepository sqlite =
             new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
@@ -21,12 +29,13 @@ public class TaskRepository {
             System.getenv("postgres_pw")
     );
 
+    private final String deviceId = DeviceConfig.getOrCreateDeviceId();
     private boolean postgresAvailable = false;
 
     public TaskRepository() {
         try {
             sqlite.initialize();
-            System.out.println("SQLite cache ready");
+            System.out.println("SQLite cache ready, deviceId=" + deviceId);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -45,6 +54,10 @@ public class TaskRepository {
         return postgresAvailable;
     }
 
+    public String getDeviceId() {
+        return deviceId;
+    }
+
     public void tryReconnectPostgres() {
         try {
             postgres.initialize();
@@ -56,18 +69,22 @@ public class TaskRepository {
     }
 
     // -------------------------------------------------------------------------
-    // Public API (unchanged names for commands)
+    // Public API
     // -------------------------------------------------------------------------
 
     public void dbAddTask(Task task) throws SQLException {
         ensureTimestamps(task);
+        Set<String> deleted = sqlite.fetchDeletedIds();
+        if (deleted.contains(task.getID())) {
+            // resurrect only if explicitly adding again with same id (you use new UUIDs normally)
+            // still allow upsert; optional: remove from delete log — skip for safety
+        }
         sqlite.upsert(task);
         if (postgresAvailable) {
             try {
                 postgres.upsert(task);
             } catch (SQLException e) {
                 postgresAvailable = false;
-                System.err.println("Postgres write failed — SQLite kept");
                 e.printStackTrace();
             }
         }
@@ -87,10 +104,10 @@ public class TaskRepository {
     }
 
     public void dbClearTask(Task task) throws SQLException {
-        sqlite.delete(task);
+        sqlite.deleteTaskAndLog(task);
         if (postgresAvailable) {
             try {
-                postgres.delete(task);
+                postgres.deleteTaskAndLog(task);
             } catch (SQLException e) {
                 postgresAvailable = false;
                 e.printStackTrace();
@@ -99,10 +116,10 @@ public class TaskRepository {
     }
 
     public void dbCleanAll() throws SQLException {
-        sqlite.deleteAll();
+        sqlite.deleteAllTasksAndLogEach();
         if (postgresAvailable) {
             try {
-                postgres.deleteAll();
+                postgres.deleteAllTasksAndLog();
             } catch (SQLException e) {
                 postgresAvailable = false;
                 e.printStackTrace();
@@ -113,12 +130,15 @@ public class TaskRepository {
     public void dbfetchAll(TaskManagementSystem theSystem) throws SQLException {
         if (postgresAvailable) {
             try {
-                syncMergePostgresIntoSqlite();
+                fullOnlineSync();
             } catch (SQLException e) {
                 postgresAvailable = false;
-                System.err.println("Sync failed — SQLite only");
+                System.err.println("Sync failed — SQLite only: " + e.getMessage());
                 e.printStackTrace();
             }
+        } else {
+            // offline: if local considers itself stale, refuse to show old cache as fresh
+            maybeWarnLocalStaleOffline();
         }
         loadSqliteIntoMemory(theSystem);
     }
@@ -132,22 +152,88 @@ public class TaskRepository {
     }
 
     // -------------------------------------------------------------------------
-    // Merge
+    // Sync
     // -------------------------------------------------------------------------
 
-    private void syncMergePostgresIntoSqlite() throws SQLException {
+    private void fullOnlineSync() throws SQLException {
+        postgres.upsertDevice(deviceId, guessName(), System.getProperty("os.name"));
+
+        // Abandoned account / no devices for a year → drop everything remote
+        if (postgres.wipeIfAbandoned(ABANDONED_MONTHS)) {
+            System.out.println("Abandoned account data wiped on Postgres");
+            sqlite.wipeAllLocalData();
+        }
+
+        // Revoke devices that disappeared for STALE_MONTHS
+        postgres.revokeStaleDevices(STALE_MONTHS);
+
+        // This install stale locally → wipe SQLite, force full pull
+        if (isLocalInstallStale()) {
+            System.out.println("Local install stale > " + STALE_MONTHS + " months — wiping SQLite, full pull");
+            sqlite.wipeAllLocalData();
+        }
+
+        syncDeletesBothWays();
+        postgres.touchDeleteSync(deviceId);
+
+        syncTasksBothWays();
+        postgres.touchTaskSync(deviceId);
+
+        sqlite.setMeta("last_postgres_sync_at", Instant.now().toString());
+        sqlite.setMeta("last_delete_sync_at", Instant.now().toString());
+
+        gcDeleteLogs();
+    }
+
+    private boolean isLocalInstallStale() throws SQLException {
+        String last = sqlite.getMeta("last_postgres_sync_at");
+        if (last == null || last.isBlank()) return false; // first run
+        Instant then = Instant.parse(last);
+        return ChronoUnit.MONTHS.between(then, Instant.now()) >= STALE_MONTHS;
+    }
+
+    private void maybeWarnLocalStaleOffline() throws SQLException {
+        if (isLocalInstallStale()) {
+            System.out.println("WARNING: offline and stale — connect Postgres once to refresh cache");
+            // optional hard wipe offline:
+            // sqlite.wipeAllLocalData();
+        }
+    }
+
+    private void syncDeletesBothWays() throws SQLException {
+        // Pull remote deletes → local
+        for (Object[] row : postgres.fetchAllDeletes()) {
+            String id = (String) row[0];
+            Instant when = (Instant) row[1];
+            sqlite.deleteTaskRow(id);
+            sqlite.recordDelete(id, when);
+        }
+        // Push local deletes → remote
+        for (String[] row : sqlite.fetchAllDeletes()) {
+            String id = row[0];
+            Instant when = Instant.parse(row[1]);
+            postgres.deleteTaskRow(id);
+            postgres.recordDelete(id, when);
+        }
+    }
+
+    private void syncTasksBothWays() throws SQLException {
+        Set<String> deleted = sqlite.fetchDeletedIds();
+
         List<Task> remoteList = postgres.fetchAll();
         for (Task remote : remoteList) {
+            if (deleted.contains(remote.getID())) continue;
             Task local = sqlite.findById(remote.getID());
             Task merged = (local == null) ? remote : mergeTasks(local, remote);
+            if (deleted.contains(merged.getID())) continue;
             sqlite.upsert(merged);
         }
-        // optional: push local-only rows up
-        List<Task> localList = sqlite.fetchAll();
+
         Map<String, Task> remoteById = new HashMap<>();
         for (Task r : remoteList) remoteById.put(r.getID(), r);
 
-        for (Task local : localList) {
+        for (Task local : sqlite.fetchAll()) {
+            if (deleted.contains(local.getID())) continue;
             if (!remoteById.containsKey(local.getID())) {
                 try {
                     postgres.upsert(local);
@@ -158,13 +244,15 @@ public class TaskRepository {
         }
     }
 
-    /**
-     * local = SQLite, remote = Postgres.
-     * placement_* ← newer placement_updated_at (tie → remote)
-     * content/workflow/lifecycle/state ← newer last_updated_at (tie → remote)
-     */
+    private void gcDeleteLogs() throws SQLException {
+        Instant cutoff = postgres.minDeleteAckAmongActive(STALE_MONTHS);
+        if (cutoff == null) return;
+        postgres.purgeDeletesBefore(cutoff);
+        sqlite.purgeDeletesBefore(cutoff);
+        System.out.println("GC sync_deletes before " + cutoff);
+    }
+
     static Task mergeTasks(Task local, Task remote) {
-        // start from local, then overlay by clocks
         Task out = Task.loadTaskFromdb(
                 local.getID(),
                 local.getTaskName(),
@@ -182,19 +270,15 @@ public class TaskRepository {
         out.setPlacementUpdatedAt(local.getPlacementUpdatedAt());
         out.setLastUpdatedAt(local.getLastUpdatedAt());
 
-        // placement: placed_date / placed_time
         int placeCmp = compareInstant(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt());
         if (placeCmp <= 0) {
-            // remote newer or tie → prefer remote
             out.setPlacedDate(remote.getPlacedDate());
             out.setPlacedTime(remote.getPlacedTime());
             out.setPlacementUpdatedAt(remote.getPlacementUpdatedAt());
         }
 
-        // content: name, duration, state, deadline, lifecycle, workflow
         int lastCmp = compareInstant(local.getLastUpdatedAt(), remote.getLastUpdatedAt());
         Task src = (lastCmp <= 0) ? remote : local;
-
         out.setTaskName(src.getTaskName());
         out.setDurationHours(src.getDurationHours());
         out.setState(src.getState());
@@ -205,11 +289,9 @@ public class TaskRepository {
         out.setLifeCycle(src.getLifeCycle());
         out.setWorkflow(src.getWorkflow());
         out.setLastUpdatedAt(src.getLastUpdatedAt() != null ? src.getLastUpdatedAt() : Instant.now());
-
         return out;
     }
 
-    /** @return <0 if a older than b, >0 if a newer, 0 if equal/both null */
     static int compareInstant(Instant a, Instant b) {
         if (a == null && b == null) return 0;
         if (a == null) return -1;
@@ -225,8 +307,19 @@ public class TaskRepository {
         }
     }
 
+    private String guessName() {
+        try {
+            return java.net.InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            return "device";
+        }
+    }
+
     private void loadSqliteIntoMemory(TaskManagementSystem theSystem) throws SQLException {
+        Set<String> deleted = sqlite.fetchDeletedIds();
         for (Task task : sqlite.fetchAll()) {
+            if (deleted.contains(task.getID())) continue;
+
             LocalDate placedDate = task.getPlacedDate();
             LocalTime placedTime = task.getPlacedTime();
             TaskLifeCycle lifeFromDb = task.getLifeCycle();

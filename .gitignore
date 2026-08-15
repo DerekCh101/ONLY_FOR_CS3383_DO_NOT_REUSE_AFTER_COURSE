@@ -13,6 +13,10 @@ javafx-sdk-26/
 # OS
 .DS_Store
 
+# Local DB / device identity (do not commit)
+scheduler-cache.db
+scheduler-device-id.txt
+
 db.properties
 **/db.properties
 .env

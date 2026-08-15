@@ -45,6 +45,7 @@ public class PostgresTaskRepository {
                     workflow VARCHAR(20),
                     placement_updated_at TIMESTAMPTZ DEFAULT NOW(),
                     last_updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    user_id VARCHAR(36),
                     CHECK (
                         state != 'Deadline'
                         OR (deadline_date IS NOT NULL AND deadline_time IS NOT NULL)
@@ -56,11 +57,130 @@ public class PostgresTaskRepository {
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS workflow VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS placement_updated_at TIMESTAMPTZ DEFAULT NOW()");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS last_updated_at TIMESTAMPTZ DEFAULT NOW()");
+            st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
             st.executeUpdate("UPDATE TASK.tasks SET lifecycle = 'UNSCHEDULED' WHERE lifecycle IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET workflow = 'UNFINISHED' WHERE workflow IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET placement_updated_at = NOW() WHERE placement_updated_at IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET last_updated_at = COALESCE(last_updated_at, placement_updated_at, NOW()) WHERE last_updated_at IS NULL");
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS TASK.sync_deletes (
+                    id VARCHAR(36) PRIMARY KEY,
+                    deleted_at TIMESTAMPTZ NOT NULL,
+                    user_id VARCHAR(36)
+                )
+                """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS TASK.devices (
+                    device_id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36),
+                    display_name TEXT,
+                    platform TEXT,
+                    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_task_sync_at TIMESTAMPTZ,
+                    last_delete_sync_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    revoked_at TIMESTAMPTZ
+                )
+                """);
         }
+    }
+
+    public void upsertDevice(String deviceId, String displayName, String platform) throws SQLException {
+        String sql = """
+            INSERT INTO TASK.devices (device_id, display_name, platform, last_seen_at, created_at)
+            VALUES (?, ?, ?, NOW(), NOW())
+            ON CONFLICT (device_id) DO UPDATE SET
+                display_name = COALESCE(EXCLUDED.display_name, TASK.devices.display_name),
+                platform = COALESCE(EXCLUDED.platform, TASK.devices.platform),
+                last_seen_at = NOW(),
+                revoked_at = NULL
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, deviceId);
+            ps.setString(2, displayName);
+            ps.setString(3, platform);
+            ps.executeUpdate();
+        }
+    }
+
+    public void touchDeleteSync(String deviceId) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE TASK.devices SET last_delete_sync_at = NOW(), last_seen_at = NOW() WHERE device_id = ?")) {
+            ps.setString(1, deviceId);
+            ps.executeUpdate();
+        }
+    }
+
+    public void touchTaskSync(String deviceId) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE TASK.devices SET last_task_sync_at = NOW(), last_seen_at = NOW() WHERE device_id = ?")) {
+            ps.setString(1, deviceId);
+            ps.executeUpdate();
+        }
+    }
+
+    public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
+        String sql = """
+            SELECT MIN(last_delete_sync_at) FROM TASK.devices
+            WHERE revoked_at IS NULL
+              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+              AND last_delete_sync_at IS NOT NULL
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, staleAfterMonths);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    Timestamp t = rs.getTimestamp(1);
+                    return t != null ? t.toInstant() : null;
+                }
+                return null;
+            }
+        }
+    }
+
+    public void revokeStaleDevices(int staleAfterMonths) throws SQLException {
+        String sql = """
+            UPDATE TASK.devices
+            SET revoked_at = NOW()
+            WHERE revoked_at IS NULL
+              AND last_seen_at < NOW() - (? || ' months')::INTERVAL
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, staleAfterMonths);
+            ps.executeUpdate();
+        }
+    }
+
+    /** No active device for abandonedAfterMonths → wipe all app data (single-user / null user_id). */
+    public boolean wipeIfAbandoned(int abandonedAfterMonths) throws SQLException {
+        String countSql = """
+            SELECT COUNT(*) FROM TASK.devices
+            WHERE revoked_at IS NULL
+              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(countSql)) {
+            ps.setInt(1, abandonedAfterMonths);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                int active = rs.getInt(1);
+                if (active > 0) return false;
+            }
+        }
+        try (Connection conn = connect();
+             Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM TASK.tasks");
+            st.execute("DELETE FROM TASK.sync_deletes");
+            st.execute("DELETE FROM TASK.devices");
+        }
+        return true;
     }
 
     public void upsert(Task task) throws SQLException {
@@ -85,7 +205,6 @@ public class PostgresTaskRepository {
                 placement_updated_at = EXCLUDED.placement_updated_at,
                 last_updated_at = EXCLUDED.last_updated_at
             """;
-
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             bind(ps, task);
@@ -106,18 +225,66 @@ public class PostgresTaskRepository {
         }
     }
 
-    public void delete(Task task) throws SQLException {
+    public void deleteTaskRow(String id) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM TASK.tasks WHERE id = ?")) {
-            ps.setString(1, task.getID());
+            ps.setString(1, id);
             ps.executeUpdate();
         }
     }
 
-    public void deleteAll() throws SQLException {
+    public void recordDelete(String id, Instant deletedAt) throws SQLException {
+        String sql = """
+            INSERT INTO TASK.sync_deletes (id, deleted_at) VALUES (?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                deleted_at = GREATEST(TASK.sync_deletes.deleted_at, EXCLUDED.deleted_at)
+            """;
         try (Connection conn = connect();
-             Statement st = conn.createStatement()) {
-            st.execute("DELETE FROM TASK.tasks");
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setTimestamp(2, Timestamp.from(deletedAt));
+            ps.executeUpdate();
+        }
+    }
+
+    public void deleteTaskAndLog(Task task) throws SQLException {
+        Instant when = Instant.now();
+        deleteTaskRow(task.getID());
+        recordDelete(task.getID(), when);
+    }
+
+    public void deleteAllTasksAndLog() throws SQLException {
+        try (Connection conn = connect();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT id FROM TASK.tasks")) {
+            List<String> ids = new ArrayList<>();
+            while (rs.next()) ids.add(rs.getString(1));
+            Instant when = Instant.now();
+            for (String id : ids) {
+                deleteTaskRow(id);
+                recordDelete(id, when);
+            }
+        }
+    }
+
+    public List<Object[]> fetchAllDeletes() throws SQLException {
+        List<Object[]> list = new ArrayList<>();
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, deleted_at FROM TASK.sync_deletes");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                list.add(new Object[]{rs.getString(1), rs.getTimestamp(2).toInstant()});
+            }
+        }
+        return list;
+    }
+
+    public void purgeDeletesBefore(Instant cutoff) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM TASK.sync_deletes WHERE deleted_at < ?")) {
+            ps.setTimestamp(1, Timestamp.from(cutoff));
+            ps.executeUpdate();
         }
     }
 
@@ -126,9 +293,7 @@ public class PostgresTaskRepository {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT * FROM TASK.tasks");
              ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                list.add(mapRow(rs));
-            }
+            while (rs.next()) list.add(mapRow(rs));
         }
         return list;
     }
@@ -145,13 +310,10 @@ public class PostgresTaskRepository {
         ps.setString(2, task.getTaskName());
         ps.setDouble(3, task.getDurationHours());
         ps.setString(4, state);
-
         if (task.getPlacedDate() != null) ps.setDate(5, Date.valueOf(task.getPlacedDate()));
         else ps.setNull(5, Types.DATE);
-
         if (task.getPlacedTime() != null) ps.setTime(6, Time.valueOf(task.getPlacedTime()));
         else ps.setNull(6, Types.TIME);
-
         if (task.getState() == 2 && task.getDeadLineDate() != null) {
             ps.setDate(7, Date.valueOf(task.getDeadLineDate()));
             if (task.getDeadLineTime() != null) ps.setTime(8, Time.valueOf(task.getDeadLineTime()));
@@ -160,7 +322,6 @@ public class PostgresTaskRepository {
             ps.setNull(7, Types.DATE);
             ps.setNull(8, Types.TIME);
         }
-
         ps.setString(9, life.name());
         ps.setString(10, flow.name());
         ps.setTimestamp(11, Timestamp.from(placement));
@@ -199,13 +360,11 @@ public class PostgresTaskRepository {
         );
         task.setLifeCycle(life);
         task.setWorkflow(flow);
-
         Timestamp p = rs.getTimestamp("placement_updated_at");
         if (p != null) task.setPlacementUpdatedAt(p.toInstant());
         Timestamp l = rs.getTimestamp("last_updated_at");
         if (l != null) task.setLastUpdatedAt(l.toInstant());
         else if (p != null) task.setLastUpdatedAt(p.toInstant());
-
         return task;
     }
 }

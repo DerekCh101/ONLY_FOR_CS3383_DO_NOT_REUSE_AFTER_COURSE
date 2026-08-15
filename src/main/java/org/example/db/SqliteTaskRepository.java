@@ -7,7 +7,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class SqliteTaskRepository {
 
@@ -40,9 +42,55 @@ public class SqliteTaskRepository {
                     last_updated_at TEXT
                 )
                 """);
-            // old DBs: try add columns (ignore if exist)
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sync_deletes (
+                    id TEXT PRIMARY KEY,
+                    deleted_at TEXT NOT NULL
+                )
+                """);
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sync_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+                """);
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN last_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN placement_updated_at TEXT"); } catch (SQLException ignored) {}
+        }
+    }
+
+    /** Nuclear local reset (stale device). */
+    public void wipeAllLocalData() throws SQLException {
+        try (Connection conn = connect();
+             Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM tasks");
+            st.execute("DELETE FROM sync_deletes");
+            // keep sync_meta device-related keys optional — clear sync cursors
+            st.execute("DELETE FROM sync_meta WHERE key IN ('last_postgres_sync_at','last_delete_sync_at')");
+        }
+    }
+
+    public void setMeta(String key, String value) throws SQLException {
+        String sql = """
+            INSERT INTO sync_meta(key, value) VALUES(?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, key);
+            ps.setString(2, value);
+            ps.executeUpdate();
+        }
+    }
+
+    public String getMeta(String key) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT value FROM sync_meta WHERE key = ?")) {
+            ps.setString(1, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString(1);
+                return null;
+            }
         }
     }
 
@@ -88,18 +136,74 @@ public class SqliteTaskRepository {
         }
     }
 
-    public void delete(Task task) throws SQLException {
+    public void deleteTaskRow(String taskId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM tasks WHERE id = ?")) {
-            ps.setString(1, task.getID());
+            ps.setString(1, taskId);
             ps.executeUpdate();
         }
     }
 
-    public void deleteAll() throws SQLException {
+    public void recordDelete(String taskId, Instant deletedAt) throws SQLException {
+        String sql = """
+            INSERT INTO sync_deletes(id, deleted_at) VALUES(?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                deleted_at = CASE
+                    WHEN excluded.deleted_at > sync_deletes.deleted_at THEN excluded.deleted_at
+                    ELSE sync_deletes.deleted_at
+                END
+            """;
         try (Connection conn = connect();
-             Statement st = conn.createStatement()) {
-            st.execute("DELETE FROM tasks");
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, taskId);
+            ps.setString(2, deletedAt.toString());
+            ps.executeUpdate();
+        }
+    }
+
+    public void deleteTaskAndLog(Task task) throws SQLException {
+        Instant when = Instant.now();
+        deleteTaskRow(task.getID());
+        recordDelete(task.getID(), when);
+    }
+
+    public void deleteAllTasksAndLogEach() throws SQLException {
+        List<Task> all = fetchAll();
+        Instant when = Instant.now();
+        for (Task t : all) {
+            deleteTaskRow(t.getID());
+            recordDelete(t.getID(), when);
+        }
+    }
+
+    public List<String[]> fetchAllDeletes() throws SQLException {
+        List<String[]> list = new ArrayList<>();
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, deleted_at FROM sync_deletes");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                list.add(new String[]{rs.getString(1), rs.getString(2)});
+            }
+        }
+        return list;
+    }
+
+    public Set<String> fetchDeletedIds() throws SQLException {
+        Set<String> set = new HashSet<>();
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT id FROM sync_deletes");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) set.add(rs.getString(1));
+        }
+        return set;
+    }
+
+    public void purgeDeletesBefore(Instant cutoff) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM sync_deletes WHERE deleted_at < ?")) {
+            ps.setString(1, cutoff.toString());
+            ps.executeUpdate();
         }
     }
 
@@ -211,7 +315,6 @@ public class SqliteTaskRepository {
         if (p != null) task.setPlacementUpdatedAt(p);
         if (l != null) task.setLastUpdatedAt(l);
         else if (p != null) task.setLastUpdatedAt(p);
-
         return task;
     }
 
