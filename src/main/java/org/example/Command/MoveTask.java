@@ -123,6 +123,7 @@ public class MoveTask implements Command {
         }
 
         RefreshLifeCycle.refreshLifeCycle(task);
+        task.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(task);
     }
 
@@ -154,6 +155,7 @@ public class MoveTask implements Command {
             task.setStartingTime(oldStartingTime);
         }
         RefreshLifeCycle.refreshLifeCycle(task);
+        task.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(task);
 
         RecordedCommand.getRedoList().add(this);

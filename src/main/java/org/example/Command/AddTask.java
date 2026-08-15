@@ -51,11 +51,9 @@ public class AddTask implements Command {
             if (date != null && time != null) {
                 return placeOnGrid(date, time);
             }
-            // Fixed with no start: reject (do not dump to unscheduled)
             return false;
         }
 
-        // Deadline or Flexible: try schedule once; if not placed → reject entirely
         theSystem.getPendingTasks().add(theTask);
         autoScheduled = true;
         theSystem.updateSchedule();
@@ -65,6 +63,7 @@ public class AddTask implements Command {
             return false;
         }
         RefreshLifeCycle.refreshLifeCycle(theTask);
+        theTask.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(theTask);
         return true;
     }
@@ -100,11 +99,11 @@ public class AddTask implements Command {
         theTask.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
         theSystem.getPlacedTasks().add(theTask);
         RefreshLifeCycle.refreshLifeCycle(theTask);
+        theTask.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(theTask);
         return true;
     }
 
-    /** Remove task from every list/grid after a failed auto-schedule. */
     private void rollbackTask() {
         theSystem.getPendingTasks().remove(theTask);
         theSystem.getPlacedTasks().remove(theTask);

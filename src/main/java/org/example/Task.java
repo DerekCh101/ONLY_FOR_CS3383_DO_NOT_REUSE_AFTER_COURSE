@@ -22,6 +22,7 @@ public class Task {
     private Workflow workflow;
     private TaskLifeCycle taskLifeCycle;
     private Instant placementUpdatedAt;
+    private Instant lastUpdatedAt;
 
     public Task(String taskName,
                 double durationHours,
@@ -42,6 +43,7 @@ public class Task {
         this.taskLifeCycle = TaskLifeCycle.UNSCHEDULED;
         this.workflow = Workflow.UNFINISHED;
         this.placementUpdatedAt = null;
+        this.lastUpdatedAt = Instant.now();
         theSystem = TaskManagementSystem.getInstance();
     }
 
@@ -64,6 +66,7 @@ public class Task {
         this.taskLifeCycle = TaskLifeCycle.UNSCHEDULED;
         this.workflow = Workflow.UNFINISHED;
         this.placementUpdatedAt = null;
+        this.lastUpdatedAt = null;
     }
 
     public static Task loadTaskFromdb(String id,
@@ -108,6 +111,10 @@ public class Task {
         return state;
     }
 
+    public void setState(int state) {
+        this.state = state;
+    }
+
     public LocalDate getStartingDate() {
         return startingDate;
     }
@@ -122,6 +129,14 @@ public class Task {
 
     public LocalTime getDeadLineTime() {
         return deadLineTime;
+    }
+
+    public void setDeadLineDate(LocalDate deadLineDate) {
+        this.deadLineDate = deadLineDate;
+    }
+
+    public void setDeadLineTime(LocalTime deadLineTime) {
+        this.deadLineTime = deadLineTime;
     }
 
     public LocalDate getPlacedDate() {
@@ -199,6 +214,26 @@ public class Task {
         this.placementUpdatedAt = placementUpdatedAt;
     }
 
+    public Instant getLastUpdatedAt() {
+        return lastUpdatedAt;
+    }
+
+    public void setLastUpdatedAt(Instant lastUpdatedAt) {
+        this.lastUpdatedAt = lastUpdatedAt;
+    }
+
+    /** Content / workflow / lifecycle change (not necessarily a move). */
+    public void touchLastUpdated() {
+        this.lastUpdatedAt = Instant.now();
+    }
+
+    /** Grid place / move / reschedule. Also bumps lastUpdatedAt. */
+    public void touchPlacementUpdated() {
+        Instant now = Instant.now();
+        this.placementUpdatedAt = now;
+        this.lastUpdatedAt = now;
+    }
+
     @Override
     public String toString() {
         return "Task{" +
@@ -211,6 +246,7 @@ public class Task {
                 ", lifeCycle=" + taskLifeCycle +
                 ", workflow=" + workflow +
                 ", placementUpdatedAt=" + placementUpdatedAt +
+                ", lastUpdatedAt=" + lastUpdatedAt +
                 '}';
     }
 }

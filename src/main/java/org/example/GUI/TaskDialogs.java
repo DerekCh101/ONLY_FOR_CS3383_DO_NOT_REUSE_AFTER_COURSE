@@ -59,7 +59,8 @@ public class TaskDialogs {
 
         Label extraLabel;
         if (task.isFixedTime()) {
-            extraLabel = new Label("Fixed Time: " + task.getStartingDate() + " " + task.getStartingTime());
+            extraLabel = new Label("Fixed Time: " + (task.getStartingDate()==null?task.getPlacedDate().toString():task.getStartingDate()) + " " +
+                    (task.getStartingTime()==null?task.getPlacedTime().toString():task.getStartingTime().toString()));
         } else if (task.hasDeadline()) {
             extraLabel = new Label("Deadline: " + task.getDeadLineDate() + " " + task.getDeadLineTime());
         } else {

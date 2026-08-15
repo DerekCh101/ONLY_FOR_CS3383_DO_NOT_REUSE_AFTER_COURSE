@@ -20,8 +20,10 @@ javafx {
     version = "23"
     modules = listOf("javafx.controls", "javafx.fxml")
 }
+
 dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
+    implementation("org.xerial:sqlite-jdbc:3.45.3.0")
 }
 
 application {

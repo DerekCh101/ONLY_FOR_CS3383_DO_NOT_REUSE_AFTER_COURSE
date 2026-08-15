@@ -42,14 +42,11 @@ public class TaskManagementSystem {
         repo = new TaskRepository();
 
         try {
-            // use this — theSystem is still null during construction
-            repo.initialize();
             repo.dbfetchAll(this);
         } catch (SQLException e) {
-            System.out.println("Failed to load PostgreSQL: " + e.getMessage());
+            System.out.println("Failed to load tasks: " + e.getMessage());
             e.printStackTrace();
         }
-        // GUI not attached yet — refreshGUI() no-ops until attachGUI
     }
 
     public static TaskManagementSystem getInstance() {
