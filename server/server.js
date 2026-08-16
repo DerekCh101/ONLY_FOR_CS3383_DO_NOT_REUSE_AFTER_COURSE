@@ -17,7 +17,7 @@ http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json");
 
     if (req.method === "GET" && req.url === "/tasks") {
-        res.end(JSON.stringify(data().tasks));
+        res.end(JSON.stringify(data()));
         return;
     }
 
