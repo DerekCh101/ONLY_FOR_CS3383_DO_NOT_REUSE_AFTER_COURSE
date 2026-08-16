@@ -12,38 +12,21 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Local offline cache on this machine (one file, e.g. scheduler-cache.db).
- * Works when Postgres/Tailscale is down. TaskRepository syncs this with Postgres when online.
- *
- * Tables (no schema name — SQLite is simpler):
- *   tasks        – calendar tasks on this device
- *   sync_deletes – ids deleted here (pushed to server later)
- *   sync_meta    – small key/value (last sync time, etc.)
+ * Local offline cache (scheduler-cache.db).
+ * sync_deletes: id + deleted_at + optional title (for humans / push to Postgres).
  */
 public class SqliteTaskRepository {
 
-    /** JDBC URL, e.g. jdbc:sqlite:scheduler-cache.db */
     private final String url;
 
-    /**
-     * Stores the file URL. Does not create the file until connect/initialize.
-     */
     public SqliteTaskRepository(String url) {
         this.url = url;
     }
 
-    /**
-     * Opens a connection to the local SQLite file (creates file if missing).
-     * Always close with try-with-resources.
-     */
     public Connection connect() throws SQLException {
         return DriverManager.getConnection(url);
     }
 
-    /**
-     * Creates tables if they do not exist.
-     * ALTER in try/catch: older cache files may lack new columns; SQLite has limited IF NOT EXISTS for columns.
-     */
     public void initialize() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
@@ -63,14 +46,13 @@ public class SqliteTaskRepository {
                     last_updated_at TEXT
                 )
                 """);
-            // Same idea as Postgres sync_deletes, but local-only until synced
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS sync_deletes (
                     id TEXT PRIMARY KEY,
-                    deleted_at TEXT NOT NULL
+                    deleted_at TEXT NOT NULL,
+                    title TEXT
                 )
                 """);
-            // Tiny settings store: key → value strings
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS sync_meta (
                     key TEXT PRIMARY KEY,
@@ -79,14 +61,10 @@ public class SqliteTaskRepository {
                 """);
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN last_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN placement_updated_at TEXT"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN title TEXT"); } catch (SQLException ignored) {}
         }
     }
 
-    /**
-     * Nuclear local reset (stale device policy).
-     * Clears tasks and delete log; clears sync timestamps so next online run does a full pull.
-     * Does not delete the whole .db file.
-     */
     public void wipeAllLocalData() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
@@ -96,10 +74,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Writes one meta key (insert or replace).
-     * Example keys: last_postgres_sync_at, last_delete_sync_at.
-     */
     public void setMeta(String key, String value) throws SQLException {
         String sql = """
             INSERT INTO sync_meta(key, value) VALUES(?, ?)
@@ -113,9 +87,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Reads one meta value, or null if the key was never set.
-     */
     public String getMeta(String key) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT value FROM sync_meta WHERE key = ?")) {
@@ -127,10 +98,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Insert task or update if id already exists (UPSERT) into local cache.
-     * Dates/times stored as text (ISO strings) because SQLite has fewer native types.
-     */
     public void upsert(Task task) throws SQLException {
         String sql = """
             INSERT INTO tasks (
@@ -160,9 +127,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Updates only workflow + last_updated_at locally (e.g. mark finished).
-     */
     public void updateWorkflow(Task task) throws SQLException {
         String sql = "UPDATE tasks SET workflow = ?, last_updated_at = ? WHERE id = ?";
         try (Connection conn = connect();
@@ -176,10 +140,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Deletes the task row only. Does not write sync_deletes.
-     * Used when applying a remote delete, or inside deleteTaskAndLog.
-     */
     public void deleteTaskRow(String taskId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM tasks WHERE id = ?")) {
@@ -188,67 +148,66 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Records "this id was deleted at deletedAt" in local sync_deletes.
-     * Keeps the later timestamp if the id was already logged.
-     */
-    public void recordDelete(String taskId, Instant deletedAt) throws SQLException {
+    public void recordDelete(String taskId, Instant deletedAt, String title) throws SQLException {
         String sql = """
-            INSERT INTO sync_deletes(id, deleted_at) VALUES(?, ?)
+            INSERT INTO sync_deletes(id, deleted_at, title) VALUES(?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 deleted_at = CASE
                     WHEN excluded.deleted_at > sync_deletes.deleted_at THEN excluded.deleted_at
                     ELSE sync_deletes.deleted_at
-                END
+                END,
+                title = COALESCE(excluded.title, sync_deletes.title)
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, taskId);
             ps.setString(2, deletedAt.toString());
+            ps.setString(3, (title != null && !title.isBlank()) ? title : null);
             ps.executeUpdate();
         }
     }
 
-    /**
-     * User deleted a task while offline (or always): remove row + log id for later Postgres push.
-     */
-    public void deleteTaskAndLog(Task task) throws SQLException {
-        Instant when = Instant.now();
-        deleteTaskRow(task.getID());
-        recordDelete(task.getID(), when);
+    public void recordDelete(String taskId, Instant deletedAt) throws SQLException {
+        recordDelete(taskId, deletedAt, null);
     }
 
-    /**
-     * Clear-all: every local task removed and each id written to sync_deletes.
-     */
+    public void deleteTaskAndLog(Task task) throws SQLException {
+        Instant when = Instant.now();
+        String title = task.getTaskName();
+        deleteTaskRow(task.getID());
+        recordDelete(task.getID(), when, title);
+    }
+
     public void deleteAllTasksAndLogEach() throws SQLException {
         List<Task> all = fetchAll();
         Instant when = Instant.now();
         for (Task t : all) {
             deleteTaskRow(t.getID());
-            recordDelete(t.getID(), when);
+            recordDelete(t.getID(), when, t.getTaskName());
         }
     }
 
     /**
-     * All local delete-log rows as String[]{ id, deletedAtIso }.
-     * TaskRepository pushes these to Postgres when online.
+     * String[]{ id, deletedAtIso, titleOrEmpty }
      */
     public List<String[]> fetchAllDeletes() throws SQLException {
         List<String[]> list = new ArrayList<>();
         try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, deleted_at FROM sync_deletes");
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, deleted_at, title FROM sync_deletes");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                list.add(new String[]{rs.getString(1), rs.getString(2)});
+                String title = rs.getString(3);
+                list.add(new String[]{
+                        rs.getString(1),
+                        rs.getString(2),
+                        title != null ? title : ""
+                });
             }
         }
         return list;
     }
 
-    /**
-     * Just the set of deleted task ids (fast membership tests during merge/load).
-     */
     public Set<String> fetchDeletedIds() throws SQLException {
         Set<String> set = new HashSet<>();
         try (Connection conn = connect();
@@ -259,9 +218,6 @@ public class SqliteTaskRepository {
         return set;
     }
 
-    /**
-     * Drops local delete-log rows older than cutoff (after GC policy says it is safe).
-     */
     public void purgeDeletesBefore(Instant cutoff) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -271,9 +227,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Loads every local task into Java objects.
-     */
     public List<Task> fetchAll() throws SQLException {
         List<Task> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -284,10 +237,6 @@ public class SqliteTaskRepository {
         return list;
     }
 
-    /**
-     * One task by id, or null if not in local cache.
-     * Used during merge: "do we already have this remote id?"
-     */
     public Task findById(String id) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT * FROM tasks WHERE id = ?")) {
@@ -299,9 +248,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Tasks that look unscheduled (side panel): lifecycle flag or no placed date.
-     */
     public List<Task> fetchUnscheduled() throws SQLException {
         String sql = """
             SELECT * FROM tasks
@@ -317,9 +263,6 @@ public class SqliteTaskRepository {
         return list;
     }
 
-    /**
-     * True if some local task already sits on that date+time (simple conflict helper).
-     */
     public boolean containsIdByDateTime(LocalDate placedDate, LocalTime placedTime) throws SQLException {
         String sql = "SELECT 1 FROM tasks WHERE placed_date = ? AND placed_time = ?";
         try (Connection conn = connect();
@@ -332,10 +275,6 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * Fills INSERT/UPSERT placeholders from a Task.
-     * Private — SQLite gets strings for dates/times/instants.
-     */
     private void bind(PreparedStatement ps, Task task) throws SQLException {
         String state = task.getState() == 1 ? "Fixed"
                 : task.getState() == 2 ? "Deadline" : "Flexible";
@@ -363,9 +302,6 @@ public class SqliteTaskRepository {
         ps.setString(12, last.toString());
     }
 
-    /**
-     * One SQL row → Task. Private helper for fetchAll / findById / fetchUnscheduled.
-     */
     private Task mapRow(ResultSet rs) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("title");
@@ -402,19 +338,16 @@ public class SqliteTaskRepository {
         return task;
     }
 
-    /** Parse ISO date text, or null if empty. */
     private static LocalDate parseDate(String s) {
         if (s == null || s.isBlank()) return null;
         return LocalDate.parse(s);
     }
 
-    /** Parse ISO time text, or null if empty. */
     private static LocalTime parseTime(String s) {
         if (s == null || s.isBlank()) return null;
         return LocalTime.parse(s);
     }
 
-    /** Parse ISO-8601 instant text, or null if empty. */
     private static Instant parseInstant(String s) {
         if (s == null || s.isBlank()) return null;
         return Instant.parse(s);

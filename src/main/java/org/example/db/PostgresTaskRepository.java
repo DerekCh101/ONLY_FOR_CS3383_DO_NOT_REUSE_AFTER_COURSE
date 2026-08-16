@@ -15,48 +15,31 @@ import java.util.List;
  *
  * Schema under TASK:
  *   tasks        – real calendar tasks
- *   sync_deletes – ids that were deleted (so other devices can remove them too)
+ *   sync_deletes – ids that were deleted (title optional, for humans only)
  *   devices      – each laptop/desktop install that has synced
  */
 public class PostgresTaskRepository {
 
-    /** JDBC URL, e.g. jdbc:postgresql://100.x.x.x:5432/Scheduler */
     private final String url;
-    /** DB login name, usually "postgres" */
     private final String user;
-    /** DB password (from env var, not hard-coded in source) */
     private final String password;
 
-    /**
-     * Stores how to connect. Does not open a connection yet.
-     */
     public PostgresTaskRepository(String url, String user, String password) {
         this.url = url;
         this.user = user;
         this.password = password;
     }
 
-    /**
-     * Opens a new connection to Postgres.
-     * Caller should close it (try-with-resources).
-     * Throws if Postgres is down, wrong password, or network/Tailscale issue.
-     */
     public Connection connect() throws SQLException {
         return DriverManager.getConnection(url, user, password);
     }
 
-    /**
-     * Creates schema/tables if missing, and adds any new columns on old DBs.
-     * Safe to run every startup (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
-     */
     public void initialize() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
 
-            // Namespace so tables are TASK.tasks, not public.tasks
             st.execute("CREATE SCHEMA IF NOT EXISTS TASK");
 
-            // Main task table: one row per task (UUID id)
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.tasks (
                     id VARCHAR(36) PRIMARY KEY,
@@ -79,7 +62,6 @@ public class PostgresTaskRepository {
                 )
                 """);
 
-            // Upgrade path if table already existed from an older app version
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS lifecycle VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS workflow VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS placement_updated_at TIMESTAMPTZ DEFAULT NOW()");
@@ -90,16 +72,18 @@ public class PostgresTaskRepository {
             st.executeUpdate("UPDATE TASK.tasks SET placement_updated_at = NOW() WHERE placement_updated_at IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET last_updated_at = COALESCE(last_updated_at, placement_updated_at, NOW()) WHERE last_updated_at IS NULL");
 
-            // Delete log: "task id X was deleted at time T" for multi-device sync
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.sync_deletes (
                     id VARCHAR(36) PRIMARY KEY,
                     deleted_at TIMESTAMPTZ NOT NULL,
+                    title VARCHAR(100),
                     user_id VARCHAR(36)
                 )
                 """);
+            // Upgrade older DBs that only had id + deleted_at
+            st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS title VARCHAR(100)");
+            st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
 
-            // One row per app install (laptop, desktop, …)
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.devices (
                     device_id VARCHAR(36) PRIMARY KEY,
@@ -116,10 +100,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Registers this machine in TASK.devices, or refreshes last_seen_at if it already exists.
-     * Clearing revoked_at means "this device is active again."
-     */
     public void upsertDevice(String deviceId, String displayName, String platform) throws SQLException {
         String sql = """
             INSERT INTO TASK.devices (device_id, display_name, platform, last_seen_at, created_at)
@@ -139,10 +119,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * After delete-log sync finishes, mark this device's last_delete_sync_at = now.
-     * Used later so GC knows "this device has applied deletes up to at least this time."
-     */
     public void touchDeleteSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -152,9 +128,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * After task upsert/merge sync finishes, mark last_task_sync_at = now.
-     */
     public void touchTaskSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -165,38 +138,27 @@ public class PostgresTaskRepository {
     }
 
     /**
-     * Among devices that still look "active" (seen recently, not revoked),
-     * return the earliest last_delete_sync_at.
-     * Delete-log rows older than that are safe to purge (every active device already saw them).
-     * Returns null if no device has an ack yet.
-     */
-    /**
-     * Safe GC cutoff: only when EVERY active device has a non-null last_delete_sync_at.
-     * Then returns MIN(ack). If any active device never synced deletes, returns null (no purge).
-     */
-    /**
      * Purge only when ≥2 active devices AND every active device has acked deletes.
-     * Single-device → null → no GC (tombstones stay for the other machine).
      */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
-        SELECT
-          COUNT(*) FILTER (
-            WHERE revoked_at IS NULL
-              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
-          ) AS active_cnt,
-          COUNT(*) FILTER (
-            WHERE revoked_at IS NULL
-              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
-              AND last_delete_sync_at IS NOT NULL
-          ) AS acked_cnt,
-          MIN(last_delete_sync_at) FILTER (
-            WHERE revoked_at IS NULL
-              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
-              AND last_delete_sync_at IS NOT NULL
-          ) AS min_ack
-        FROM TASK.devices
-        """;
+            SELECT
+              COUNT(*) FILTER (
+                WHERE revoked_at IS NULL
+                  AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+              ) AS active_cnt,
+              COUNT(*) FILTER (
+                WHERE revoked_at IS NULL
+                  AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+                  AND last_delete_sync_at IS NOT NULL
+              ) AS acked_cnt,
+              MIN(last_delete_sync_at) FILTER (
+                WHERE revoked_at IS NULL
+                  AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+                  AND last_delete_sync_at IS NOT NULL
+              ) AS min_ack
+            FROM TASK.devices
+            """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, staleAfterMonths);
@@ -206,17 +168,13 @@ public class PostgresTaskRepository {
                 if (!rs.next()) return null;
                 int active = rs.getInt("active_cnt");
                 int acked = rs.getInt("acked_cnt");
-                // B: need 2+ devices; all of them must have acked
                 if (active < 2 || acked < active) return null;
                 Timestamp t = rs.getTimestamp("min_ack");
                 return t != null ? t.toInstant() : null;
             }
         }
     }
-    /**
-     * Soft-disable devices that have not checked in for staleAfterMonths.
-     * Does NOT delete calendar tasks — only marks the device so it no longer blocks GC.
-     */
+
     public void revokeStaleDevices(int staleAfterMonths) throws SQLException {
         String sql = """
             UPDATE TASK.devices
@@ -231,11 +189,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * If NO device has been active for abandonedAfterMonths, treat account as abandoned:
-     * delete all tasks, delete logs, and devices from Postgres.
-     * @return true if a wipe happened, false if at least one active device exists
-     */
     public boolean wipeIfAbandoned(int abandonedAfterMonths) throws SQLException {
         String countSql = """
             SELECT COUNT(*) FROM TASK.devices
@@ -247,8 +200,7 @@ public class PostgresTaskRepository {
             ps.setInt(1, abandonedAfterMonths);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                int active = rs.getInt(1);
-                if (active > 0) return false;
+                if (rs.getInt(1) > 0) return false;
             }
         }
         try (Connection conn = connect();
@@ -260,10 +212,6 @@ public class PostgresTaskRepository {
         return true;
     }
 
-    /**
-     * Insert task or update if id already exists (UPSERT).
-     * This is the normal "save task to server" path.
-     */
     public void upsert(Task task) throws SQLException {
         String sql = """
             INSERT INTO TASK.tasks (
@@ -293,10 +241,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Only updates workflow (FINISHED / UNFINISHED) and last_updated_at.
-     * Cheaper than full upsert when the user toggles "done".
-     */
     public void updateWorkflow(Task task) throws SQLException {
         String sql = "UPDATE TASK.tasks SET workflow = ?, last_updated_at = ? WHERE id = ?";
         try (Connection conn = connect();
@@ -310,10 +254,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Removes the task row only. Does NOT write sync_deletes.
-     * Prefer deleteTaskAndLog when the user intentionally deleted a task.
-     */
     public void deleteTaskRow(String id) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM TASK.tasks WHERE id = ?")) {
@@ -323,70 +263,77 @@ public class PostgresTaskRepository {
     }
 
     /**
-     * Writes (or updates) one delete-log entry: "this id is deleted as of deletedAt".
-     * Other devices read this and remove the same id locally.
+     * id + deleted_at required; title optional (null ok).
+     * On conflict: keep later deleted_at; keep existing title if new title is null.
      */
-    public void recordDelete(String id, Instant deletedAt) throws SQLException {
+    public void recordDelete(String id, Instant deletedAt, String title) throws SQLException {
         String sql = """
-            INSERT INTO TASK.sync_deletes (id, deleted_at) VALUES (?, ?)
+            INSERT INTO TASK.sync_deletes (id, deleted_at, title) VALUES (?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
-                deleted_at = GREATEST(TASK.sync_deletes.deleted_at, EXCLUDED.deleted_at)
+                deleted_at = GREATEST(TASK.sync_deletes.deleted_at, EXCLUDED.deleted_at),
+                title = COALESCE(EXCLUDED.title, TASK.sync_deletes.title)
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.setTimestamp(2, Timestamp.from(deletedAt));
+            if (title != null && !title.isBlank()) {
+                ps.setString(3, title);
+            } else {
+                ps.setNull(3, Types.VARCHAR);
+            }
             ps.executeUpdate();
         }
     }
 
-    /**
-     * Full user delete on server: remove task row AND log the id in sync_deletes.
-     */
-    public void deleteTaskAndLog(Task task) throws SQLException {
-        Instant when = Instant.now();
-        deleteTaskRow(task.getID());
-        recordDelete(task.getID(), when);
+    /** Back-compat overload (sync without a name). */
+    public void recordDelete(String id, Instant deletedAt) throws SQLException {
+        recordDelete(id, deletedAt, null);
     }
 
-    /**
-     * Clears every task on the server and logs each id as deleted
-     * so other devices can drop them too.
-     */
+    public void deleteTaskAndLog(Task task) throws SQLException {
+        Instant when = Instant.now();
+        String title = task.getTaskName();
+        deleteTaskRow(task.getID());
+        recordDelete(task.getID(), when, title);
+    }
+
     public void deleteAllTasksAndLog() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT id FROM TASK.tasks")) {
-            List<String> ids = new ArrayList<>();
-            while (rs.next()) ids.add(rs.getString(1));
+             ResultSet rs = st.executeQuery("SELECT id, title FROM TASK.tasks")) {
+            List<String[]> rows = new ArrayList<>();
+            while (rs.next()) {
+                rows.add(new String[]{rs.getString(1), rs.getString(2)});
+            }
             Instant when = Instant.now();
-            for (String id : ids) {
-                deleteTaskRow(id);
-                recordDelete(id, when);
+            for (String[] row : rows) {
+                deleteTaskRow(row[0]);
+                recordDelete(row[0], when, row[1]);
             }
         }
     }
 
     /**
-     * Reads all delete-log rows.
-     * Each element is Object[]{ id (String), deletedAt (Instant) }.
+     * Each element: Object[]{ id (String), deletedAt (Instant), title (String or null) }
      */
     public List<Object[]> fetchAllDeletes() throws SQLException {
         List<Object[]> list = new ArrayList<>();
         try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement("SELECT id, deleted_at FROM TASK.sync_deletes");
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, deleted_at, title FROM TASK.sync_deletes");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                list.add(new Object[]{rs.getString(1), rs.getTimestamp(2).toInstant()});
+                list.add(new Object[]{
+                        rs.getString(1),
+                        rs.getTimestamp(2).toInstant(),
+                        rs.getString(3)
+                });
             }
         }
         return list;
     }
 
-    /**
-     * Garbage-collect old delete-log rows older than cutoff.
-     * Call only after computing cutoff from minDeleteAckAmongActive.
-     */
     public void purgeDeletesBefore(Instant cutoff) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -396,9 +343,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Loads every task row into Java Task objects (for merge/sync).
-     */
     public List<Task> fetchAll() throws SQLException {
         List<Task> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -409,10 +353,6 @@ public class PostgresTaskRepository {
         return list;
     }
 
-    /**
-     * Fills a PreparedStatement's ? placeholders from a Task (insert/upsert).
-     * Private helper — not called from outside this class.
-     */
     private void bind(PreparedStatement ps, Task task) throws SQLException {
         String state = task.getState() == 1 ? "Fixed"
                 : task.getState() == 2 ? "Deadline" : "Flexible";
@@ -443,10 +383,6 @@ public class PostgresTaskRepository {
         ps.setTimestamp(12, Timestamp.from(last));
     }
 
-    /**
-     * Turns one SQL ResultSet row into a Task object.
-     * Private helper used by fetchAll.
-     */
     private Task mapRow(ResultSet rs) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("title");

@@ -208,22 +208,35 @@ public class TaskRepository {
     /**
      * A: exchange tombstones both ways, then force-delete task rows on both sides.
      */
+    /**
+     * Exchange tombstones both ways (id + time + optional title).
+     * Sync logic still keys only on id; title is for display / Postgres log.
+     */
     private void syncDeletesBothWays() throws SQLException {
         // Server → local
         for (Object[] row : postgres.fetchAllDeletes()) {
             String id = (String) row[0];
             Instant when = (Instant) row[1];
+            String title = (row.length > 2 && row[2] != null) ? row[2].toString() : null;
+            if (title != null && title.isBlank()) title = null;
+
             sqlite.deleteTaskRow(id);
-            sqlite.recordDelete(id, when);
+            sqlite.recordDelete(id, when, title);
         }
+
         // Local → server
         for (String[] row : sqlite.fetchAllDeletes()) {
             String id = row[0];
             Instant when = Instant.parse(row[1]);
+            String title = (row.length > 2 && row[2] != null && !row[2].isBlank())
+                    ? row[2]
+                    : null;
+
             postgres.deleteTaskRow(id);
-            postgres.recordDelete(id, when);
+            postgres.recordDelete(id, when, title);
         }
-        // Belt: every known deleted id must not exist in either tasks table
+
+        // Force: every known deleted id must not exist in tasks tables
         for (String id : sqlite.fetchDeletedIds()) {
             sqlite.deleteTaskRow(id);
             if (postgresAvailable) {
