@@ -10,13 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Talks only to PostgreSQL (the shared "cloud" DB on your home PC).
- * Does NOT talk to SQLite. TaskRepository calls this when online.
- *
- * Schema under TASK:
- *   tasks        – real calendar tasks
- *   sync_deletes – ids that were deleted (title optional, for humans only)
- *   devices      – each laptop/desktop install that has synced
+ * PostgreSQL only. TaskRepository calls this when online.
  */
 public class PostgresTaskRepository {
 
@@ -80,7 +74,6 @@ public class PostgresTaskRepository {
                     user_id VARCHAR(36)
                 )
                 """);
-            // Upgrade older DBs that only had id + deleted_at
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS title VARCHAR(100)");
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
 
@@ -97,6 +90,32 @@ public class PostgresTaskRepository {
                     revoked_at TIMESTAMPTZ
                 )
                 """);
+        }
+    }
+
+    /** True if id exists in TASK.tasks. */
+    public boolean existsTaskId(String id) throws SQLException {
+        if (id == null || id.isBlank()) return false;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT 1 FROM TASK.tasks WHERE id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** True if id is in TASK.sync_deletes. */
+    public boolean isDeletedId(String id) throws SQLException {
+        if (id == null || id.isBlank()) return false;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT 1 FROM TASK.sync_deletes WHERE id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -137,9 +156,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Purge only when ≥2 active devices AND every active device has acked deletes.
-     */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
             SELECT
@@ -262,10 +278,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * id + deleted_at required; title optional (null ok).
-     * On conflict: keep later deleted_at; keep existing title if new title is null.
-     */
     public void recordDelete(String id, Instant deletedAt, String title) throws SQLException {
         String sql = """
             INSERT INTO TASK.sync_deletes (id, deleted_at, title) VALUES (?, ?, ?)
@@ -286,16 +298,14 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** Back-compat overload (sync without a name). */
     public void recordDelete(String id, Instant deletedAt) throws SQLException {
         recordDelete(id, deletedAt, null);
     }
 
     public void deleteTaskAndLog(Task task) throws SQLException {
         Instant when = Instant.now();
-        String title = task.getTaskName();
         deleteTaskRow(task.getID());
-        recordDelete(task.getID(), when, title);
+        recordDelete(task.getID(), when, task.getTaskName());
     }
 
     public void deleteAllTasksAndLog() throws SQLException {
@@ -314,9 +324,7 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Each element: Object[]{ id (String), deletedAt (Instant), title (String or null) }
-     */
+    /** Object[]{ id, deletedAt Instant, title String|null } */
     public List<Object[]> fetchAllDeletes() throws SQLException {
         List<Object[]> list = new ArrayList<>();
         try (Connection conn = connect();

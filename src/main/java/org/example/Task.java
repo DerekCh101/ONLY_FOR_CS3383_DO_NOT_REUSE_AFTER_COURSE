@@ -3,7 +3,6 @@ package org.example;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.UUID;
 
 public class Task {
 
@@ -18,12 +17,15 @@ public class Task {
     private LocalTime deadLineTime;
     private LocalDate placedDate;
     private LocalTime placedTime;
-    private TaskManagementSystem theSystem;
     private Workflow workflow;
     private TaskLifeCycle taskLifeCycle;
     private Instant placementUpdatedAt;
     private Instant lastUpdatedAt;
 
+    /**
+     * New task created by the user (GUI / CLI).
+     * Id is allocated so it does not collide with live tasks or tombstones.
+     */
     public Task(String taskName,
                 double durationHours,
                 int state,
@@ -32,7 +34,7 @@ public class Task {
                 LocalDate deadLineDate,
                 LocalTime deadLineTime) {
 
-        this.id = UUID.randomUUID().toString();
+        this.id = allocateIdSafely();
         this.taskName = taskName;
         this.durationMinutes = AppTimeReference.hoursToMinutes(durationHours);
         this.state = state;
@@ -44,9 +46,9 @@ public class Task {
         this.workflow = Workflow.UNFINISHED;
         this.placementUpdatedAt = null;
         this.lastUpdatedAt = Instant.now();
-        theSystem = TaskManagementSystem.getInstance();
     }
 
+    /** Load path — keep the id from DB, never re-allocate. */
     private Task(String id,
                  String taskName,
                  double durationHours,
@@ -67,6 +69,21 @@ public class Task {
         this.workflow = Workflow.UNFINISHED;
         this.placementUpdatedAt = null;
         this.lastUpdatedAt = null;
+    }
+
+    /**
+     * Prefer TaskRepository conflict check; fall back to random UUID if system not ready.
+     */
+    private static String allocateIdSafely() {
+        try {
+            TaskManagementSystem sys = TaskManagementSystem.getInstance();
+            if (sys != null && sys.getTaskRepo() != null) {
+                return sys.getTaskRepo().allocateNewTaskId();
+            }
+        } catch (Exception ignored) {
+            // bootstrap / tests
+        }
+        return java.util.UUID.randomUUID().toString();
     }
 
     public static Task loadTaskFromdb(String id,
@@ -102,7 +119,6 @@ public class Task {
         return AppTimeReference.minutesToSlots(durationMinutes);
     }
 
-    /** For UI / labels (1.0, 1.5, 2.0, …). */
     public double getDurationHours() {
         return AppTimeReference.minutesToHours(durationMinutes);
     }
@@ -222,12 +238,10 @@ public class Task {
         this.lastUpdatedAt = lastUpdatedAt;
     }
 
-    /** Content / workflow / lifecycle change (not necessarily a move). */
     public void touchLastUpdated() {
         this.lastUpdatedAt = Instant.now();
     }
 
-    /** Grid place / move / reschedule. Also bumps lastUpdatedAt. */
     public void touchPlacementUpdated() {
         Instant now = Instant.now();
         this.placementUpdatedAt = now;
@@ -237,7 +251,8 @@ public class Task {
     @Override
     public String toString() {
         return "Task{" +
-                "name='" + taskName + '\'' +
+                "id='" + id + '\'' +
+                ", name='" + taskName + '\'' +
                 ", durationHours=" + getDurationHours() +
                 ", state=" + state +
                 ", start=" + startingDate + " " + startingTime +

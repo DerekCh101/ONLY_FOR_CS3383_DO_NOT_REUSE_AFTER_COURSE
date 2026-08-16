@@ -13,7 +13,7 @@ import java.util.Set;
 
 /**
  * Local offline cache (scheduler-cache.db).
- * sync_deletes: id + deleted_at + optional title (for humans / push to Postgres).
+ * sync_deletes: id + deleted_at + optional title.
  */
 public class SqliteTaskRepository {
 
@@ -62,6 +62,30 @@ public class SqliteTaskRepository {
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN last_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN placement_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN title TEXT"); } catch (SQLException ignored) {}
+        }
+    }
+
+    /** True if this id already exists as a live task row. */
+    public boolean existsTaskId(String id) throws SQLException {
+        if (id == null || id.isBlank()) return false;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM tasks WHERE id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    /** True if this id is in the local delete log (tombstone). */
+    public boolean isDeletedId(String id) throws SQLException {
+        if (id == null || id.isBlank()) return false;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM sync_deletes WHERE id = ?")) {
+            ps.setString(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -187,9 +211,7 @@ public class SqliteTaskRepository {
         }
     }
 
-    /**
-     * String[]{ id, deletedAtIso, titleOrEmpty }
-     */
+    /** String[]{ id, deletedAtIso, titleOrEmpty } */
     public List<String[]> fetchAllDeletes() throws SQLException {
         List<String[]> list = new ArrayList<>();
         try (Connection conn = connect();
