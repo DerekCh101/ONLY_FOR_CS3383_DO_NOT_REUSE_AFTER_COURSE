@@ -170,26 +170,44 @@ public class PostgresTaskRepository {
      * Delete-log rows older than that are safe to purge (every active device already saw them).
      * Returns null if no device has an ack yet.
      */
+    /**
+     * Safe GC cutoff: only when EVERY active device has a non-null last_delete_sync_at.
+     * Then returns MIN(ack). If any active device never synced deletes, returns null (no purge).
+     */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
-            SELECT MIN(last_delete_sync_at) FROM TASK.devices
+        SELECT
+          COUNT(*) FILTER (
+            WHERE revoked_at IS NULL
+              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+          ) AS active_cnt,
+          COUNT(*) FILTER (
             WHERE revoked_at IS NULL
               AND last_seen_at > NOW() - (? || ' months')::INTERVAL
               AND last_delete_sync_at IS NOT NULL
-            """;
+          ) AS acked_cnt,
+          MIN(last_delete_sync_at) FILTER (
+            WHERE revoked_at IS NULL
+              AND last_seen_at > NOW() - (? || ' months')::INTERVAL
+              AND last_delete_sync_at IS NOT NULL
+          ) AS min_ack
+        FROM TASK.devices
+        """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, staleAfterMonths);
+            ps.setInt(2, staleAfterMonths);
+            ps.setInt(3, staleAfterMonths);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    Timestamp t = rs.getTimestamp(1);
-                    return t != null ? t.toInstant() : null;
-                }
-                return null;
+                if (!rs.next()) return null;
+                int active = rs.getInt("active_cnt");
+                int acked = rs.getInt("acked_cnt");
+                if (active == 0 || acked < active) return null; // someone never got the log
+                Timestamp t = rs.getTimestamp("min_ack");
+                return t != null ? t.toInstant() : null;
             }
         }
     }
-
     /**
      * Soft-disable devices that have not checked in for staleAfterMonths.
      * Does NOT delete calendar tasks — only marks the device so it no longer blocks GC.
