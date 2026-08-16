@@ -174,6 +174,10 @@ public class PostgresTaskRepository {
      * Safe GC cutoff: only when EVERY active device has a non-null last_delete_sync_at.
      * Then returns MIN(ack). If any active device never synced deletes, returns null (no purge).
      */
+    /**
+     * Purge only when ≥2 active devices AND every active device has acked deletes.
+     * Single-device → null → no GC (tombstones stay for the other machine).
+     */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
         SELECT
@@ -202,7 +206,8 @@ public class PostgresTaskRepository {
                 if (!rs.next()) return null;
                 int active = rs.getInt("active_cnt");
                 int acked = rs.getInt("acked_cnt");
-                if (active == 0 || acked < active) return null; // someone never got the log
+                // B: need 2+ devices; all of them must have acked
+                if (active < 2 || acked < active) return null;
                 Timestamp t = rs.getTimestamp("min_ack");
                 return t != null ? t.toInstant() : null;
             }
