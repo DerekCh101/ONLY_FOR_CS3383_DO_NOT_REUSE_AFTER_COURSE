@@ -240,12 +240,12 @@ public class TaskRepository {
      * A: never upsert an id that is in the delete log.
      */
     private void syncTasksBothWays() throws SQLException {
-        Set<String> deleted = sqlite.fetchDeletedIds();
+        Set<String> deleted = new HashSet<>(sqlite.fetchDeletedIds());
 
         List<Task> remoteList = postgres.fetchAll();
         for (Task remote : remoteList) {
             if (deleted.contains(remote.getID())) {
-                postgres.deleteTaskRow(remote.getID()); // server still has corpse
+                postgres.deleteTaskRow(remote.getID());
                 continue;
             }
             Task local = sqlite.findById(remote.getID());
@@ -261,14 +261,41 @@ public class TaskRepository {
             }
         }
 
+        Instant lastSync = null;
+        String lastSyncStr = sqlite.getMeta("last_postgres_sync_at");
+        if (lastSyncStr != null && !lastSyncStr.isBlank()) {
+            try {
+                lastSync = Instant.parse(lastSyncStr);
+            } catch (Exception ignored) { }
+        }
+
         for (Task local : sqlite.fetchAll()) {
             if (deleted.contains(local.getID())) continue;
-            if (!remoteById.containsKey(local.getID())) {
+            if (remoteById.containsKey(local.getID())) continue;
+
+            Instant localEdit = local.getLastUpdatedAt();
+            if (localEdit == null) localEdit = local.getPlacementUpdatedAt();
+
+            // Server missing this id, and local was already known before last sync
+            // → other device deleted it; do NOT push it back
+            if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
+                System.out.println("Drop local (missing on server, not new): " + local.getID());
+                sqlite.deleteTaskRow(local.getID());
+                sqlite.recordDelete(local.getID(), Instant.now());
                 try {
-                    postgres.upsert(local);
+                    postgres.deleteTaskRow(local.getID());
+                    postgres.recordDelete(local.getID(), Instant.now());
                 } catch (SQLException e) {
-                    System.err.println("Push local-only failed: " + local.getID());
+                    System.err.println("server tombstone failed: " + local.getID());
                 }
+                continue;
+            }
+
+            // Truly new offline create (edited after last sync)
+            try {
+                postgres.upsert(local);
+            } catch (SQLException e) {
+                System.err.println("Push local-only failed: " + local.getID());
             }
         }
     }
