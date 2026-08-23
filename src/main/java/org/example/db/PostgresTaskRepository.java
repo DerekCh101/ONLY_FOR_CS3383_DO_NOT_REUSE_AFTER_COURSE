@@ -10,12 +10,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * PostgreSQL only. TaskRepository calls this when online.
+ * Talks ONLY to PostgreSQL (the shared server DB).
+ * TaskRepository decides when to call this (when online / Tailscale works).
+ *
+ * Tables under schema TASK:
+ *   tasks        – live tasks
+ *   sync_deletes – tombstones (id was deleted; do not resurrect)
+ *   devices      – each laptop/desktop install, for sync ack + GC
+ *
+ * Most methods: open connection → run SQL → close (try-with-resources).
  */
 public class PostgresTaskRepository {
 
+    /** jdbc:postgresql://host:5432/DatabaseName */
     private final String url;
+    /** Postgres login name, e.g. postgres */
     private final String user;
+    /** From env var — not hardcoded */
     private final String password;
 
     public PostgresTaskRepository(String url, String user, String password) {
@@ -24,16 +35,22 @@ public class PostgresTaskRepository {
         this.password = password;
     }
 
+    /** Open one JDBC connection to Postgres. Caller must close it (try-with-resources). */
     public Connection connect() throws SQLException {
         return DriverManager.getConnection(url, user, password);
     }
 
+    /**
+     * Create schema/tables if missing, and add any new columns on old DBs.
+     * Safe to call every startup (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
+     */
     public void initialize() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
 
             st.execute("CREATE SCHEMA IF NOT EXISTS TASK");
 
+            // Live tasks table
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.tasks (
                     id VARCHAR(36) PRIMARY KEY,
@@ -56,6 +73,7 @@ public class PostgresTaskRepository {
                 )
                 """);
 
+            // Migrations for DBs created before these columns existed
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS lifecycle VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS workflow VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS placement_updated_at TIMESTAMPTZ DEFAULT NOW()");
@@ -66,6 +84,7 @@ public class PostgresTaskRepository {
             st.executeUpdate("UPDATE TASK.tasks SET placement_updated_at = NOW() WHERE placement_updated_at IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET last_updated_at = COALESCE(last_updated_at, placement_updated_at, NOW()) WHERE last_updated_at IS NULL");
 
+            // Tombstone log: "this task id was deleted"
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.sync_deletes (
                     id VARCHAR(36) PRIMARY KEY,
@@ -77,6 +96,7 @@ public class PostgresTaskRepository {
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS title VARCHAR(100)");
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
 
+            // One row per app install (laptop, desktop, …)
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.devices (
                     device_id VARCHAR(36) PRIMARY KEY,
@@ -93,7 +113,7 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** True if id exists in TASK.tasks. */
+    /** Return true if this id already has a row in TASK.tasks. */
     public boolean existsTaskId(String id) throws SQLException {
         if (id == null || id.isBlank()) return false;
         try (Connection conn = connect();
@@ -101,12 +121,12 @@ public class PostgresTaskRepository {
                      "SELECT 1 FROM TASK.tasks WHERE id = ?")) {
             ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+                return rs.next(); // true = found a row
             }
         }
     }
 
-    /** True if id is in TASK.sync_deletes. */
+    /** Return true if this id is tombstoned (was deleted). */
     public boolean isDeletedId(String id) throws SQLException {
         if (id == null || id.isBlank()) return false;
         try (Connection conn = connect();
@@ -119,6 +139,11 @@ public class PostgresTaskRepository {
         }
     }
 
+    /**
+     * Register or refresh this device on the server.
+     * ON CONFLICT: update name/platform, bump last_seen, clear revoked_at
+     * (device came back).
+     */
     public void upsertDevice(String deviceId, String displayName, String platform) throws SQLException {
         String sql = """
             INSERT INTO TASK.devices (device_id, display_name, platform, last_seen_at, created_at)
@@ -138,6 +163,7 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Mark: this device finished pulling/pushing delete tombstones. */
     public void touchDeleteSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -147,6 +173,7 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Mark: this device finished pulling/pushing tasks. */
     public void touchTaskSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -156,6 +183,12 @@ public class PostgresTaskRepository {
         }
     }
 
+    /**
+     * For tombstone GC: among active (not revoked, seen recently) devices,
+     * if at least 2 are active and ALL of them have last_delete_sync_at set,
+     * return the earliest of those ack times = safe to delete older tombstones.
+     * Otherwise return null (do not GC).
+     */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
             SELECT
@@ -184,6 +217,7 @@ public class PostgresTaskRepository {
                 if (!rs.next()) return null;
                 int active = rs.getInt("active_cnt");
                 int acked = rs.getInt("acked_cnt");
+                // Need multi-device agreement before purging delete log
                 if (active < 2 || acked < active) return null;
                 Timestamp t = rs.getTimestamp("min_ack");
                 return t != null ? t.toInstant() : null;
@@ -191,6 +225,7 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Soft-disable devices that have not checked in for too long. */
     public void revokeStaleDevices(int staleAfterMonths) throws SQLException {
         String sql = """
             UPDATE TASK.devices
@@ -205,6 +240,10 @@ public class PostgresTaskRepository {
         }
     }
 
+    /**
+     * If NO device has been active for abandonedAfterMonths, wipe all
+     * server task/delete/device data. Returns true if wipe happened.
+     */
     public boolean wipeIfAbandoned(int abandonedAfterMonths) throws SQLException {
         String countSql = """
             SELECT COUNT(*) FROM TASK.devices
@@ -216,7 +255,7 @@ public class PostgresTaskRepository {
             ps.setInt(1, abandonedAfterMonths);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                if (rs.getInt(1) > 0) return false;
+                if (rs.getInt(1) > 0) return false; // someone still active
             }
         }
         try (Connection conn = connect();
@@ -228,6 +267,10 @@ public class PostgresTaskRepository {
         return true;
     }
 
+    /**
+     * Insert task, or if id already exists, overwrite columns (upsert).
+     * This is the main "save task to server" method.
+     */
     public void upsert(Task task) throws SQLException {
         String sql = """
             INSERT INTO TASK.tasks (
@@ -252,11 +295,12 @@ public class PostgresTaskRepository {
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            bind(ps, task);
+            bind(ps, task); // fill the ? placeholders from Task fields
             ps.executeUpdate();
         }
     }
 
+    /** Only change workflow + last_updated_at for one task (e.g. mark FINISHED). */
     public void updateWorkflow(Task task) throws SQLException {
         String sql = "UPDATE TASK.tasks SET workflow = ?, last_updated_at = ? WHERE id = ?";
         try (Connection conn = connect();
@@ -270,6 +314,7 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Delete the live row only (does NOT write tombstone by itself). */
     public void deleteTaskRow(String id) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM TASK.tasks WHERE id = ?")) {
@@ -278,6 +323,10 @@ public class PostgresTaskRepository {
         }
     }
 
+    /**
+     * Write or refresh a tombstone in sync_deletes.
+     * If id already deleted, keep the later deleted_at and keep title if present.
+     */
     public void recordDelete(String id, Instant deletedAt, String title) throws SQLException {
         String sql = """
             INSERT INTO TASK.sync_deletes (id, deleted_at, title) VALUES (?, ?, ?)
@@ -298,16 +347,22 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Same as recordDelete but without a title. */
     public void recordDelete(String id, Instant deletedAt) throws SQLException {
         recordDelete(id, deletedAt, null);
     }
 
+    /** Full clear of one task on server: remove row + add tombstone with name. */
     public void deleteTaskAndLog(Task task) throws SQLException {
         Instant when = Instant.now();
         deleteTaskRow(task.getID());
         recordDelete(task.getID(), when, task.getTaskName());
     }
 
+    /**
+     * Clear ALL tasks on server: for each id, delete row and write tombstone.
+     * Used by "reset all" style operations.
+     */
     public void deleteAllTasksAndLog() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement();
@@ -324,7 +379,10 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** Object[]{ id, deletedAt Instant, title String|null } */
+    /**
+     * Load every tombstone from server.
+     * Each element: [0]=id String, [1]=deletedAt Instant, [2]=title String or null
+     */
     public List<Object[]> fetchAllDeletes() throws SQLException {
         List<Object[]> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -342,6 +400,10 @@ public class PostgresTaskRepository {
         return list;
     }
 
+    /**
+     * GC helper: permanently remove tombstones older than cutoff.
+     * Only call when minDeleteAckAmongActive said it is safe.
+     */
     public void purgeDeletesBefore(Instant cutoff) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -351,6 +413,7 @@ public class PostgresTaskRepository {
         }
     }
 
+    /** Load every live task from server into Task objects. */
     public List<Task> fetchAll() throws SQLException {
         List<Task> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -361,6 +424,7 @@ public class PostgresTaskRepository {
         return list;
     }
 
+    /** Put Task fields into the 12 ? placeholders of the upsert INSERT. */
     private void bind(PreparedStatement ps, Task task) throws SQLException {
         String state = task.getState() == 1 ? "Fixed"
                 : task.getState() == 2 ? "Deadline" : "Flexible";
@@ -377,6 +441,7 @@ public class PostgresTaskRepository {
         else ps.setNull(5, Types.DATE);
         if (task.getPlacedTime() != null) ps.setTime(6, Time.valueOf(task.getPlacedTime()));
         else ps.setNull(6, Types.TIME);
+        // Deadline columns only meaningful for Deadline tasks
         if (task.getState() == 2 && task.getDeadLineDate() != null) {
             ps.setDate(7, Date.valueOf(task.getDeadLineDate()));
             if (task.getDeadLineTime() != null) ps.setTime(8, Time.valueOf(task.getDeadLineTime()));
@@ -391,6 +456,7 @@ public class PostgresTaskRepository {
         ps.setTimestamp(12, Timestamp.from(last));
     }
 
+    /** Turn one SQL ResultSet row into a Task (load path — keeps DB id). */
     private Task mapRow(ResultSet rs) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("title");

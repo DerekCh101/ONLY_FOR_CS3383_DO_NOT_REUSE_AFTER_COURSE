@@ -12,21 +12,34 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Local offline cache (scheduler-cache.db).
- * sync_deletes: id + deleted_at + optional title.
+ * Local offline cache only (file scheduler-cache.db via jdbc:sqlite:...).
+ * Always available even when Postgres/Tailscale is down.
+ *
+ * Tables (no schema name — SQLite is one file):
+ *   tasks         – live tasks on this device
+ *   sync_deletes  – tombstones (id was deleted; do not bring it back)
+ *   sync_meta     – small key/value store (e.g. last_postgres_sync_at)
+ *
+ * Dates/times are stored as TEXT (ISO strings), not SQL DATE/TIME types.
  */
 public class SqliteTaskRepository {
 
+    /** Example: jdbc:sqlite:scheduler-cache.db */
     private final String url;
 
     public SqliteTaskRepository(String url) {
         this.url = url;
     }
 
+    /** Open connection to the local .db file. Caller closes it (try-with-resources). */
     public Connection connect() throws SQLException {
         return DriverManager.getConnection(url);
     }
 
+    /**
+     * Create tables if missing; try ALTER for columns added in newer versions.
+     * SQLite has no IF NOT EXISTS for columns — empty catch = column already there.
+     */
     public void initialize() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
@@ -59,20 +72,21 @@ public class SqliteTaskRepository {
                     value TEXT
                 )
                 """);
+            // Old cache files may lack these columns
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN last_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN placement_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN title TEXT"); } catch (SQLException ignored) {}
         }
     }
 
-    /** True if this id already exists as a live task row. */
+    /** True if this id already exists as a live task row in local tasks. */
     public boolean existsTaskId(String id) throws SQLException {
         if (id == null || id.isBlank()) return false;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM tasks WHERE id = ?")) {
             ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+                return rs.next(); // found a row
             }
         }
     }
@@ -89,6 +103,10 @@ public class SqliteTaskRepository {
         }
     }
 
+    /**
+     * Nuclear local reset: empty tasks + tombstones + forget last sync times.
+     * Used when server says account abandoned or local install is too stale.
+     */
     public void wipeAllLocalData() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
@@ -98,6 +116,7 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Save a string setting (e.g. key=last_postgres_sync_at, value=ISO time). */
     public void setMeta(String key, String value) throws SQLException {
         String sql = """
             INSERT INTO sync_meta(key, value) VALUES(?, ?)
@@ -111,6 +130,7 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Read a string setting; null if key never stored. */
     public String getMeta(String key) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT value FROM sync_meta WHERE key = ?")) {
@@ -122,6 +142,10 @@ public class SqliteTaskRepository {
         }
     }
 
+    /**
+     * Insert task, or if id exists, overwrite all mapped columns.
+     * Main local "save this task" method.
+     */
     public void upsert(Task task) throws SQLException {
         String sql = """
             INSERT INTO tasks (
@@ -151,6 +175,7 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Only update workflow + last_updated_at (e.g. user marked FINISHED). */
     public void updateWorkflow(Task task) throws SQLException {
         String sql = "UPDATE tasks SET workflow = ?, last_updated_at = ? WHERE id = ?";
         try (Connection conn = connect();
@@ -158,12 +183,13 @@ public class SqliteTaskRepository {
             Workflow flow = task.getWorkflow() != null ? task.getWorkflow() : Workflow.UNFINISHED;
             Instant last = task.getLastUpdatedAt() != null ? task.getLastUpdatedAt() : Instant.now();
             ps.setString(1, flow.name());
-            ps.setString(2, last.toString());
+            ps.setString(2, last.toString()); // Instant stored as text
             ps.setString(3, task.getID());
             ps.executeUpdate();
         }
     }
 
+    /** Remove live row only — does not write a tombstone by itself. */
     public void deleteTaskRow(String taskId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM tasks WHERE id = ?")) {
@@ -172,6 +198,10 @@ public class SqliteTaskRepository {
         }
     }
 
+    /**
+     * Write/refresh tombstone in sync_deletes.
+     * On conflict: keep the later deleted_at; keep title if one side has it.
+     */
     public void recordDelete(String taskId, Instant deletedAt, String title) throws SQLException {
         String sql = """
             INSERT INTO sync_deletes(id, deleted_at, title) VALUES(?, ?, ?)
@@ -191,10 +221,12 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Tombstone without a title. */
     public void recordDelete(String taskId, Instant deletedAt) throws SQLException {
         recordDelete(taskId, deletedAt, null);
     }
 
+    /** Full local clear of one task: delete row + tombstone with name. */
     public void deleteTaskAndLog(Task task) throws SQLException {
         Instant when = Instant.now();
         String title = task.getTaskName();
@@ -202,6 +234,10 @@ public class SqliteTaskRepository {
         recordDelete(task.getID(), when, title);
     }
 
+    /**
+     * Clear every local task: each id gets a tombstone so sync can tell
+     * the server (and other devices) they are gone.
+     */
     public void deleteAllTasksAndLogEach() throws SQLException {
         List<Task> all = fetchAll();
         Instant when = Instant.now();
@@ -211,7 +247,10 @@ public class SqliteTaskRepository {
         }
     }
 
-    /** String[]{ id, deletedAtIso, titleOrEmpty } */
+    /**
+     * All local tombstones.
+     * Each entry: [0]=id, [1]=deletedAt ISO string, [2]=title or "".
+     */
     public List<String[]> fetchAllDeletes() throws SQLException {
         List<String[]> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -230,6 +269,7 @@ public class SqliteTaskRepository {
         return list;
     }
 
+    /** Just the set of deleted ids (fast membership checks during sync/load). */
     public Set<String> fetchDeletedIds() throws SQLException {
         Set<String> set = new HashSet<>();
         try (Connection conn = connect();
@@ -240,6 +280,10 @@ public class SqliteTaskRepository {
         return set;
     }
 
+    /**
+     * GC: permanently drop tombstones older than cutoff.
+     * Call only when TaskRepository decided multi-device ack allows it.
+     */
     public void purgeDeletesBefore(Instant cutoff) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -249,6 +293,7 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Load every live local task into Task objects. */
     public List<Task> fetchAll() throws SQLException {
         List<Task> list = new ArrayList<>();
         try (Connection conn = connect();
@@ -259,6 +304,7 @@ public class SqliteTaskRepository {
         return list;
     }
 
+    /** One task by id, or null if not in local tasks. */
     public Task findById(String id) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement("SELECT * FROM tasks WHERE id = ?")) {
@@ -270,6 +316,10 @@ public class SqliteTaskRepository {
         }
     }
 
+    /**
+     * Tasks that are unscheduled in lifecycle OR have no placed_date
+     * (side panel / recovery lists).
+     */
     public List<Task> fetchUnscheduled() throws SQLException {
         String sql = """
             SELECT * FROM tasks
@@ -285,6 +335,10 @@ public class SqliteTaskRepository {
         return list;
     }
 
+    /**
+     * True if some local task already sits at this date+time
+     * (simple occupancy check; not full duration overlap).
+     */
     public boolean containsIdByDateTime(LocalDate placedDate, LocalTime placedTime) throws SQLException {
         String sql = "SELECT 1 FROM tasks WHERE placed_date = ? AND placed_time = ?";
         try (Connection conn = connect();
@@ -297,6 +351,7 @@ public class SqliteTaskRepository {
         }
     }
 
+    /** Fill the 12 ? placeholders of upsert from a Task. */
     private void bind(PreparedStatement ps, Task task) throws SQLException {
         String state = task.getState() == 1 ? "Fixed"
                 : task.getState() == 2 ? "Deadline" : "Flexible";
@@ -324,6 +379,7 @@ public class SqliteTaskRepository {
         ps.setString(12, last.toString());
     }
 
+    /** One SQL row → Task (keeps id from DB; does not allocate a new UUID). */
     private Task mapRow(ResultSet rs) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("title");

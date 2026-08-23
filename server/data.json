@@ -3,7 +3,18 @@
     {
       "id": "1786134003166",
       "title": "demo task",
-      "state": "Flexible"
+      "duration": 2,
+      "state": "Flexible",
+      "placed_date": "2026-08-16",
+      "placed_time": "19:30:00",
+      "deadline_date": null,
+      "deadline_time": null,
+      "lifecycle": "ONGOING",
+      "workflow": "UNFINISHED",
+      "placement_updated_at": "2026-08-16 19:12:53.174127+08",
+      "last_updated_at": "2026-08-16 19:12:53.174127+08",
+      "user_id": null
+
     }
   ]
 }

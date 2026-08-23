@@ -15,25 +15,43 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Facade: SQLite always, Postgres when online.
- * Deletes: always log locally; push/pull delete log before task merge.
- * GC: only when Postgres returns a cutoff (needs ≥2 devices).
+ * Facade over two stores:
+ *   - SQLite  = always-on local cache (works offline)
+ *   - Postgres = shared server when reachable (via Tailscale JDBC URL below)
+ *
+ * Write path:  memory change → sqlite first → postgres if online
+ * Read path:   if online, fullOnlineSync() then load sqlite into memory
+ *
+ * Deletes use a tombstone log (sync_deletes) so another device can learn
+ * "this id is gone" and not resurrect it on the next merge.
+ *
+ * GC of tombstones only runs when Postgres says enough active devices
+ * have all acknowledged deletes (needs ≥2 devices).
  */
 public class TaskRepository {
 
+    /** Device not seen this long → treated as stale for GC / revoke logic. */
     public static final int STALE_MONTHS = 3;
+    /** No active device this long → optional wipe of abandoned server data. */
     public static final int ABANDONED_MONTHS = 12;
 
     private final SqliteTaskRepository sqlite =
             new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
 
+    /**
+     * Arg1 = JDBC URL (host:port/db). Host is Tailscale IP of the desktop, not an HTTP API.
+     * Arg2 = Postgres user. Arg3 = password from env (never hardcode).
+     */
     private final PostgresTaskRepository postgres = new PostgresTaskRepository(
             "jdbc:postgresql://100.113.239.82:5432/Scheduler",
             "postgres",
             System.getenv("postgres_pw")
     );
 
+    /** Stable id for this install; used in TASK.devices for sync ack / GC. */
     private final String deviceId = DeviceConfig.getOrCreateDeviceId();
+
+    /** Flipped false on connection/sync failure; app keeps working on SQLite only. */
     private boolean postgresAvailable = false;
 
     public TaskRepository() {
@@ -62,6 +80,7 @@ public class TaskRepository {
         return deviceId;
     }
 
+    /** Call when user comes back online; re-runs schema ensure + sets flag. */
     public void tryReconnectPostgres() {
         try {
             postgres.initialize();
@@ -73,12 +92,12 @@ public class TaskRepository {
     }
 
     // -------------------------------------------------------------------------
-    // New task id (conflict check — not calendar slots)
+    // New task id (UUID conflict check — not calendar slots)
     // -------------------------------------------------------------------------
 
     /**
-     * Draw UUID until it is free of live tasks and tombstones (local always; Postgres if online).
-     * Practically always succeeds on the first try.
+     * Keep drawing random UUIDs until one is free in live tasks and delete log.
+     * Collisions are astronomically rare; loop is for correctness, not capacity.
      */
     public String allocateNewTaskId() {
         while (true) {
@@ -89,7 +108,10 @@ public class TaskRepository {
         }
     }
 
-    /** True if id is already a task or a delete-log entry. */
+    /**
+     * Taken if: row in local tasks, or local tombstone, or (when online)
+     * same on Postgres — so we do not reuse an id another device deleted.
+     */
     public boolean idIsTaken(String id) {
         if (id == null || id.isBlank()) return true;
         try {
@@ -108,14 +130,16 @@ public class TaskRepository {
             return false;
         } catch (SQLException e) {
             System.err.println("idIsTaken sqlite failed: " + e.getMessage());
+            // Fail open so create is not blocked if local check breaks
             return false;
         }
     }
 
     // -------------------------------------------------------------------------
-    // Public API
+    // Public API (commands / GUI call these)
     // -------------------------------------------------------------------------
 
+    /** Upsert task locally; mirror to Postgres if up. Skips if id is tombstoned. */
     public void dbAddTask(Task task) throws SQLException {
         ensureTimestamps(task);
         Set<String> deleted = sqlite.fetchDeletedIds();
@@ -134,6 +158,7 @@ public class TaskRepository {
         }
     }
 
+    /** Workflow-only update (e.g. FINISHED); bumps lastUpdatedAt. */
     public void dbUpdateWorkflow(Task task) throws SQLException {
         task.touchLastUpdated();
         sqlite.updateWorkflow(task);
@@ -147,6 +172,10 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Remove task row and write tombstone locally (and on server if online)
+     * so other devices drop it on next sync instead of merging it back.
+     */
     public void dbClearTask(Task task) throws SQLException {
         if (task == null || task.getID() == null) return;
         sqlite.deleteTaskAndLog(task);
@@ -162,6 +191,7 @@ public class TaskRepository {
         }
     }
 
+    /** Wipe all tasks; each id gets a tombstone (clear-all is syncable). */
     public void dbCleanAll() throws SQLException {
         sqlite.deleteAllTasksAndLogEach();
         if (postgresAvailable) {
@@ -174,6 +204,10 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Startup / refresh: sync with Postgres when possible, then always
+     * hydrate in-memory lists + grid from SQLite.
+     */
     public void dbfetchAll(TaskManagementSystem theSystem) throws SQLException {
         if (postgresAvailable) {
             try {
@@ -198,9 +232,17 @@ public class TaskRepository {
     }
 
     // -------------------------------------------------------------------------
-    // Sync
+    // Sync (Postgres online only)
     // -------------------------------------------------------------------------
 
+    /**
+     * Order matters:
+     * 1) register device
+     * 2) optional abandoned wipe / revoke stale devices
+     * 3) exchange DELETE logs first (never merge a tombstoned row)
+     * 4) merge/push tasks
+     * 5) GC tombstones if multi-device ack allows
+     */
     private void fullOnlineSync() throws SQLException {
         postgres.upsertDevice(deviceId, guessName(), System.getProperty("os.name"));
 
@@ -216,6 +258,7 @@ public class TaskRepository {
             sqlite.wipeAllLocalData();
         }
 
+        // Deletes before tasks — critical
         syncDeletesBothWays();
         postgres.touchDeleteSync(deviceId);
 
@@ -228,6 +271,7 @@ public class TaskRepository {
         gcDeleteLogs();
     }
 
+    /** True if last successful sync was older than STALE_MONTHS (approx days). */
     private boolean isLocalInstallStale() throws SQLException {
         String last = sqlite.getMeta("last_postgres_sync_at");
         if (last == null || last.isBlank()) return false;
@@ -242,7 +286,12 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Bidirectional tombstone exchange, then force-delete task rows for every
+     * known deleted id on both sides.
+     */
     private void syncDeletesBothWays() throws SQLException {
+        // Server → local
         for (Object[] row : postgres.fetchAllDeletes()) {
             String id = (String) row[0];
             Instant when = (Instant) row[1];
@@ -253,6 +302,7 @@ public class TaskRepository {
             sqlite.recordDelete(id, when, title);
         }
 
+        // Local → server
         for (String[] row : sqlite.fetchAllDeletes()) {
             String id = row[0];
             Instant when = Instant.parse(row[1]);
@@ -264,6 +314,7 @@ public class TaskRepository {
             postgres.recordDelete(id, when, title);
         }
 
+        // Belt-and-suspenders: no task row may remain for a tombstoned id
         for (String id : sqlite.fetchDeletedIds()) {
             sqlite.deleteTaskRow(id);
             if (postgresAvailable) {
@@ -276,6 +327,11 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Pull remote tasks (merge with local by timestamps), then push local-only
+     * rows that look like real offline creates. Local rows that vanished on
+     * server and were not edited after last sync are treated as remote deletes.
+     */
     private void syncTasksBothWays() throws SQLException {
         Set<String> deleted = new HashSet<>(sqlite.fetchDeletedIds());
 
@@ -313,6 +369,7 @@ public class TaskRepository {
             Instant localEdit = local.getLastUpdatedAt();
             if (localEdit == null) localEdit = local.getPlacementUpdatedAt();
 
+            // Missing on server + not newer than last sync → other device deleted it
             if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
                 System.out.println("Drop local (missing on server, not new): " + local.getID());
                 sqlite.deleteTaskRow(local.getID());
@@ -326,6 +383,7 @@ public class TaskRepository {
                 continue;
             }
 
+            // Offline create (or edit after last sync) → push up
             try {
                 postgres.upsert(local);
             } catch (SQLException e) {
@@ -334,6 +392,10 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Delete old tombstones only when Postgres returns a cutoff
+     * (all active devices have acked deletes). Single-device → no-op.
+     */
     private void gcDeleteLogs() throws SQLException {
         Instant cutoff = postgres.minDeleteAckAmongActive(STALE_MONTHS);
         if (cutoff == null) {
@@ -345,6 +407,11 @@ public class TaskRepository {
         System.out.println("GC sync_deletes before " + cutoff);
     }
 
+    /**
+     * Last-write-wins style merge:
+     * - placement fields follow newer placementUpdatedAt
+     * - other fields follow newer lastUpdatedAt
+     */
     static Task mergeTasks(Task local, Task remote) {
         Task out = Task.loadTaskFromdb(
                 local.getID(),
@@ -385,6 +452,7 @@ public class TaskRepository {
         return out;
     }
 
+    /** null is treated as older than any real Instant. */
     static int compareInstant(Instant a, Instant b) {
         if (a == null && b == null) return 0;
         if (a == null) return -1;
@@ -392,6 +460,7 @@ public class TaskRepository {
         return a.compareTo(b);
     }
 
+    /** Fill missing timestamps so merge/sync has something to compare. */
     private void ensureTimestamps(Task task) {
         Instant now = Instant.now();
         if (task.getLastUpdatedAt() == null) task.setLastUpdatedAt(now);
@@ -408,6 +477,10 @@ public class TaskRepository {
         }
     }
 
+    /**
+     * Rebuild pending / placed / unscheduled + day grid from SQLite only.
+     * Skips tombstoned ids. May write back if lifecycle changes (e.g. → PAST).
+     */
     private void loadSqliteIntoMemory(TaskManagementSystem theSystem) throws SQLException {
         Set<String> deleted = sqlite.fetchDeletedIds();
         for (Task task : sqlite.fetchAll()) {
