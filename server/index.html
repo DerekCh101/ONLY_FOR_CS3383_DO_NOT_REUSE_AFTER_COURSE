@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<body>
+<input id="user" placeholder="username" />
+<input id="pass" type="password" placeholder="password" />
+<button id="login">login</button>
+<pre id="out"></pre>
+<script>
+    const out = document.getElementById("out");
+    document.getElementById("login").onclick = async () => {
+        const loginRes = await fetch("/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: document.getElementById("user").value,
+                password: document.getElementById("pass").value
+            })
+        });
+        const user = await loginRes.json();
+        if (!user.token) {
+            out.textContent = JSON.stringify(user, null, 2);
+            return;
+        }
+        localStorage.setItem("token", user.token);
+        const tasksRes = await fetch("/tasks", {
+            headers: { Authorization: "Bearer " + user.token }
+        });
+        const tasks = await tasksRes.json();
+        out.textContent = JSON.stringify({ user, tasks }, null, 2);
+    };
+</script>
+</body>
+</html>

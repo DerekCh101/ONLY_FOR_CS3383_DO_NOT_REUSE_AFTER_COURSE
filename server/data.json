@@ -1,20 +1,21 @@
 {
-  "tasks": [
+  "users": [
     {
-      "id": "1786134003166",
-      "title": "demo task",
-      "duration": 2,
-      "state": "Flexible",
-      "placed_date": "2026-08-16",
-      "placed_time": "19:30:00",
-      "deadline_date": null,
-      "deadline_time": null,
-      "lifecycle": "ONGOING",
-      "workflow": "UNFINISHED",
-      "placement_updated_at": "2026-08-16 19:12:53.174127+08",
-      "last_updated_at": "2026-08-16 19:12:53.174127+08",
-      "user_id": null
-
+      "id": "22222222-2222-4222-8222-222222222222",
+      "username": "demo",
+      "password_hash": "2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea"
+    },
+    {
+      "id": "a2e57870-eef4-4e83-9782-eaa8192a34d6",
+      "username": "alice",
+      "password_hash": "d74ff0ee8da3b9806b18c877dbf29bbde50b5bd8e4dad7a3a725000feb82e8f1"
+    }
+  ],
+  "tasks": [],
+  "sessions": [
+    {
+      "token": "bf2d31a0def181ed0d633b9e9dde3b1208a909c51f4ea269058f65eb4a64a2fd",
+      "user_id": "a2e57870-eef4-4e83-9782-eaa8192a34d6"
     }
   ]
 }
