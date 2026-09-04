@@ -13,8 +13,13 @@ function isIsoInstant(s) {
 
 function isValidDate(s) {
     if (!DATE_RE.test(s)) return false;
-    const d = new Date(s + "T00:00:00");
-    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+    const [y, m, d] = s.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return (
+        dt.getUTCFullYear() === y &&
+        dt.getUTCMonth() === m - 1 &&
+        dt.getUTCDate() === d
+    );
 }
 
 function isValidTime(s) {

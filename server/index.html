@@ -1,33 +1,120 @@
 <!DOCTYPE html>
-<html>
-<body>
-<input id="user" placeholder="username" />
-<input id="pass" type="password" placeholder="password" />
-<button id="login">login</button>
-<pre id="out"></pre>
-<script>
-    const out = document.getElementById("out");
-    document.getElementById("login").onclick = async () => {
-        const loginRes = await fetch("/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                username: document.getElementById("user").value,
-                password: document.getElementById("pass").value
-            })
-        });
-        const user = await loginRes.json();
-        if (!user.token) {
-            out.textContent = JSON.stringify(user, null, 2);
-            return;
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scheduler</title>
+    <style>
+        :root {
+            --line: #d8dde6;
+            --muted: #5c6573;
+            --bg: #f4f6f9;
+            --card: #fff;
         }
-        localStorage.setItem("token", user.token);
-        const tasksRes = await fetch("/tasks", {
-            headers: { Authorization: "Bearer " + user.token }
-        });
-        const tasks = await tasksRes.json();
-        out.textContent = JSON.stringify({ user, tasks }, null, 2);
-    };
-</script>
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Segoe UI", system-ui, sans-serif;
+            max-width: 42rem;
+            margin: 1.5rem auto;
+            padding: 0 1rem 3rem;
+            background: var(--bg);
+            color: #1c2430;
+        }
+        h1 { font-size: 1.45rem; margin: 0 0 0.75rem; }
+        h2 { font-size: 1.05rem; margin: 1.4rem 0 0.6rem; }
+        input, select, button {
+            font: inherit;
+            padding: 0.4rem 0.55rem;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fff;
+        }
+        button { cursor: pointer; background: #1f4f7a; color: #fff; border-color: #1f4f7a; }
+        button.ghost { background: #fff; color: #1f4f7a; }
+        button.danger { background: #fff; color: #9b1c2c; border-color: #e2b4ba; }
+        .err { color: #9b1c2c; min-height: 1.2em; font-size: 0.9rem; }
+        .ok { color: #0a7; }
+        #app { display: none; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+        }
+        ul { list-style: none; margin: 0; padding: 0; }
+        li {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.45rem 0;
+            border-bottom: 1px solid #eef1f5;
+            font-size: 0.92rem;
+        }
+        li:last-child { border-bottom: 0; }
+        .meta { color: var(--muted); font-size: 0.82rem; }
+        .row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+        label.chk { display: flex; gap: 0.3rem; align-items: center; font-size: 0.9rem; }
+        .toolbar { display: flex; gap: 0.4rem; margin: 0.6rem 0 1rem; }
+    </style>
+</head>
+<body>
+<h1>Scheduler</h1>
+<p class="err" id="err"></p>
+<div id="auth" class="card">
+    <div class="row">
+        <input id="user" placeholder="username" autocomplete="username" />
+        <input id="pass" type="password" placeholder="password" autocomplete="current-password" />
+        <button type="button" id="btnLogin">Login</button>
+        <button type="button" class="ghost" id="btnReg">Register</button>
+    </div>
+</div>
+<div id="app">
+    <p class="ok" id="who"></p>
+    <div class="toolbar">
+        <button type="button" class="ghost" id="btnOut">Logout</button>
+        <button type="button" class="ghost" id="btnReload">Reload</button>
+    </div>
+
+    <h2>Blocked times</h2>
+    <div class="card">
+        <ul id="blocked"></ul>
+        <div class="row" style="margin-top:0.7rem">
+            <input id="bTitle" placeholder="title (morning)" />
+            <input id="bStart" type="time" step="1800" value="06:00" />
+            <input id="bEnd" type="time" step="1800" value="07:00" />
+        </div>
+        <div class="row" style="margin-top:0.4rem">
+            <label class="chk"><input type="checkbox" id="bEvery" checked /> Every day</label>
+            <label class="chk"><input type="checkbox" id="bException" /> Exception (free this date)</label>
+            <input id="bFrom" type="date" disabled />
+            <input id="bTo" type="date" disabled />
+            <button type="button" id="btnAddBlocked">Add</button>
+        </div>
+        <p class="err" id="errBlocked"></p>
+    </div>
+
+    <h2>Tasks</h2>
+    <div class="card">
+        <ul id="tasks"></ul>
+    </div>
+
+    <h2>Add task</h2>
+    <div class="card">
+        <div class="row">
+            <input id="tTitle" placeholder="title" />
+            <input id="tDur" type="number" min="0.5" step="0.5" value="1" style="width:5rem" />
+            <select id="tState">
+                <option>Fixed</option>
+                <option>Flexible</option>
+            </select>
+            <input id="tDate" type="date" />
+            <input id="tTime" type="time" step="1800" />
+            <button type="button" id="btnAdd">Add</button>
+        </div>
+        <p class="err" id="errAdd"></p>
+    </div>
+</div>
+<script src="/app.js"></script>
 </body>
 </html>

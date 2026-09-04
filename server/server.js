@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import bcrypt from "bcrypt";
 import { validateTask } from "./HelperMethods.js";
 import {
     findUserByUsername,
@@ -10,6 +11,9 @@ import {
     listTasks,
     upsertTask,
     deleteTask,
+    listBlocked,
+    upsertBlocked,
+    deleteBlocked,
 } from "./db.js";
 
 function readBody(req) {
@@ -26,48 +30,138 @@ function send(res, code, obj) {
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(obj));
 }
+function normTime(t) {
+    const s = String(t || "").trim();
+    if (s.length === 5) return s + ":00";
+    return s;
+}
+
+function isExceptionRow(b) {
+    return b.is_exception === true || b.is_exception === "t" || b.is_exception === "true" || b.is_exception === 1;
+}
+
+function isDailyRow(b) {
+    return !isExceptionRow(b) && !toYmd(b.specific_date);
+}
+
+function sameLayer(a, b) {
+    if (isExceptionRow(a) !== isExceptionRow(b)) return false;
+    if (isExceptionRow(a)) return toYmd(a.specific_date) === toYmd(b.specific_date);
+    if (isDailyRow(a) && isDailyRow(b)) return true;
+    if (isDailyRow(a) || isDailyRow(b)) return false;
+    return toYmd(a.specific_date) === toYmd(b.specific_date);
+}
+
+function clockOverlap(a, b) {
+    return normTime(a.start_time) < normTime(b.end_time)
+        && normTime(b.start_time) < normTime(a.end_time);
+}
+
+function describeBlocked(b) {
+    const when = isExceptionRow(b)
+        ? "exception " + toYmd(b.specific_date)
+        : isDailyRow(b) ? "every day" : toYmd(b.specific_date);
+    return (b.title || "blocked") + " " + when + " " + b.start_time + "–" + b.end_time;
+}
+
+function blockedConflict(existing, row) {
+    for (const b of existing) {
+        if (String(b.id) === String(row.id)) continue;
+        if (sameLayer(b, row) && clockOverlap(b, row)) {
+            return "Overlaps existing: " + describeBlocked(b);
+        }
+    }
+    return null;
+}
+function pathname(req) {
+    return new URL(req.url, "http://127.0.0.1").pathname;
+}
+
+function toYmd(v) {
+    const s = String(v ?? "").trim();
+    if (!s) return "";
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return iso[1] + "-" + iso[2] + "-" + iso[3];
+    const dmy = s.match(/^(\d{2})[\/.\-](\d{2})[\/.\-](\d{4})$/);
+    if (dmy) return dmy[3] + "-" + dmy[2] + "-" + dmy[1];
+    return s.slice(0, 10);
+}
 
 http.createServer(async (req, res) => {
-    if (req.method === "GET" && (req.url === "/" || req.url === "/index.html")) {
+    const path = pathname(req);
+    const parts = path.split("/").filter(Boolean);
+
+    if (req.method === "GET" && (path === "/" || path === "/index.html")) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.end(fs.readFileSync("./index.html", "utf8"));
         return;
     }
 
-    {
-        const url = new URL(req.url, "http://127.0.0.1");
-        if (req.method === "GET" && url.pathname === "/tasks") {
-            const user = await userFromToken(req);
-            if (!user) {
-                send(res, 401, { error: "login required" });
-                return;
-            }
+    if (req.method === "GET" && path === "/app.js") {
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(fs.readFileSync("./app.js", "utf8"));
+        return;
+    }
+
+    if (req.method === "GET" && path === "/tasks") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        try {
             send(res, 200, { tasks: await listTasks(user.id) });
-            return;
+        } catch (e) {
+            send(res, 500, { error: String(e.message || e) });
         }
+        return;
     }
 
-    {
-        const url = new URL(req.url, "http://127.0.0.1");
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (req.method === "DELETE" && parts.length === 2 && parts[0] === "tasks") {
-            const id = parts[1];
-            const user = await userFromToken(req);
-            if (!user) {
-                send(res, 401, { error: "login required" });
-                return;
-            }
-            const removed = await deleteTask(user.id, id);
-            if (!removed) {
-                send(res, 404, { error: "task not found" });
-                return;
-            }
-            send(res, 200, removed);
+    if (req.method === "GET" && path === "/blocked") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
             return;
         }
+        try {
+            send(res, 200, { blocked: await listBlocked(user.id) });
+        } catch (e) {
+            send(res, 500, { error: String(e.message || e) });
+        }
+        return;
     }
 
-    if (req.method === "POST" && req.url === "/register") {
+    if (req.method === "DELETE" && parts.length === 2 && parts[0] === "tasks") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        const removed = await deleteTask(user.id, parts[1]);
+        if (!removed) {
+            send(res, 404, { error: "task not found" });
+            return;
+        }
+        send(res, 200, removed);
+        return;
+    }
+
+    if (req.method === "DELETE" && parts.length === 2 && parts[0] === "blocked") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        const removed = await deleteBlocked(user.id, parts[1]);
+        if (!removed) {
+            send(res, 404, { error: "blocked not found" });
+            return;
+        }
+        send(res, 200, removed);
+        return;
+    }
+
+    if (req.method === "POST" && path === "/register") {
         try {
             const raw = await readBody(req);
             const body = JSON.parse(raw || "{}");
@@ -92,17 +186,40 @@ http.createServer(async (req, res) => {
             const user = await createUser(
                 randomUUID(),
                 username,
-                createHash("sha256").update(password).digest("hex")
+                await bcrypt.hash(password, 12)
             );
             const token = await createSession(user.id);
             send(res, 201, { id: user.id, username: user.username, token });
+        } catch (e) {
+            send(res, 400, { error: String(e.message || e) });
+        }
+        return;
+    }
+
+    if (req.method === "POST" && path === "/login") {
+        try {
+            const raw = await readBody(req);
+            const body = JSON.parse(raw || "{}");
+            const username = String(body.username ?? "").trim();
+            const password = String(body.password ?? "").trim();
+            if (!username || !password) {
+                send(res, 400, { error: "username and password required" });
+                return;
+            }
+            const user = await findUserByUsername(username);
+            if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+                send(res, 401, { error: "invalid username or password" });
+                return;
+            }
+            const token = await createSession(user.id);
+            send(res, 200, { id: user.id, username: user.username, token });
         } catch (e) {
             send(res, 400, { error: "invalid json" });
         }
         return;
     }
 
-    if (req.method === "POST" && req.url === "/tasks") {
+    if (req.method === "POST" && path === "/tasks") {
         try {
             const raw = await readBody(req);
             const body = JSON.parse(raw || "{}");
@@ -111,8 +228,13 @@ http.createServer(async (req, res) => {
                 send(res, 401, { error: "login required" });
                 return;
             }
+
             body.user_id = authUser.id;
             body.userId = authUser.id;
+            body.placed_date = toYmd(body.placed_date || body.placedDate);
+            body.placedDate = body.placed_date;
+            body.deadline_date = toYmd(body.deadline_date || body.deadlineDate);
+            if (body.deadline_date) body.deadlineDate = body.deadline_date;
 
             const err = validateTask(body);
             if (err) {
@@ -145,31 +267,57 @@ http.createServer(async (req, res) => {
             await upsertTask(task);
             send(res, 201, task);
         } catch (e) {
-            send(res, 400, { error: "invalid json" });
+            send(res, 400, { error: String(e.message || e) });
         }
         return;
     }
 
-    if (req.method === "POST" && req.url === "/login") {
+    if (req.method === "POST" && path === "/blocked") {
         try {
             const raw = await readBody(req);
             const body = JSON.parse(raw || "{}");
-            const username = String(body.username ?? "").trim();
-            const password = String(body.password ?? "").trim();
-            if (!username || !password) {
-                send(res, 400, { error: "username and password required" });
+            const authUser = await userFromToken(req);
+            if (!authUser) {
+                send(res, 401, { error: "login required" });
                 return;
             }
-            const hash = createHash("sha256").update(password).digest("hex");
-            const user = await findUserByUsername(username);
-            if (!user || user.password_hash !== hash) {
-                send(res, 401, { error: "invalid username or password" });
+            const isException = body.is_exception === true
+                || body.is_exception === "true"
+                || body.is_exception === 1;
+            const specific = toYmd(body.specific_date || body.specificDate) || null;
+            const start = String(body.start_time ?? "").trim() || null;
+            const end = String(body.end_time ?? "").trim() || null;
+            if (!start || !end) {
+                send(res, 400, { error: "start_time and end_time required" });
                 return;
             }
-            const token = await createSession(user.id);
-            send(res, 200, { id: user.id, username: user.username, token });
+            if (isException && !specific) {
+                send(res, 400, { error: "exception needs a date" });
+                return;
+            }
+            const row = {
+                id: String(body.id ?? randomUUID()).trim(),
+                title: String(body.title ?? "").trim() || "blocked",
+                weekday: body.weekday == null || body.weekday === "" ? null : Number(body.weekday),
+                specific_date: specific,
+                start_time: start,
+                end_time: end,
+                last_updated_at: String(
+                    body.last_updated_at ?? new Date().toISOString()
+                ).trim(),
+                user_id: authUser.id,
+                is_exception: isException,
+            };
+            const existing = await listBlocked(authUser.id);
+            const clash = blockedConflict(existing, row);
+            if (clash) {
+                send(res, 400, { error: clash });
+                return;
+            }
+            await upsertBlocked(row);
+            send(res, 201, row);
         } catch (e) {
-            send(res, 400, { error: "invalid json" });
+            send(res, 400, { error: String(e.message || e) });
         }
         return;
     }
