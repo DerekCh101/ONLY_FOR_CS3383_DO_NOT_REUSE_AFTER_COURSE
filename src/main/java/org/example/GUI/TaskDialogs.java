@@ -25,6 +25,8 @@ public class TaskDialogs {
     private boolean popupIsOpen = false;
     private boolean areYouSureIsOpen = false;
     private boolean alertIsOpen = false;
+    private boolean discardIt = false;
+    private boolean madeDecisionOnConfirmation = false;
     private EventHandler<KeyEvent> escHandler;
 
     private StackPane currentDimmedOverlay;
@@ -249,10 +251,13 @@ public class TaskDialogs {
                 : date + " " + AppTimeReference.formatSlotLabel(slotIndex);
         Label placedLabel = new Label("Currently placed: " + placedText);
 
-        Button finishBtn = new Button("Finish");
+        CheckBox finishBtn = new CheckBox();
+        finishBtn.setSelected(task.getWorkflow() == Workflow.FINISHED);
+        finishBtn.setText(finishBtn.isSelected()?"Mark unfinish":"Mark finished");
         Button clearBtn = new Button("Clear Task");
         Button closeBtn = new Button("Close");
-        HBox buttonBox = new HBox(12,  clearBtn, closeBtn);
+
+        HBox buttonBox = new HBox(12,  finishBtn, clearBtn, closeBtn);
 
         content.getChildren().addAll(title, nameLabel, typeLabel, durationLabel, extraLabel, placedLabel, buttonBox);
         currentPopup.getChildren().add(content);
@@ -260,14 +265,19 @@ public class TaskDialogs {
 
         finishBtn.setOnAction(e -> {
             system.fetchPopupTask(new FetchPopOutTask(task));
-            system.command("finishTask");
-            closeEverything(scene);
+            if(finishBtn.isSelected()) {
+                system.command("finishTask");
+            }
+            else{
+                system.command("unfinishTask");
+            }
             if (onChanged != null) onChanged.run();
         });
 
 
 
         clearBtn.setOnAction(e -> {
+            showAlertPopup(scene, "Task is cleared, press undo to restore");
             system.fetchPopupTask(new FetchPopOutTask(task));
             system.command("clearTask");
             closeEverything(scene);
@@ -278,7 +288,7 @@ public class TaskDialogs {
         setupEscHandler(scene);
     }
 
-    public void showTaskPopup(boolean fromGridClick, LocalDate clickedDate, int slotIndex) {
+    public void showTaskPopup(boolean fromGridClick, LocalDate clickedDate, int slotIndex)  {
         Scene scene = root.getScene();
         removeMainEscHandler(scene);
 
@@ -552,7 +562,7 @@ public class TaskDialogs {
         GuiHelper.centerInParentOffset(pane, currentConfirmOverlay, 0.8, 0.9);
 
         VBox box = GuiHelper.createWhiteBox();
-        Label msg = new Label("Are you sure? Unsaved changes will be discarded.");
+        Label msg = new Label("Are you sure? Info will be discarded.");
         msg.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
 
         Button discard = new Button("Discard and leave");
@@ -564,6 +574,7 @@ public class TaskDialogs {
         currentConfirmOverlay.getChildren().add(pane);
         root.getChildren().add(currentConfirmOverlay);
 
+
         cancel.setOnAction(e -> {
             root.getChildren().remove(currentConfirmOverlay);
             currentConfirmOverlay = null;
@@ -574,7 +585,9 @@ public class TaskDialogs {
             root.getChildren().remove(currentConfirmOverlay);
             currentConfirmOverlay = null;
             closeEverything(scene);
+
         });
+
     }
 
     private void dismissConfirmation() {

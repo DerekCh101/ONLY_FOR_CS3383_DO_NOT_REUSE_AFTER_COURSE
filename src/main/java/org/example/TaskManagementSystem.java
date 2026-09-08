@@ -199,6 +199,21 @@ public class TaskManagementSystem {
                         System.out.println("File Not Found!");
                         return false;
                     }
+                case "finishTask":
+                    Command finishTask = new FinishTask(getPopupTask().getTask());
+                    if (!finishTask.execute()) {
+                        return false;
+                    }
+                    refreshGUI();
+                    return true;
+
+                case "unfinishTask":
+                    Command unfinishTask = new UnfinishTask(getPopupTask().getTask());
+                    if (!unfinishTask.execute()) {
+                        return false;
+                    }
+                    refreshGUI();
+                    return true;
 
                 case "clearTask":
                     Command clearTask = new ClearTask(getPopupTask().getTask());

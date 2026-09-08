@@ -18,6 +18,7 @@ public class FinishTask implements Command {
     @Override
     public boolean execute() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return false;
+        if (thisTask.getWorkflow() == Workflow.FINISHED) return false;
         if(thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return false;
         //note that only past and scheduled task can be marked finished
         Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
