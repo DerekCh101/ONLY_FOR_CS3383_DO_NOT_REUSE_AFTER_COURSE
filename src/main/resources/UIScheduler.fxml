@@ -14,6 +14,7 @@
 <?import javafx.scene.layout.VBox?>
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.Pane?>
+<?import javafx.scene.layout.Region?>
 
 <StackPane fx:id="root"
            prefHeight="700.0" prefWidth="1200.0"
@@ -30,7 +31,7 @@
                         <Menu text="File">
                             <items>
                                 <MenuItem text="Close" />
-                                <MenuItem fx:id="resetAll" text="Reset All (Wipe All Data)"/>
+                                <MenuItem fx:id="resetAll" text="Reset My Tasks"/>
                             </items>
                         </Menu>
                         <Menu text="Edit">
@@ -46,14 +47,20 @@
                     </menus>
                 </MenuBar>
 
+                <HBox spacing="0" alignment="CENTER_LEFT" style="-fx-padding: 0 8 0 8; -fx-background-color: #1c2430;">
+                    <Button fx:id="tabScheduler" text="Scheduler" mnemonicParsing="false" />
+                    <Button fx:id="tabTypewriter" text="Typewriter" mnemonicParsing="false" />
+                </HBox>
+
                 <HBox alignment="CENTER_LEFT" spacing="5" style="-fx-padding: 8;">
                     <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
                     <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
-                    <HBox HBox.hgrow="ALWAYS" />
+                    <Region HBox.hgrow="ALWAYS" />
                     <Button fx:id="btnMonthView" mnemonicParsing="false" text="Monthly View" />
                     <Button fx:id="btnPrev" text="Prev Week" />
                     <Button fx:id="btnNext" text="Next Week" />
                     <Button fx:id="btnAdd" text="Add Task" />
+                    <Button fx:id="btnBlocked" text="Blocked times" />
 
                     <MenuButton text="Action">
                         <items>
@@ -61,33 +68,39 @@
                             <MenuItem fx:id="btnRun" text="Run Scheduler" />
                         </items>
                     </MenuButton>
+
+                    <Region HBox.hgrow="ALWAYS" />
+
+                    <Label fx:id="lblUser" style="-fx-font-weight: bold; -fx-padding: 0 8 0 12;" />
+                    <Button fx:id="btnLogout" text="Logout" />
                 </HBox>
             </VBox>
         </top>
 
         <center>
-            <SplitPane fx:id="mainSplit" dividerPositions="0.82" orientation="HORIZONTAL">
-
-                <BorderPane>
-                    <left>
-                        <Pane fx:id="prevPane" style="-fx-background-color: #e8e8e8;" />
-                    </left>
-                    <center>
-                        <ScrollPane fx:id="gridScroll" fitToHeight="true" fitToWidth="true">
-                            <GridPane fx:id="grid" hgap="1" vgap="1" style="-fx-border-color: black;" />
-                        </ScrollPane>
-                    </center>
-                    <right>
-                        <Pane fx:id="nextPane" style="-fx-background-color: #e8e8e8;" />
-                    </right>
-                </BorderPane>
-
-                <VBox fx:id="sidePanelContainer" spacing="10" style="-fx-padding: 10;">
-                    <Label fx:id="sidePanel" style="-fx-font-weight: bold;"
-                           text="Unscheduled Tasks: (Tasks that were once placed on grid but cannot refit after using the scheduling algorithm)" />
-                </VBox>
-
-            </SplitPane>
+            <StackPane fx:id="mainStack">
+                <SplitPane fx:id="mainSplit" dividerPositions="0.82" orientation="HORIZONTAL">
+                    <BorderPane>
+                        <left>
+                            <Pane fx:id="prevPane" style="-fx-background-color: #e8e8e8;" />
+                        </left>
+                        <center>
+                            <ScrollPane fx:id="gridScroll" fitToHeight="true" fitToWidth="true">
+                                <GridPane fx:id="grid" hgap="1" vgap="1" style="-fx-border-color: black;" />
+                            </ScrollPane>
+                        </center>
+                        <right>
+                            <Pane fx:id="nextPane" style="-fx-background-color: #e8e8e8;" />
+                        </right>
+                    </BorderPane>
+                    <VBox fx:id="sidePanelContainer" spacing="10" prefWidth="280"
+                          minWidth="200" maxWidth="360"
+                          style="-fx-padding: 10;">
+                        <Label fx:id="sidePanel" wrapText="true" style="-fx-font-weight: bold;"
+                               text="Unscheduled Tasks: (Tasks that were once placed on grid but cannot refit after using the scheduling algorithm)" />
+                    </VBox>
+                </SplitPane>
+            </StackPane>
         </center>
 
     </BorderPane>
