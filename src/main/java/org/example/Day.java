@@ -40,7 +40,7 @@ public class Day {
             }
             if (!ignoreBlocked) {
                 LocalTime checkTime = AppTimeReference.slotToLocalTime(slot);
-                if (blockedTime.isBlocked(checkTime)) {
+                if (blockedTime.isBlocked(thisDay, checkTime)) {
                     return false;
                 }
             }

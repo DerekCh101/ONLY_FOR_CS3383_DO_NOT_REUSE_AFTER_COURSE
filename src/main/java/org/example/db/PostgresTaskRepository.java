@@ -7,26 +7,19 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Talks ONLY to PostgreSQL (the shared server DB).
- * TaskRepository decides when to call this (when online / Tailscale works).
+ * PostgreSQL only. TaskRepository calls this when online.
  *
- * Tables under schema TASK:
- *   tasks        – live tasks
- *   sync_deletes – tombstones (id was deleted; do not resurrect)
- *   devices      – each laptop/desktop install, for sync ack + GC
- *
- * Most methods: open connection → run SQL → close (try-with-resources).
+ * TASK.tasks / sync_deletes / devices / blocked_times / sync_deletes_blocked
  */
 public class PostgresTaskRepository {
 
-    /** jdbc:postgresql://host:5432/DatabaseName */
     private final String url;
-    /** Postgres login name, e.g. postgres */
     private final String user;
-    /** From env var — not hardcoded */
     private final String password;
 
     public PostgresTaskRepository(String url, String user, String password) {
@@ -35,22 +28,16 @@ public class PostgresTaskRepository {
         this.password = password;
     }
 
-    /** Open one JDBC connection to Postgres. Caller must close it (try-with-resources). */
     public Connection connect() throws SQLException {
         return DriverManager.getConnection(url, user, password);
     }
 
-    /**
-     * Create schema/tables if missing, and add any new columns on old DBs.
-     * Safe to call every startup (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
-     */
     public void initialize() throws SQLException {
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
 
             st.execute("CREATE SCHEMA IF NOT EXISTS TASK");
 
-            // Live tasks table
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.tasks (
                     id VARCHAR(36) PRIMARY KEY,
@@ -73,7 +60,6 @@ public class PostgresTaskRepository {
                 )
                 """);
 
-            // Migrations for DBs created before these columns existed
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS lifecycle VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS workflow VARCHAR(20)");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS placement_updated_at TIMESTAMPTZ DEFAULT NOW()");
@@ -84,7 +70,6 @@ public class PostgresTaskRepository {
             st.executeUpdate("UPDATE TASK.tasks SET placement_updated_at = NOW() WHERE placement_updated_at IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET last_updated_at = COALESCE(last_updated_at, placement_updated_at, NOW()) WHERE last_updated_at IS NULL");
 
-            // Tombstone log: "this task id was deleted"
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.sync_deletes (
                     id VARCHAR(36) PRIMARY KEY,
@@ -96,7 +81,6 @@ public class PostgresTaskRepository {
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS title VARCHAR(100)");
             st.executeUpdate("ALTER TABLE TASK.sync_deletes ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
 
-            // One row per app install (laptop, desktop, …)
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.devices (
                     device_id VARCHAR(36) PRIMARY KEY,
@@ -110,10 +94,41 @@ public class PostgresTaskRepository {
                     revoked_at TIMESTAMPTZ
                 )
                 """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS TASK.blocked_times (
+                    id VARCHAR(36) PRIMARY KEY,
+                    title VARCHAR(100),
+                    weekday SMALLINT,
+                    specific_date DATE,
+                    start_time TIME NOT NULL,
+                    end_time TIME NOT NULL,
+                    last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    user_id VARCHAR(36),
+                    is_exception BOOLEAN NOT NULL DEFAULT false,
+                    CHECK (weekday IS NULL OR weekday BETWEEN 0 AND 6),
+                    CHECK (
+                        (weekday IS NULL AND specific_date IS NULL)
+                        OR (weekday IS NOT NULL AND specific_date IS NULL)
+                        OR (weekday IS NULL AND specific_date IS NOT NULL)
+                    )
+                )
+                """);
+            st.executeUpdate("""
+                ALTER TABLE TASK.blocked_times
+                ADD COLUMN IF NOT EXISTS is_exception BOOLEAN NOT NULL DEFAULT false
+                """);
+
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS TASK.sync_deletes_blocked (
+                    id VARCHAR(36) PRIMARY KEY,
+                    deleted_at TIMESTAMPTZ NOT NULL,
+                    title VARCHAR(100)
+                )
+                """);
         }
     }
 
-    /** Return true if this id already has a row in TASK.tasks. */
     public boolean existsTaskId(String id) throws SQLException {
         if (id == null || id.isBlank()) return false;
         try (Connection conn = connect();
@@ -121,12 +136,11 @@ public class PostgresTaskRepository {
                      "SELECT 1 FROM TASK.tasks WHERE id = ?")) {
             ps.setString(1, id);
             try (ResultSet rs = ps.executeQuery()) {
-                return rs.next(); // true = found a row
+                return rs.next();
             }
         }
     }
 
-    /** Return true if this id is tombstoned (was deleted). */
     public boolean isDeletedId(String id) throws SQLException {
         if (id == null || id.isBlank()) return false;
         try (Connection conn = connect();
@@ -139,16 +153,13 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * Register or refresh this device on the server.
-     * ON CONFLICT: update name/platform, bump last_seen, clear revoked_at
-     * (device came back).
-     */
     public void upsertDevice(String deviceId, String displayName, String platform) throws SQLException {
+        String uid = currentUserId();
         String sql = """
-            INSERT INTO TASK.devices (device_id, display_name, platform, last_seen_at, created_at)
-            VALUES (?, ?, ?, NOW(), NOW())
+            INSERT INTO TASK.devices (device_id, user_id, display_name, platform, last_seen_at, created_at)
+            VALUES (?, ?, ?, ?, NOW(), NOW())
             ON CONFLICT (device_id) DO UPDATE SET
+                user_id = COALESCE(EXCLUDED.user_id, TASK.devices.user_id),
                 display_name = COALESCE(EXCLUDED.display_name, TASK.devices.display_name),
                 platform = COALESCE(EXCLUDED.platform, TASK.devices.platform),
                 last_seen_at = NOW(),
@@ -157,13 +168,13 @@ public class PostgresTaskRepository {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, deviceId);
-            ps.setString(2, displayName);
-            ps.setString(3, platform);
+            ps.setString(2, uid);
+            ps.setString(3, displayName);
+            ps.setString(4, platform);
             ps.executeUpdate();
         }
     }
 
-    /** Mark: this device finished pulling/pushing delete tombstones. */
     public void touchDeleteSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -173,7 +184,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** Mark: this device finished pulling/pushing tasks. */
     public void touchTaskSync(String deviceId) throws SQLException {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
@@ -183,12 +193,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * For tombstone GC: among active (not revoked, seen recently) devices,
-     * if at least 2 are active and ALL of them have last_delete_sync_at set,
-     * return the earliest of those ack times = safe to delete older tombstones.
-     * Otherwise return null (do not GC).
-     */
     public Instant minDeleteAckAmongActive(int staleAfterMonths) throws SQLException {
         String sql = """
             SELECT
@@ -217,7 +221,6 @@ public class PostgresTaskRepository {
                 if (!rs.next()) return null;
                 int active = rs.getInt("active_cnt");
                 int acked = rs.getInt("acked_cnt");
-                // Need multi-device agreement before purging delete log
                 if (active < 2 || acked < active) return null;
                 Timestamp t = rs.getTimestamp("min_ack");
                 return t != null ? t.toInstant() : null;
@@ -225,7 +228,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** Soft-disable devices that have not checked in for too long. */
     public void revokeStaleDevices(int staleAfterMonths) throws SQLException {
         String sql = """
             UPDATE TASK.devices
@@ -240,10 +242,6 @@ public class PostgresTaskRepository {
         }
     }
 
-    /**
-     * If NO device has been active for abandonedAfterMonths, wipe all
-     * server task/delete/device data. Returns true if wipe happened.
-     */
     public boolean wipeIfAbandoned(int abandonedAfterMonths) throws SQLException {
         String countSql = """
             SELECT COUNT(*) FROM TASK.devices
@@ -255,22 +253,20 @@ public class PostgresTaskRepository {
             ps.setInt(1, abandonedAfterMonths);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                if (rs.getInt(1) > 0) return false; // someone still active
+                if (rs.getInt(1) > 0) return false;
             }
         }
         try (Connection conn = connect();
              Statement st = conn.createStatement()) {
             st.execute("DELETE FROM TASK.tasks");
             st.execute("DELETE FROM TASK.sync_deletes");
+            st.execute("DELETE FROM TASK.blocked_times");
+            st.execute("DELETE FROM TASK.sync_deletes_blocked");
             st.execute("DELETE FROM TASK.devices");
         }
         return true;
     }
 
-    /**
-     * Insert task, or if id already exists, overwrite columns (upsert).
-     * This is the main "save task to server" method.
-     */
     public void upsert(Task task) throws SQLException {
         String sql = """
             INSERT INTO TASK.tasks (
@@ -278,8 +274,9 @@ public class PostgresTaskRepository {
                 placed_date, placed_time,
                 deadline_date, deadline_time,
                 lifecycle, workflow,
-                placement_updated_at, last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                placement_updated_at, last_updated_at,
+                user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
                 duration = EXCLUDED.duration,
@@ -291,16 +288,18 @@ public class PostgresTaskRepository {
                 lifecycle = EXCLUDED.lifecycle,
                 workflow = EXCLUDED.workflow,
                 placement_updated_at = EXCLUDED.placement_updated_at,
-                last_updated_at = EXCLUDED.last_updated_at
+                last_updated_at = EXCLUDED.last_updated_at,
+                user_id = EXCLUDED.user_id
+            WHERE TASK.tasks.user_id IS NULL
+               OR TASK.tasks.user_id = EXCLUDED.user_id
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            bind(ps, task); // fill the ? placeholders from Task fields
+            bind(ps, task);
             ps.executeUpdate();
         }
     }
 
-    /** Only change workflow + last_updated_at for one task (e.g. mark FINISHED). */
     public void updateWorkflow(Task task) throws SQLException {
         String sql = "UPDATE TASK.tasks SET workflow = ?, last_updated_at = ? WHERE id = ?";
         try (Connection conn = connect();
@@ -314,80 +313,206 @@ public class PostgresTaskRepository {
         }
     }
 
-    /** Delete the live row only (does NOT write tombstone by itself). */
     public void deleteTaskRow(String id) throws SQLException {
+        String uid = currentUserId();
+        String sql = (uid == null || uid.isBlank())
+                ? "DELETE FROM TASK.tasks WHERE id = ?"
+                : "DELETE FROM TASK.tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)";
         try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM TASK.tasks WHERE id = ?")) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            if (uid != null && !uid.isBlank()) ps.setString(2, uid);
+            int n = ps.executeUpdate();
+            System.out.println("postgres deleteTaskRow id=" + id + " rows=" + n);
+        }
+    }
+
+    public void unrecordDelete(String id) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM TASK.sync_deletes WHERE id = ?")) {
             ps.setString(1, id);
             ps.executeUpdate();
         }
     }
 
-    /**
-     * Write or refresh a tombstone in sync_deletes.
-     * If id already deleted, keep the later deleted_at and keep title if present.
-     */
     public void recordDelete(String id, Instant deletedAt, String title) throws SQLException {
         String sql = """
-            INSERT INTO TASK.sync_deletes (id, deleted_at, title) VALUES (?, ?, ?)
+            INSERT INTO TASK.sync_deletes (id, deleted_at, title, user_id) VALUES (?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 deleted_at = GREATEST(TASK.sync_deletes.deleted_at, EXCLUDED.deleted_at),
-                title = COALESCE(EXCLUDED.title, TASK.sync_deletes.title)
+                title = COALESCE(EXCLUDED.title, TASK.sync_deletes.title),
+                user_id = COALESCE(EXCLUDED.user_id, TASK.sync_deletes.user_id)
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.setTimestamp(2, Timestamp.from(deletedAt));
-            if (title != null && !title.isBlank()) {
-                ps.setString(3, title);
-            } else {
-                ps.setNull(3, Types.VARCHAR);
-            }
+            if (title != null && !title.isBlank()) ps.setString(3, title);
+            else ps.setNull(3, Types.VARCHAR);
+            String uid = currentUserId();
+            if (uid != null && !uid.isBlank()) ps.setString(4, uid);
+            else ps.setNull(4, Types.VARCHAR);
             ps.executeUpdate();
         }
     }
 
-    /** Same as recordDelete but without a title. */
     public void recordDelete(String id, Instant deletedAt) throws SQLException {
         recordDelete(id, deletedAt, null);
     }
 
-    /** Full clear of one task on server: remove row + add tombstone with name. */
     public void deleteTaskAndLog(Task task) throws SQLException {
         Instant when = Instant.now();
         deleteTaskRow(task.getID());
         recordDelete(task.getID(), when, task.getTaskName());
     }
 
-    /**
-     * Clear ALL tasks on server: for each id, delete row and write tombstone.
-     * Used by "reset all" style operations.
-     */
     public void deleteAllTasksAndLog() throws SQLException {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) return;
+        List<String[]> rows = new ArrayList<>();
         try (Connection conn = connect();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT id, title FROM TASK.tasks")) {
-            List<String[]> rows = new ArrayList<>();
-            while (rs.next()) {
-                rows.add(new String[]{rs.getString(1), rs.getString(2)});
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT id, title FROM TASK.tasks WHERE user_id = ?")) {
+            ps.setString(1, uid);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) rows.add(new String[]{rs.getString(1), rs.getString(2)});
             }
-            Instant when = Instant.now();
-            for (String[] row : rows) {
-                deleteTaskRow(row[0]);
-                recordDelete(row[0], when, row[1]);
-            }
+        }
+        Instant when = Instant.now();
+        for (String[] row : rows) {
+            deleteTaskRow(row[0]);
+            recordDelete(row[0], when, row[1]);
         }
     }
 
-    /**
-     * Load every tombstone from server.
-     * Each element: [0]=id String, [1]=deletedAt Instant, [2]=title String or null
-     */
     public List<Object[]> fetchAllDeletes() throws SQLException {
+        String uid = currentUserId();
+        List<Object[]> list = new ArrayList<>();
+        String sql = (uid == null || uid.isBlank())
+                ? "SELECT id, deleted_at, title FROM TASK.sync_deletes WHERE false"
+                : "SELECT id, deleted_at, title FROM TASK.sync_deletes WHERE user_id = ? OR user_id IS NULL";
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (uid != null && !uid.isBlank()) ps.setString(1, uid);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(new Object[]{
+                            rs.getString(1),
+                            rs.getTimestamp(2).toInstant(),
+                            rs.getString(3)
+                    });
+                }
+            }
+        }
+        return list;
+    }
+
+    public void purgeDeletesBefore(Instant cutoff) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM TASK.sync_deletes WHERE deleted_at < ?")) {
+            ps.setTimestamp(1, Timestamp.from(cutoff));
+            ps.executeUpdate();
+        }
+    }
+
+    public List<Task> fetchAll() throws SQLException {
+        String uid = currentUserId();
+        List<Task> list = new ArrayList<>();
+        String sql = (uid == null || uid.isBlank())
+                ? "SELECT * FROM TASK.tasks WHERE false"
+                : "SELECT * FROM TASK.tasks WHERE user_id = ?";
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (uid != null && !uid.isBlank()) ps.setString(1, uid);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) list.add(mapRow(rs));
+            }
+        }
+        return list;
+    }
+
+    public void upsertBlocked(BlockedTime b) throws SQLException {
+        String sql = """
+            INSERT INTO TASK.blocked_times (
+                id, title, weekday, specific_date, start_time, end_time,
+                last_updated_at, user_id, is_exception
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                weekday = EXCLUDED.weekday,
+                specific_date = EXCLUDED.specific_date,
+                start_time = EXCLUDED.start_time,
+                end_time = EXCLUDED.end_time,
+                last_updated_at = EXCLUDED.last_updated_at,
+                user_id = EXCLUDED.user_id,
+                is_exception = EXCLUDED.is_exception
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            bindBlocked(ps, b);
+            ps.executeUpdate();
+        }
+    }
+
+    public List<BlockedTime> fetchAllBlocked() throws SQLException {
+        String uid = currentUserId();
+        List<BlockedTime> list = new ArrayList<>();
+        String sql = (uid == null || uid.isBlank())
+                ? "SELECT * FROM TASK.blocked_times WHERE false"
+                : "SELECT * FROM TASK.blocked_times WHERE user_id = ?";
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (uid != null && !uid.isBlank()) ps.setString(1, uid);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) list.add(mapBlocked(rs));
+            }
+        }
+        return list;
+    }
+
+    public void deleteBlockedRow(String id) throws SQLException {
+        String uid = currentUserId();
+        String sql = (uid == null || uid.isBlank())
+                ? "DELETE FROM TASK.blocked_times WHERE id = ? AND false"
+                : "DELETE FROM TASK.blocked_times WHERE id = ? AND user_id = ?";
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            if (uid != null && !uid.isBlank()) ps.setString(2, uid);
+            ps.executeUpdate();
+        }
+    }
+
+    public void recordBlockedDelete(String id, Instant deletedAt, String title) throws SQLException {
+        String sql = """
+            INSERT INTO TASK.sync_deletes_blocked (id, deleted_at, title) VALUES (?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                deleted_at = GREATEST(TASK.sync_deletes_blocked.deleted_at, EXCLUDED.deleted_at),
+                title = COALESCE(EXCLUDED.title, TASK.sync_deletes_blocked.title)
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setTimestamp(2, Timestamp.from(deletedAt));
+            if (title != null && !title.isBlank()) ps.setString(3, title);
+            else ps.setNull(3, Types.VARCHAR);
+            ps.executeUpdate();
+        }
+    }
+
+    public void deleteBlockedAndLog(BlockedTime b) throws SQLException {
+        Instant when = Instant.now();
+        deleteBlockedRow(b.getId());
+        recordBlockedDelete(b.getId(), when, b.getTitle());
+    }
+
+    public List<Object[]> fetchAllBlockedDeletes() throws SQLException {
         List<Object[]> list = new ArrayList<>();
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT id, deleted_at, title FROM TASK.sync_deletes");
+                     "SELECT id, deleted_at, title FROM TASK.sync_deletes_blocked");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 list.add(new Object[]{
@@ -400,31 +525,34 @@ public class PostgresTaskRepository {
         return list;
     }
 
-    /**
-     * GC helper: permanently remove tombstones older than cutoff.
-     * Only call when minDeleteAckAmongActive said it is safe.
-     */
-    public void purgeDeletesBefore(Instant cutoff) throws SQLException {
+    public Set<String> fetchBlockedDeletedIds() throws SQLException {
+        Set<String> set = new HashSet<>();
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM TASK.sync_deletes WHERE deleted_at < ?")) {
+                     "SELECT id FROM TASK.sync_deletes_blocked");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) set.add(rs.getString(1));
+        }
+        return set;
+    }
+
+    public void purgeBlockedDeletesBefore(Instant cutoff) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM TASK.sync_deletes_blocked WHERE deleted_at < ?")) {
             ps.setTimestamp(1, Timestamp.from(cutoff));
             ps.executeUpdate();
         }
     }
 
-    /** Load every live task from server into Task objects. */
-    public List<Task> fetchAll() throws SQLException {
-        List<Task> list = new ArrayList<>();
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement("SELECT * FROM TASK.tasks");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) list.add(mapRow(rs));
+    private static String currentUserId() {
+        try {
+            return org.example.net.Api.INSTANCE.getUserId();
+        } catch (Exception e) {
+            return null;
         }
-        return list;
     }
 
-    /** Put Task fields into the 12 ? placeholders of the upsert INSERT. */
     private void bind(PreparedStatement ps, Task task) throws SQLException {
         String state = task.getState() == 1 ? "Fixed"
                 : task.getState() == 2 ? "Deadline" : "Flexible";
@@ -432,6 +560,7 @@ public class PostgresTaskRepository {
         Workflow flow = task.getWorkflow() != null ? task.getWorkflow() : Workflow.UNFINISHED;
         Instant placement = task.getPlacementUpdatedAt() != null ? task.getPlacementUpdatedAt() : Instant.now();
         Instant last = task.getLastUpdatedAt() != null ? task.getLastUpdatedAt() : Instant.now();
+        String uid = currentUserId();
 
         ps.setString(1, task.getID());
         ps.setString(2, task.getTaskName());
@@ -441,7 +570,6 @@ public class PostgresTaskRepository {
         else ps.setNull(5, Types.DATE);
         if (task.getPlacedTime() != null) ps.setTime(6, Time.valueOf(task.getPlacedTime()));
         else ps.setNull(6, Types.TIME);
-        // Deadline columns only meaningful for Deadline tasks
         if (task.getState() == 2 && task.getDeadLineDate() != null) {
             ps.setDate(7, Date.valueOf(task.getDeadLineDate()));
             if (task.getDeadLineTime() != null) ps.setTime(8, Time.valueOf(task.getDeadLineTime()));
@@ -454,9 +582,10 @@ public class PostgresTaskRepository {
         ps.setString(10, flow.name());
         ps.setTimestamp(11, Timestamp.from(placement));
         ps.setTimestamp(12, Timestamp.from(last));
+        if (uid != null && !uid.isBlank()) ps.setString(13, uid);
+        else ps.setNull(13, Types.VARCHAR);
     }
 
-    /** Turn one SQL ResultSet row into a Task (load path — keeps DB id). */
     private Task mapRow(ResultSet rs) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("title");
@@ -496,4 +625,58 @@ public class PostgresTaskRepository {
         else if (p != null) task.setLastUpdatedAt(p.toInstant());
         return task;
     }
+
+    private void bindBlocked(PreparedStatement ps, BlockedTime b) throws SQLException {
+        Instant last = b.getLastUpdatedAt() != null ? b.getLastUpdatedAt() : Instant.now();
+        String uid = b.getUserId();
+        if (uid == null || uid.isBlank()) uid = currentUserId();
+        ps.setString(1, b.getId());
+        ps.setString(2, b.getTitle());
+        if (b.getWeekday() != null) ps.setInt(3, toWeekdayInt(b.getWeekday()));
+        else ps.setNull(3, Types.SMALLINT);
+        if (b.getSpecificDate() != null) ps.setDate(4, Date.valueOf(b.getSpecificDate()));
+        else ps.setNull(4, Types.DATE);
+        ps.setTime(5, Time.valueOf(b.getStartTime()));
+        ps.setTime(6, Time.valueOf(b.getEndTime()));
+        ps.setTimestamp(7, Timestamp.from(last));
+        if (uid != null && !uid.isBlank()) ps.setString(8, uid);
+        else ps.setNull(8, Types.VARCHAR);
+        ps.setBoolean(9, b.isException());
+    }
+
+    private BlockedTime mapBlocked(ResultSet rs) throws SQLException {
+        int wd = rs.getInt("weekday");
+        Integer weekday = rs.wasNull() ? null : wd;
+        Date d = rs.getDate("specific_date");
+        Timestamp last = rs.getTimestamp("last_updated_at");
+        BlockedTime b = new BlockedTime(
+                rs.getString("id"),
+                rs.getString("title"),
+                toDayOfWeek(weekday),
+                d != null ? d.toLocalDate() : null,
+                rs.getTime("start_time").toLocalTime(),
+                rs.getTime("end_time").toLocalTime(),
+                last != null ? last.toInstant() : Instant.now(),
+                rs.getString("user_id")
+        );
+        try {
+            b.setException(rs.getBoolean("is_exception"));
+        } catch (SQLException ignored) {
+            b.setException(false);
+        }
+        return b;
+    }
+
+    private static int toWeekdayInt(Object weekday) {
+        if (weekday instanceof Integer i) return i;
+        if (weekday instanceof java.time.DayOfWeek d) return d.getValue() % 7;
+        return Integer.parseInt(weekday.toString());
+    }
+
+    private static java.time.DayOfWeek toDayOfWeek(Integer weekday) {
+        if (weekday == null) return null;
+        if (weekday == 0) return java.time.DayOfWeek.SUNDAY;
+        return java.time.DayOfWeek.of(weekday);
+    }
 }
+

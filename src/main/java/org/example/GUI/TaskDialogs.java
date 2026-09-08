@@ -8,9 +8,13 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
 import org.example.*;
+import org.example.net.Api;
 
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 
 public class TaskDialogs {
 
@@ -31,6 +35,179 @@ public class TaskDialogs {
         this.root = root;
         this.system = system;
         this.onChanged = onChanged;
+    }
+
+    public void showBlockedEditor() {
+        Scene scene = root.getScene();
+        removeMainEscHandler(scene);
+
+        currentDimmedOverlay = GuiHelper.createDimmedOverlay(root);
+        root.getChildren().add(currentDimmedOverlay);
+
+        currentPopup = new Pane();
+        currentPopup.setPrefSize(620, 600);
+        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
+        root.getChildren().add(currentPopup);
+
+        VBox content = GuiHelper.createWhiteBox();
+
+        Label title = new Label("Blocked times");
+        title.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+
+        CheckBox everyDay = new CheckBox("Every day");
+        everyDay.setSelected(true);
+        CheckBox exceptionBox = new CheckBox("Exception (free this date)");
+        DatePicker fromPicker = new DatePicker(AppTimeReference.getCurrentDate());
+        DatePicker toPicker = new DatePicker(AppTimeReference.getCurrentDate());
+        fromPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
+        toPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
+        everyDay.disableProperty().bind(exceptionBox.selectedProperty());
+        exceptionBox.selectedProperty().addListener((o, was, is) -> {
+            if (is) everyDay.setSelected(false);
+        });
+        HBox whenRow = new HBox(8, everyDay, exceptionBox, new Label("From"), fromPicker, new Label("To"), toPicker);
+
+        VBox listBox = new VBox(6);
+        rebuildBlockedList(scene, listBox);
+        ScrollPane listScroll = new ScrollPane(listBox);
+        listScroll.setFitToWidth(true);
+        listScroll.setPrefHeight(220);
+        listScroll.setMaxHeight(220);
+
+        TextField nameField = new TextField();
+        nameField.setPromptText("title (morning)");
+
+        ComboBox<String> startBox = createSlotCombo(
+                AppTimeReference.localTimeToSlot(LocalTime.of(6, 0)));
+        ComboBox<String> endBox = createSlotCombo(
+                AppTimeReference.localTimeToSlot(LocalTime.of(7, 0)));
+        HBox timeRow = new HBox(8, new Label("Start"), startBox, new Label("End"), endBox);
+
+        Button addBtn = new Button("Add");
+        Button closeBtn = new Button("Close");
+        HBox buttons = new HBox(10, addBtn, closeBtn);
+
+        addBtn.setOnAction(e -> {
+            String name = nameField.getText().trim();
+            if (name.isEmpty()) name = "blocked";
+            LocalTime start;
+            LocalTime end;
+            try {
+                start = parseSlotCombo(startBox.getValue());
+                end = parseSlotCombo(endBox.getValue());
+            } catch (Exception ex) {
+                showAlertPopup(scene, "Invalid time.");
+                return;
+            }
+            if (!start.isBefore(end)) {
+                showAlertPopup(scene, "End must be after start.");
+                return;
+            }
+
+            boolean isException = exceptionBox.isSelected();
+            List<BlockedTime> rows;
+            if (!isException && (everyDay.isSelected() || fromPicker.getValue() == null)) {
+                BlockedTime row = BlockedTime.daily(name, start, end);
+                row.setUserId(Api.INSTANCE.getUserId());
+                rows = List.of(row);
+            } else {
+                LocalDate from = fromPicker.getValue();
+                LocalDate to = toPicker.getValue() == null ? from : toPicker.getValue();
+                if (from == null) {
+                    showAlertPopup(scene, "Pick a date.");
+                    return;
+                }
+                if (to.isBefore(from)) {
+                    showAlertPopup(scene, "End date is before start date.");
+                    return;
+                }
+                rows = BlockedTime.dailyRange(name, from, to, start, end);
+                for (BlockedTime row : rows) {
+                    row.setUserId(Api.INSTANCE.getUserId());
+                    row.setException(isException);
+                }
+            }
+
+            BlockedTimePeriod holder = system.getBlockedTime();
+            String clash = holder.conflictAmong(rows);
+            if (clash != null) {
+                showAlertPopup(scene, clash);
+                return;
+            }
+            try {
+                for (BlockedTime row : rows) {
+                    system.getTaskRepo().dbAddBlocked(row);
+                }
+                holder.replaceBlockedPeriods(system.getTaskRepo().fetchAllBlocked());
+            } catch (SQLException ex) {
+                showAlertPopup(scene, "Could not save blocked time: " + ex.getMessage());
+                return;
+            }
+            nameField.clear();
+            rebuildBlockedList(scene, listBox);
+            if (onChanged != null) onChanged.run();
+        });
+
+        closeBtn.setOnAction(e -> closeEverything(scene));
+
+        content.getChildren().addAll(
+                title,
+                new Label("Existing:"),
+                listScroll,
+                new Label("New block:"),
+                nameField,
+                whenRow,
+                timeRow,
+                buttons
+        );
+        currentPopup.getChildren().add(content);
+        popupIsOpen = true;
+        setupEscHandler(scene);
+    }
+
+    private void rebuildBlockedList(Scene scene, VBox listBox) {
+        listBox.getChildren().clear();
+        BlockedTimePeriod holder = system.getBlockedTime();
+        if (holder == null || holder.blockedPeriod == null || holder.blockedPeriod.isEmpty()) {
+            listBox.getChildren().add(new Label("(none)"));
+            return;
+        }
+        List<BlockedTime> items = new ArrayList<>(holder.blockedPeriod);
+        items.sort((a, b) -> {
+            int c = a.getStartTime().compareTo(b.getStartTime());
+            if (c != 0) return c;
+            if (a.getSpecificDate() == null && b.getSpecificDate() == null) return 0;
+            if (a.getSpecificDate() == null) return -1;
+            if (b.getSpecificDate() == null) return 1;
+            return a.getSpecificDate().compareTo(b.getSpecificDate());
+        });
+        for (BlockedTime b : items) {
+            String when;
+            if (b.isException()) {
+                when = "exception " + b.getSpecificDate();
+            } else if (b.isDaily()) {
+                when = "every day";
+            } else {
+                when = String.valueOf(b.getSpecificDate());
+            }
+            String label = (b.getTitle() == null ? "blocked" : b.getTitle())
+                    + "  " + when + "  " + b.getStartTime() + "–" + b.getEndTime();
+            Button del = new Button("Delete");
+            HBox row = new HBox(8, new Label(label), del);
+            row.setAlignment(Pos.CENTER_LEFT);
+            del.setOnAction(ev -> {
+                try {
+                    system.getTaskRepo().dbClearBlocked(b);
+                    holder.replaceBlockedPeriods(system.getTaskRepo().fetchAllBlocked());
+                } catch (SQLException ex) {
+                    showAlertPopup(scene, "Could not delete: " + ex.getMessage());
+                    return;
+                }
+                rebuildBlockedList(scene, listBox);
+                if (onChanged != null) onChanged.run();
+            });
+            listBox.getChildren().add(row);
+        }
     }
 
     public void showTaskInfoPopup(Task task, LocalDate date, int slotIndex) {
@@ -72,13 +249,23 @@ public class TaskDialogs {
                 : date + " " + AppTimeReference.formatSlotLabel(slotIndex);
         Label placedLabel = new Label("Currently placed: " + placedText);
 
+        Button finishBtn = new Button("Finish");
         Button clearBtn = new Button("Clear Task");
         Button closeBtn = new Button("Close");
-        HBox buttonBox = new HBox(12, clearBtn, closeBtn);
+        HBox buttonBox = new HBox(12,  clearBtn, closeBtn);
 
         content.getChildren().addAll(title, nameLabel, typeLabel, durationLabel, extraLabel, placedLabel, buttonBox);
         currentPopup.getChildren().add(content);
         popupIsOpen = true;
+
+        finishBtn.setOnAction(e -> {
+            system.fetchPopupTask(new FetchPopOutTask(task));
+            system.command("finishTask");
+            closeEverything(scene);
+            if (onChanged != null) onChanged.run();
+        });
+
+
 
         clearBtn.setOnAction(e -> {
             system.fetchPopupTask(new FetchPopOutTask(task));

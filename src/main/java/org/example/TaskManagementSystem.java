@@ -57,9 +57,13 @@ public class TaskManagementSystem {
         return theSystem;
     }
 
+    public static void resetInstance() {
+        theSystem = null;
+    }
+
     public void attachGUI(SchedulerController controller) {
         this.guiController = controller;
-        refreshGUI(); // load grid after GUI exists
+        refreshGUI();
     }
 
     public List<Task> getPendingTasks() {
@@ -91,7 +95,6 @@ public class TaskManagementSystem {
     }
 
     public void updateSchedule() {
-        // 1) All non-fixed tasks that should be re-packed
         ArrayList<Task> toSchedule = new ArrayList<>();
 
         for (Task t : new ArrayList<>(placedTasks)) {
@@ -110,7 +113,6 @@ public class TaskManagementSystem {
             }
         }
 
-        // 2) Strip non-fixed off the grid and free overload flags
         for (Task t : toSchedule) {
             placedTasks.remove(t);
             pendingTasks.remove(t);
@@ -132,9 +134,9 @@ public class TaskManagementSystem {
             t.setPlacedTime(null);
         }
 
-        // 3) Pack again from a clean state
         engine.scheduleTasks(toSchedule);
     }
+
     public void refreshGUI() {
         if (guiController != null) {
             Platform.runLater(() -> guiController.refresh());
@@ -149,6 +151,7 @@ public class TaskManagementSystem {
     public FetchPopOutTask getPopupTask() {
         return popupTask;
     }
+
 
     public boolean command(String cmdString) {
         try {

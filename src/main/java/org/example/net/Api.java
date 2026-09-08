@@ -1,4 +1,6 @@
 package org.example.net;
 
-public class Api {
+public final class Api {
+    public static final NodeApi INSTANCE = new NodeApi();
+    private Api() {}
 }

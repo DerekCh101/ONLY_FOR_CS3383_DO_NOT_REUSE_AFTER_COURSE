@@ -12,7 +12,6 @@ public class SchedulerEngine {
     private Map<LocalDate, Day> daysGrid;
     private List<Task> unscheduledTasks;
     private LocalDate baseDate;
-    private LocalDate daySearchCurrently;
     private BlockedTimePeriod blockedTime;
     private TaskManagementSystem system;
 
@@ -20,15 +19,16 @@ public class SchedulerEngine {
         this.baseDate = baseDate;
         this.daysGrid = daysGrid;
         this.unscheduledTasks = system.getUnscheduledTasks();
-        this.daySearchCurrently = baseDate;
         this.blockedTime = system.getBlockedTime();
         this.system = system;
     }
 
-    /**
-     * Restore tasks that already have placedDate + placedTime onto the grid.
-     * Does NOT run deadline/flexible packing.
-     */
+    private LocalDate searchStart() {
+        LocalDate today = AppTimeReference.getCurrentDate();
+        if (today.isAfter(baseDate)) return today;
+        return baseDate;
+    }
+
     public void placeAlreadyPlacedTasks(List<Task> tasks) {
         if (tasks == null || tasks.isEmpty()) return;
 
@@ -63,7 +63,6 @@ public class SchedulerEngine {
         }
 
         unscheduledTasks.clear();
-        daySearchCurrently = baseDate;
 
         ArrayList<Task> deadlineTasks = new ArrayList<>();
         ArrayList<Task> flexibleTasks = new ArrayList<>();
@@ -90,6 +89,7 @@ public class SchedulerEngine {
     }
 
     private void placeDeadlineTasks(ArrayList<Task> tasks) {
+        LocalDate from = searchStart();
         for (Task task : tasks) {
             if (task.getDeadLineDate() == null) {
                 markUnscheduled(task);
@@ -106,16 +106,7 @@ public class SchedulerEngine {
                 lastDay = AppTimeReference.TOTAL_DAY_HORIZON - 1;
             }
 
-            boolean placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, false, false);
-
-            if (!placed) {
-                placed = tryPlaceDeadline(task, daySearchCurrently, lastDay, true, false);
-            }
-
-            if (!placed) {
-                placed = tryPlaceDeadline(task, baseDate, lastDay, true, true);
-            }
-
+            boolean placed = tryPlaceDeadline(task, from, lastDay, false, false);
             if (!placed) {
                 markUnscheduled(task);
             }
@@ -124,14 +115,17 @@ public class SchedulerEngine {
 
     private boolean tryPlaceDeadline(Task task, LocalDate fromDay, long lastDay,
                                      boolean ignoreBlocked, boolean ignoreOverload) {
+        LocalDate limit = baseDate.plusDays(lastDay);
         for (LocalDate thisDay = fromDay;
-             thisDay.isBefore(baseDate.plusDays(lastDay));
+             thisDay.isBefore(limit);
              thisDay = thisDay.plusDays(1)) {
 
             daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
             Day theDay = daysGrid.get(thisDay);
 
-            for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            int startSlot = firstSlotOn(thisDay);
+
+            for (int slot = startSlot; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
                 if (theDay.canPlace(task, thisDay, slot, ignoreBlocked, ignoreOverload)
                         && respectsDeadlineTime(task, thisDay, slot)) {
 
@@ -141,7 +135,6 @@ public class SchedulerEngine {
                     if (!system.getPlacedTasks().contains(task)) {
                         system.getPlacedTasks().add(task);
                     }
-                    daySearchCurrently = thisDay;
                     return true;
                 }
             }
@@ -150,36 +143,19 @@ public class SchedulerEngine {
     }
 
     private void placeFlexibleTasks(ArrayList<Task> tasks) {
+        LocalDate from = searchStart();
+        LocalDate limit = baseDate.plusDays(AppTimeReference.TOTAL_DAY_HORIZON);
+
         for (Task task : tasks) {
             boolean placed = false;
 
-            for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(AppTimeReference.TOTAL_DAY_HORIZON));
-                 thisDay = thisDay.plusDays(1)) {
-
+            for (LocalDate thisDay = from; thisDay.isBefore(limit) && !placed; thisDay = thisDay.plusDays(1)) {
                 daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
                 Day theDay = daysGrid.get(thisDay);
-                if (theDay != null && !theDay.getOverloadFlag()) {
-                    daySearchCurrently = thisDay;
-                    break;
-                }
-            }
-
-            for (LocalDate thisDay = daySearchCurrently;
-                 thisDay.isBefore(baseDate.plusDays(AppTimeReference.TOTAL_DAY_HORIZON)) && !placed;
-                 thisDay = thisDay.plusDays(1)) {
-
-                daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                Day theDay = daysGrid.get(thisDay);
-
-                int startSlot = 0;
-                if (thisDay.equals(AppTimeReference.getCurrentDate())) {
-                    startSlot = AppTimeReference.currentSlotIndex() + 1;
-                    if (startSlot < 0) startSlot = 0;
-                }
+                int startSlot = firstSlotOn(thisDay);
 
                 for (int slot = startSlot; slot < AppTimeReference.SLOTS_PER_DAY && !placed; slot++) {
-                    if (theDay != null && theDay.canPlace(task, thisDay, slot, false, false)) {
+                    if (theDay.canPlace(task, thisDay, slot, false, true)) {
                         theDay.placeTask(slot, task);
                         task.setPlacedDate(thisDay);
                         task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
@@ -195,6 +171,12 @@ public class SchedulerEngine {
                 markUnscheduled(task);
             }
         }
+    }
+
+    private int firstSlotOn(LocalDate day) {
+        if (!day.equals(AppTimeReference.getCurrentDate())) return 0;
+        int start = AppTimeReference.currentSlotIndex() + 1;
+        return Math.max(0, start);
     }
 
     private void markUnscheduled(Task task) {
@@ -219,10 +201,6 @@ public class SchedulerEngine {
         }
     }
 
-    /**
-     * Finish-by deadline.
-     * Uses plusMinutes; if finish wraps past midnight (finish before start), reject on deadline day.
-     */
     private boolean respectsDeadlineTime(Task task, LocalDate day, int startSlot) {
         if (!task.hasDeadline() || task.getDeadLineDate() == null) {
             return true;
@@ -233,8 +211,6 @@ public class SchedulerEngine {
         if (day.isBefore(task.getDeadLineDate())) {
             return true;
         }
-
-        // Same calendar day as deadline
         if (task.getDeadLineTime() == null) {
             return true;
         }
@@ -246,9 +222,7 @@ public class SchedulerEngine {
         }
 
         LocalTime finish = start.plusMinutes(durationMin);
-        boolean wrappedPastMidnight = finish.isBefore(start);
-
-        if (wrappedPastMidnight) {
+        if (finish.isBefore(start)) {
             return false;
         }
         return !finish.isAfter(task.getDeadLineTime());

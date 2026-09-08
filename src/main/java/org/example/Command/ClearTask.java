@@ -25,7 +25,7 @@ public class ClearTask implements Command {
 
     @Override
     public boolean execute() throws SQLException {
-        if (thisTask == null) return false;
+        if (thisTask == null || thisTask.getID() == null) return false;
 
         wasPlaced = false;
         savedDate = thisTask.getPlacedDate();
@@ -49,9 +49,7 @@ public class ClearTask implements Command {
                     touched = true;
                 }
             }
-            if (touched) {
-                day.recomputeLoadFromGrid();
-            }
+            if (touched) day.recomputeLoadFromGrid();
         }
 
         theSystem.getTaskRepo().dbClearTask(thisTask);
@@ -69,10 +67,8 @@ public class ClearTask implements Command {
             theSystem.getGrid().putIfAbsent(savedDate, new Day(theSystem.getBlockedTime()));
             Day day = theSystem.getGrid().get(savedDate);
             day.placeTask(savedStartSlot, thisTask);
-
             thisTask.setPlacedDate(savedDate);
             thisTask.setPlacedTime(AppTimeReference.slotToLocalTime(savedStartSlot));
-
             if (!theSystem.getPlacedTasks().contains(thisTask)) {
                 theSystem.getPlacedTasks().add(thisTask);
             }
@@ -83,7 +79,7 @@ public class ClearTask implements Command {
             }
         }
 
-        theSystem.getTaskRepo().dbAddTask(thisTask);
+        theSystem.getTaskRepo().dbRestoreTask(thisTask);
 
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
