@@ -87,6 +87,11 @@ function toYmd(v) {
     return s.slice(0, 10);
 }
 
+
+const HostNodeServerListenToWhereIP = process.env.HOST_LISTEN_IP;
+const HostNodeServerListenToWherePort = Number(process.env.HostNodeServerListenToWherePort);
+
+
 http.createServer(async (req, res) => {
     const path = pathname(req);
     const parts = path.split("/").filter(Boolean);
@@ -323,6 +328,8 @@ http.createServer(async (req, res) => {
     }
 
     send(res, 404, { error: "not found" });
-}).listen(3456, "127.0.0.1", () => {
-    console.log("listening on http://127.0.0.1:3456");
+
+
+}).listen(HostNodeServerListenToWherePort, HostNodeServerListenToWhereIP, () => {
+    console.log("listening on http://" + HostNodeServerListenToWhereIP + ":" + HostNodeServerListenToWherePort);
 });
