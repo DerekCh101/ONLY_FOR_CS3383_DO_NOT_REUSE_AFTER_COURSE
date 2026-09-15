@@ -198,7 +198,7 @@ function paintBlocked(rows) {
 }
 
 function isFinished(t) {
-    const w = String(t.workflow || t.lifecycle || "").toUpperCase();
+    const w = String(t.workflow || "").toUpperCase();
     return w === "FINISHED" || w === "DONE" || w === "COMPLETE" || w === "COMPLETED";
 }
 
@@ -214,13 +214,24 @@ function isUnscheduled(t) {
     return !toYmd(t.placed_date || t.placedDate);
 }
 
+function lifeFromDate(date) {
+    const day = toYmd(date);
+    if (!day) return "UNSCHEDULED";
+    if (day < todayYmd()) return "PAST";
+    return "ONGOING";
+}
+
+function lifeOf(t) {
+    const raw = String(t.lifecycle || t.lifeCycle || "").toUpperCase();
+    if (raw === "PAST" || raw === "ONGOING" || raw === "UNSCHEDULED") return raw;
+    return lifeFromDate(t.placed_date || t.placedDate);
+}
+
 function matchesWhen(t) {
-    const day = toYmd(t.placed_date || t.placedDate);
-    const today = todayYmd();
     if (taskWhen === "all") return true;
-    if (taskWhen === "unscheduled") return isUnscheduled(t);
-    if (taskWhen === "past") return isFinished(t) || (!!day && day < today);
-    if (taskWhen === "ongoing") return !isFinished(t) && !isUnscheduled(t);
+    if (taskWhen === "unscheduled") return lifeOf(t) === "UNSCHEDULED";
+    if (taskWhen === "past") return lifeOf(t) === "PAST";
+    if (taskWhen === "ongoing") return lifeOf(t) === "ONGOING";
     return true;
 }
 
@@ -301,7 +312,7 @@ function paintWeek() {
             b.className = "chip" + (isFinished(t) ? " done" : "");
             b.dataset.taskToggle = t.id;
             b.innerHTML = "<div class='t'>" + (t.placed_time || "").slice(0, 5) + " " + (t.title || "(untitled)") + "</div>"
-                + "<div class='meta'>" + (isFinished(t) ? "finished" : "unfinished") + "</div>";
+                + "<div class='meta'>" + lifeOf(t).toLowerCase() + " · " + (isFinished(t) ? "finished" : "unfinished") + "</div>";
             col.appendChild(b);
         });
         grid.appendChild(col);
@@ -330,6 +341,7 @@ function paintTasks(rows) {
             (t.placed_time ? " " + t.placed_time : "") +
             " · " + (taskState(t) || "task") +
             (hasDeadline(t) ? " · deadline" : "") +
+            " · " + lifeOf(t).toLowerCase() +
             " · " + (isFinished(t) ? "finished" : "unfinished") +
             "</div>";
         const actions = document.createElement("div");
@@ -366,18 +378,19 @@ async function toggleTask(id) {
     const t = allTasks.find((x) => String(x.id) === String(id));
     if (!t) return;
     const finished = isFinished(t);
+    const day = toYmd(t.placed_date);
     await send("POST", "/tasks", {
         id: t.id,
         title: t.title,
         duration: Number(t.duration || 0),
         state: t.state || "Flexible",
-        placed_date: toYmd(t.placed_date),
-        placedDate: toYmd(t.placed_date),
+        placed_date: day,
+        placedDate: day,
         placed_time: t.placed_time,
         placedTime: t.placed_time,
         deadline_date: t.deadline_date || null,
         deadline_time: t.deadline_time || null,
-        lifecycle: "ONGOING",
+        lifecycle: lifeOf(t),
         workflow: finished ? "UNFINISHED" : "FINISHED",
         last_updated_at: new Date().toISOString(),
         placement_updated_at: t.placement_updated_at || new Date().toISOString()
@@ -962,7 +975,7 @@ async function addTask() {
         placedTime: time,
         deadline_date: null,
         deadline_time: null,
-        lifecycle: "ONGOING",
+        lifecycle: lifeFromDate(date),
         workflow: "UNFINISHED",
         last_updated_at: now,
         placement_updated_at: now

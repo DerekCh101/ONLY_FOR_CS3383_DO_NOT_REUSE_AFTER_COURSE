@@ -3,6 +3,9 @@ import { randomUUID } from "node:crypto";
 
 const { Pool } = pg;
 
+pg.types.setTypeParser(1082, (v) => (v == null ? null : String(v).slice(0, 10)));
+pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v)));
+
 const pool = new Pool({
     host: process.env.PGHOST || "127.0.0.1",
     port: Number(process.env.PGPORT || 5432),
@@ -241,7 +244,21 @@ export async function userFromToken(req) {
 
 export async function listTasks(userId) {
     const r = await query(
-        `SELECT * FROM ${SCHEMA}.tasks
+        `SELECT
+             id::text AS id,
+             user_id::text AS user_id,
+             title,
+             duration,
+             state,
+             placed_date::text AS placed_date,
+             placed_time::text AS placed_time,
+             deadline_date::text AS deadline_date,
+             deadline_time::text AS deadline_time,
+             lifecycle,
+             workflow,
+             last_updated_at,
+             placement_updated_at
+         FROM ${SCHEMA}.tasks
          WHERE user_id::text = $1
          ORDER BY placed_date NULLS LAST, placed_time NULLS LAST, title`,
         [String(userId)]
@@ -277,9 +294,9 @@ export async function upsertTask(task) {
             str(first(task, ["title"])) || "",
             Number(first(task, ["duration"]) || 0),
             str(first(task, ["state"])),
-            str(first(task, ["placed_date", "placedDate"])),
+            str(first(task, ["placed_date", "placedDate"]))?.slice(0, 10) || null,
             str(first(task, ["placed_time", "placedTime"])),
-            str(first(task, ["deadline_date", "deadlineDate"])),
+            str(first(task, ["deadline_date", "deadlineDate"]))?.slice(0, 10) || null,
             str(first(task, ["deadline_time", "deadlineTime"])),
             str(first(task, ["lifecycle"])) || "ONGOING",
             str(first(task, ["workflow"])) || "UNFINISHED",
