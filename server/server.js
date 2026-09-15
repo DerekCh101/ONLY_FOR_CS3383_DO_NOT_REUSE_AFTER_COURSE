@@ -97,6 +97,64 @@ function blockedConflict(existing, row) {
     }
     return null;
 }
+function minutesOf(t) {
+    const s = normTime(t);
+    const p = String(s || "").split(":");
+    if (p.length < 2) return null;
+    const h = Number(p[0]);
+    const m = Number(p[1]);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    return h * 60 + m;
+}
+
+function rangesOverlap(a0, a1, b0, b1) {
+    return a0 < b1 && b0 < a1;
+}
+
+function blockedAppliesOn(b, day) {
+    if (isExceptionRow(b)) return toYmd(b.specific_date) === day;
+    if (isDailyRow(b)) return true;
+    return toYmd(b.specific_date) === day;
+}
+
+function taskWindow(task) {
+    const day = toYmd(task.placed_date || task.placedDate);
+    const start = minutesOf(task.placed_time || task.placedTime);
+    const dur = Number(task.duration || 0);
+    if (!day || start == null || !(dur > 0)) return null;
+    return { day, start, end: start + dur };
+}
+
+async function taskConflict(userId, task) {
+    const win = taskWindow(task);
+    if (!win) return null;
+
+    const [tasks, blocked] = await Promise.all([
+        listTasks(userId),
+        listBlocked(userId)
+    ]);
+
+    for (const t of tasks) {
+        if (String(t.id) === String(task.id)) continue;
+        const other = taskWindow(t);
+        if (!other || other.day !== win.day) continue;
+        if (rangesOverlap(win.start, win.end, other.start, other.end)) {
+            return "Overlaps task: " + (t.title || "task") + " " + other.day + " " +
+                String(t.placed_time || "").slice(0, 5);
+        }
+    }
+
+    for (const b of blocked) {
+        if (!blockedAppliesOn(b, win.day)) continue;
+        const b0 = minutesOf(b.start_time);
+        const b1 = minutesOf(b.end_time);
+        if (b0 == null || b1 == null) continue;
+        if (rangesOverlap(win.start, win.end, b0, b1)) {
+            return "Overlaps blocked: " + describeBlocked(b);
+        }
+    }
+    return null;
+}
 
 function reqUrl(req) {
     return new URL(req.url, "http://127.0.0.1");
@@ -418,7 +476,11 @@ http.createServer(async (req, res) => {
                 ).trim() || null,
                 user_id: authUser.id,
             };
-
+            const clash = await taskConflict(authUser.id, task);
+            if (clash) {
+                send(res, 409, { error: clash });
+                return;
+            }
             await upsertTask(task);
             send(res, 201, task);
         } catch (e) {
