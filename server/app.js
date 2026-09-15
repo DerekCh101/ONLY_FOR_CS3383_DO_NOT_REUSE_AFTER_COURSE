@@ -4,6 +4,9 @@ const errBlocked = document.getElementById("errBlocked");
 const auth = document.getElementById("auth");
 const app = document.getElementById("app");
 
+let twRawContent = "";
+let twNotes = [];
+
 function showErr(msg) {
     err.textContent = msg;
     if (errAdd) errAdd.textContent = "";
@@ -164,13 +167,138 @@ function paintTasks(rows) {
     }
 }
 
+function imageIds(note) {
+    const imgs = note && note.images;
+    if (!Array.isArray(imgs)) return [];
+    const out = [];
+    for (const im of imgs) {
+        if (typeof im === "string") {
+            if (/^[a-f0-9]{64}$/i.test(im)) out.push({ id: im.toLowerCase(), name: "" });
+            continue;
+        }
+        const id = String((im && (im.id || im.sha256)) || "").toLowerCase();
+        if (/^[a-f0-9]{64}$/.test(id)) out.push({ id, name: (im && im.name) || "" });
+    }
+    return out;
+}
+
+function collectTwNotes(bundle) {
+    const notes = [];
+    if (!bundle || typeof bundle !== "object") return notes;
+    const diary = Array.isArray(bundle.diary) ? bundle.diary : [];
+    for (const n of diary) {
+        notes.push({
+            kind: "diary",
+            id: n.id || n.date || "",
+            date: n.date || "",
+            title: n.title || n.date || "diary",
+            body: n.body || "",
+            images: imageIds(n)
+        });
+    }
+    const pages = Array.isArray(bundle.pages) ? bundle.pages : [];
+    for (const n of pages) {
+        if (n.kind === "folder") continue;
+        notes.push({
+            kind: "page",
+            id: n.id || "",
+            date: "",
+            title: n.title || "page",
+            body: n.body || "",
+            images: imageIds(n)
+        });
+    }
+    return notes;
+}
+
+function paintTwList() {
+    const list = document.getElementById("twList");
+    const view = document.getElementById("twView");
+    list.innerHTML = "";
+    if (view) view.style.display = "none";
+    if (!twNotes.length) {
+        list.innerHTML = "<li><span class='meta'>(no typed notes)</span></li>";
+        return;
+    }
+    twNotes.forEach((n, i) => {
+        const li = document.createElement("li");
+        const left = document.createElement("div");
+        left.innerHTML =
+            "<div>" + (n.title || "(untitled)") + "</div>" +
+            "<div class='meta'>" + (n.kind === "diary" ? (n.date || "diary") : "page") +
+            (n.images.length ? " · " + n.images.length + " img" : "") + "</div>";
+        const show = document.createElement("button");
+        show.type = "button";
+        show.className = "ghost";
+        show.textContent = "Show";
+        show.dataset.twIndex = String(i);
+        li.appendChild(left);
+        li.appendChild(show);
+        list.appendChild(li);
+    });
+}
+
+async function showTwNote(index) {
+    const n = twNotes[index];
+    const view = document.getElementById("twView");
+    const title = document.getElementById("twTitle");
+    const meta = document.getElementById("twMeta");
+    const body = document.getElementById("twBody");
+    const imgs = document.getElementById("twImgs");
+    if (!n || !view) return;
+    view.style.display = "block";
+    title.textContent = n.title || "(untitled)";
+    meta.textContent = (n.kind === "diary" ? n.date : "page") +
+        (n.images.length ? " · loading " + n.images.length + " image(s)" : " · no images");
+    body.textContent = n.body || "";
+    imgs.innerHTML = "";
+    for (const im of n.images) {
+        try {
+            const row = await send("GET", "/typewriter/images/" + im.id);
+            if (!row || !row.data) continue;
+            const pic = document.createElement("img");
+            pic.alt = im.name || im.id;
+            pic.src = "data:" + (row.mime || "image/png") + ";base64," + row.data;
+            imgs.appendChild(pic);
+        } catch (e) {
+            const miss = document.createElement("div");
+            miss.className = "meta";
+            miss.textContent = "image missing: " + (im.name || im.id);
+            imgs.appendChild(miss);
+        }
+    }
+    meta.textContent = (n.kind === "diary" ? n.date : "page") +
+        (n.images.length ? " · " + n.images.length + " image(s)" : " · no images");
+}
+
+function applyTypewriter(tw) {
+    twRawContent = (tw && tw.content) || "";
+    const box = document.getElementById("tw");
+    twNotes = [];
+    let parsed = null;
+    try {
+        parsed = twRawContent ? JSON.parse(twRawContent) : null;
+    } catch (_) {
+        parsed = null;
+    }
+    if (parsed && typeof parsed === "object" && (parsed.diary || parsed.pages || parsed.lists)) {
+        twNotes = collectTwNotes(parsed);
+        if (box) box.value = "";
+    } else if (box) {
+        box.value = twRawContent;
+    }
+    paintTwList();
+}
+
 async function loadAll() {
-    const [tasksRes, blockedRes] = await Promise.all([
+    const [tasksRes, blockedRes, tw] = await Promise.all([
         send("GET", "/tasks"),
-        send("GET", "/blocked")
+        send("GET", "/blocked"),
+        send("GET", "/typewriter")
     ]);
     paintTasks(tasksRes.tasks || []);
     paintBlocked(blockedRes.blocked || []);
+    applyTypewriter(tw);
 }
 
 async function afterLogin(data) {
@@ -326,6 +454,19 @@ document.addEventListener("click", async (e) => {
             await addTask();
         } else if (t.closest("#btnAddBlocked")) {
             await addBlocked();
+        } else if (t.closest("#btnTwSave")) {
+            const box = document.getElementById("tw");
+            const typed = box ? box.value : "";
+            const content = twNotes.length ? twRawContent : typed;
+            await send("POST", "/typewriter", {
+                content,
+                last_updated_at: new Date().toISOString()
+            });
+            await loadAll();
+        } else if (t.dataset && t.dataset.twIndex != null) {
+            await showTwNote(Number(t.dataset.twIndex));
+        } else if (t.closest("button") && t.closest("button").dataset.twIndex != null) {
+            await showTwNote(Number(t.closest("button").dataset.twIndex));
         } else if (t.closest("button") && t.closest("button").dataset.taskId) {
             await send("DELETE", "/tasks/" + t.closest("button").dataset.taskId);
             await loadAll();

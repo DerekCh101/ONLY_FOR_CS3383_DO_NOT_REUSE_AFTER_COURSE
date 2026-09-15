@@ -1,6 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import bcrypt from "bcrypt";
 import { validateTask } from "./HelperMethods.js";
 import {
@@ -14,6 +14,11 @@ import {
     listBlocked,
     upsertBlocked,
     deleteBlocked,
+    getTypewriter,
+    upsertTypewriter,
+    hasTypewriterImage,
+    putTypewriterImage,
+    getTypewriterImage,
 } from "./db.js";
 
 function readBody(req) {
@@ -30,6 +35,7 @@ function send(res, code, obj) {
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(obj));
 }
+
 function normTime(t) {
     const s = String(t || "").trim();
     if (s.length === 5) return s + ":00";
@@ -73,8 +79,13 @@ function blockedConflict(existing, row) {
     }
     return null;
 }
+
+function reqUrl(req) {
+    return new URL(req.url, "http://127.0.0.1");
+}
+
 function pathname(req) {
-    return new URL(req.url, "http://127.0.0.1").pathname;
+    return reqUrl(req).pathname;
 }
 
 function toYmd(v) {
@@ -87,10 +98,12 @@ function toYmd(v) {
     return s.slice(0, 10);
 }
 
+function isSha256(s) {
+    return /^[a-f0-9]{64}$/.test(String(s || "").toLowerCase());
+}
 
 const HostNodeServerListenToWhereIP = process.env.HOST_LISTEN_IP;
 const HostNodeServerListenToWherePort = Number(process.env.HostNodeServerListenToWherePort);
-
 
 http.createServer(async (req, res) => {
     const path = pathname(req);
@@ -163,6 +176,111 @@ http.createServer(async (req, res) => {
             return;
         }
         send(res, 200, removed);
+        return;
+    }
+
+    if (req.method === "GET" && path === "/typewriter") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        try {
+            send(res, 200, await getTypewriter(user.id));
+        } catch (e) {
+            send(res, 500, { error: String(e.message || e) });
+        }
+        return;
+    }
+
+    if (req.method === "POST" && path === "/typewriter") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        try {
+            const raw = await readBody(req);
+            const body = JSON.parse(raw || "{}");
+            const content = body.content == null ? "" : String(body.content);
+            const last = String(body.last_updated_at ?? body.lastUpdatedAt ?? new Date().toISOString());
+            send(res, 200, await upsertTypewriter(user.id, content, last));
+        } catch (e) {
+            send(res, 400, { error: String(e.message || e) });
+        }
+        return;
+    }
+
+    if (req.method === "GET" && parts.length === 3 && parts[0] === "typewriter" && parts[1] === "images") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        const sha = String(parts[2] || "").toLowerCase();
+        if (!isSha256(sha)) {
+            send(res, 400, { error: "bad sha" });
+            return;
+        }
+        try {
+            const row = await getTypewriterImage(user.id, sha);
+            if (!row) {
+                send(res, 404, { error: "missing" });
+                return;
+            }
+            const meta = reqUrl(req).searchParams.get("meta") === "1";
+            if (meta) {
+                send(res, 200, { exists: true, sha256: row.sha256, name: row.name, mime: row.mime });
+                return;
+            }
+            const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data);
+            send(res, 200, {
+                sha256: row.sha256,
+                name: row.name,
+                mime: row.mime || "image/png",
+                data: buf.toString("base64")
+            });
+        } catch (e) {
+            send(res, 500, { error: String(e.message || e) });
+        }
+        return;
+    }
+
+    if (req.method === "POST" && path === "/typewriter/images") {
+        const user = await userFromToken(req);
+        if (!user) {
+            send(res, 401, { error: "login required" });
+            return;
+        }
+        try {
+            const raw = await readBody(req);
+            const body = JSON.parse(raw || "{}");
+            const sha = String(body.sha256 ?? body.sha ?? "").toLowerCase();
+            const name = String(body.name ?? "image.png");
+            const mime = String(body.mime ?? "image/png");
+            if (!isSha256(sha)) {
+                send(res, 400, { error: "sha256 required" });
+                return;
+            }
+            if (await hasTypewriterImage(user.id, sha)) {
+                send(res, 200, { ok: true, existed: true, sha256: sha });
+                return;
+            }
+            if (!body.data) {
+                send(res, 400, { error: "data required" });
+                return;
+            }
+            const buf = Buffer.from(String(body.data), "base64");
+            const got = createHash("sha256").update(buf).digest("hex");
+            if (got !== sha) {
+                send(res, 400, { error: "sha mismatch" });
+                return;
+            }
+            await putTypewriterImage(user.id, sha, name, mime, buf);
+            send(res, 200, { ok: true, existed: false, sha256: sha });
+        } catch (e) {
+            send(res, 400, { error: String(e.message || e) });
+        }
         return;
     }
 
@@ -328,7 +446,6 @@ http.createServer(async (req, res) => {
     }
 
     send(res, 404, { error: "not found" });
-
 
 }).listen(HostNodeServerListenToWherePort, HostNodeServerListenToWhereIP, () => {
     console.log("listening on http://" + HostNodeServerListenToWhereIP + ":" + HostNodeServerListenToWherePort);
