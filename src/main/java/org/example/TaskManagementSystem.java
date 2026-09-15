@@ -13,6 +13,7 @@ import org.example.CliRunner.CLIRunner;
 import org.example.Command.*;
 import org.example.GUI.SchedulerController;
 import org.example.db.TaskRepository;
+import org.example.net.Api;
 
 public class TaskManagementSystem {
 
@@ -28,6 +29,7 @@ public class TaskManagementSystem {
     private Map<LocalDate, Day> daysGrid;
     private FetchPopOutTask popupTask;
     private TaskRepository repo;
+    private volatile boolean pollRunning;
 
     private TaskManagementSystem() {
         System.out.println("System Created - with RunSchedulerCommand");
@@ -47,6 +49,8 @@ public class TaskManagementSystem {
             System.out.println("Failed to load tasks: " + e.getMessage());
             e.printStackTrace();
         }
+
+        startNodePoll();
     }
 
     public static TaskManagementSystem getInstance() {
@@ -58,6 +62,9 @@ public class TaskManagementSystem {
     }
 
     public static void resetInstance() {
+        if (theSystem != null) {
+            theSystem.pollRunning = false;
+        }
         theSystem = null;
     }
 
@@ -92,6 +99,34 @@ public class TaskManagementSystem {
 
     public TaskRepository getTaskRepo() {
         return repo;
+    }
+
+    private void startNodePoll() {
+        if (pollRunning) return;
+        pollRunning = true;
+        Thread t = new Thread(() -> {
+            while (pollRunning) {
+                try {
+                    Thread.sleep(4000);
+                } catch (InterruptedException e) {
+                    break;
+                }
+                if (!pollRunning) break;
+                if (Api.INSTANCE.getToken() == null || Api.INSTANCE.getToken().isBlank()) {
+                    continue;
+                }
+                try {
+                    if (repo.pullFromNode()) {
+                        repo.reloadFromSqlite(this);
+                        refreshGUI();
+                    }
+                } catch (Exception e) {
+                    System.err.println("node poll: " + e.getMessage());
+                }
+            }
+        }, "node-poll");
+        t.setDaemon(true);
+        t.start();
     }
 
     public void updateSchedule() {
@@ -151,7 +186,6 @@ public class TaskManagementSystem {
     public FetchPopOutTask getPopupTask() {
         return popupTask;
     }
-
 
     public boolean command(String cmdString) {
         try {

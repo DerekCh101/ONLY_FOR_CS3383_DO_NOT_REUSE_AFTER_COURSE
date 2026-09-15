@@ -23,9 +23,9 @@ import {
 
 function readBody(req) {
     return new Promise((resolve, reject) => {
-        let raw = "";
-        req.on("data", (chunk) => (raw += chunk));
-        req.on("end", () => resolve(raw));
+        const chunks = [];
+        req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
         req.on("error", reject);
     });
 }
@@ -34,6 +34,24 @@ function send(res, code, obj) {
     res.statusCode = code;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(obj));
+}
+
+function parseJson(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return {};
+    return JSON.parse(text);
+}
+
+function sha256Hex(s) {
+    return createHash("sha256").update(String(s || ""), "utf8").digest("hex");
+}
+
+async function passwordMatches(stored, password) {
+    const hash = String(stored || "");
+    if (hash.startsWith("$2a$") || hash.startsWith("$2b$") || hash.startsWith("$2y$")) {
+        return bcrypt.compare(String(password), hash);
+    }
+    return hash === sha256Hex(password);
 }
 
 function normTime(t) {
@@ -102,8 +120,8 @@ function isSha256(s) {
     return /^[a-f0-9]{64}$/.test(String(s || "").toLowerCase());
 }
 
-const HostNodeServerListenToWhereIP = process.env.HOST_LISTEN_IP;
-const HostNodeServerListenToWherePort = Number(process.env.HostNodeServerListenToWherePort);
+const HostNodeServerListenToWhereIP = process.env.HOST_LISTEN_IP || "0.0.0.0";
+const HostNodeServerListenToWherePort = Number(process.env.HostNodeServerListenToWherePort || 3456);
 
 http.createServer(async (req, res) => {
     const path = pathname(req);
@@ -188,6 +206,7 @@ http.createServer(async (req, res) => {
         try {
             send(res, 200, await getTypewriter(user.id));
         } catch (e) {
+            console.error("GET /typewriter", e);
             send(res, 500, { error: String(e.message || e) });
         }
         return;
@@ -201,11 +220,12 @@ http.createServer(async (req, res) => {
         }
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            const body = parseJson(raw);
             const content = body.content == null ? "" : String(body.content);
             const last = String(body.last_updated_at ?? body.lastUpdatedAt ?? new Date().toISOString());
             send(res, 200, await upsertTypewriter(user.id, content, last));
         } catch (e) {
+            console.error("POST /typewriter", e);
             send(res, 400, { error: String(e.message || e) });
         }
         return;
@@ -254,7 +274,7 @@ http.createServer(async (req, res) => {
         }
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            const body = parseJson(raw);
             const sha = String(body.sha256 ?? body.sha ?? "").toLowerCase();
             const name = String(body.name ?? "image.png");
             const mime = String(body.mime ?? "image/png");
@@ -279,6 +299,7 @@ http.createServer(async (req, res) => {
             await putTypewriterImage(user.id, sha, name, mime, buf);
             send(res, 200, { ok: true, existed: false, sha256: sha });
         } catch (e) {
+            console.error("POST /typewriter/images", e);
             send(res, 400, { error: String(e.message || e) });
         }
         return;
@@ -287,7 +308,7 @@ http.createServer(async (req, res) => {
     if (req.method === "POST" && path === "/register") {
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            const body = parseJson(raw);
             const username = String(body.username ?? "").trim();
             const password = String(body.password ?? "").trim();
             if (!username || !password) {
@@ -312,8 +333,10 @@ http.createServer(async (req, res) => {
                 await bcrypt.hash(password, 12)
             );
             const token = await createSession(user.id);
+            console.log("POST /register ok", username);
             send(res, 201, { id: user.id, username: user.username, token });
         } catch (e) {
+            console.error("POST /register", e);
             send(res, 400, { error: String(e.message || e) });
         }
         return;
@@ -322,7 +345,8 @@ http.createServer(async (req, res) => {
     if (req.method === "POST" && path === "/login") {
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            console.log("POST /login bytes=" + raw.length);
+            const body = parseJson(raw);
             const username = String(body.username ?? "").trim();
             const password = String(body.password ?? "").trim();
             if (!username || !password) {
@@ -330,14 +354,22 @@ http.createServer(async (req, res) => {
                 return;
             }
             const user = await findUserByUsername(username);
-            if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+            if (!user) {
+                console.log("POST /login no user", username);
+                send(res, 401, { error: "invalid username or password" });
+                return;
+            }
+            if (!(await passwordMatches(user.password_hash, password))) {
+                console.log("POST /login bad password", username);
                 send(res, 401, { error: "invalid username or password" });
                 return;
             }
             const token = await createSession(user.id);
+            console.log("POST /login ok", username);
             send(res, 200, { id: user.id, username: user.username, token });
         } catch (e) {
-            send(res, 400, { error: "invalid json" });
+            console.error("POST /login", e);
+            send(res, 400, { error: String(e.message || e) });
         }
         return;
     }
@@ -345,7 +377,7 @@ http.createServer(async (req, res) => {
     if (req.method === "POST" && path === "/tasks") {
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            const body = parseJson(raw);
             const authUser = await userFromToken(req);
             if (!authUser) {
                 send(res, 401, { error: "login required" });
@@ -398,7 +430,7 @@ http.createServer(async (req, res) => {
     if (req.method === "POST" && path === "/blocked") {
         try {
             const raw = await readBody(req);
-            const body = JSON.parse(raw || "{}");
+            const body = parseJson(raw);
             const authUser = await userFromToken(req);
             if (!authUser) {
                 send(res, 401, { error: "login required" });

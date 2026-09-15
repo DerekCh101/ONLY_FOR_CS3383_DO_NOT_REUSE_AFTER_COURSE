@@ -107,7 +107,7 @@ public class SqliteTypewriterRepository {
                         TypewriterPane.TwNote note = new TypewriterPane.TwNote(rs.getString(2), day);
                         note.body = nz(rs.getString(3));
                         TypewriterStore.addImages(note, rs.getString(4));
-                        data.diary.put(day, note);
+                        if (TypewriterStore.hasContent(note)) data.diary.put(day, note);
                     }
                 }
             }
@@ -153,7 +153,7 @@ public class SqliteTypewriterRepository {
                     "INSERT INTO tw_diary(user_id,day,title,body,images) VALUES(?,?,?,?,?)")) {
                 for (TypewriterPane.TwNote note : diary.values()) {
                     if (note.date == null) continue;
-                    if (blank(note.body) && blank(note.title) && note.images.isEmpty()) continue;
+                    if (!TypewriterStore.hasContent(note)) continue;
                     ps.setString(1, uid);
                     ps.setString(2, note.date.toString());
                     ps.setString(3, note.title);
@@ -224,9 +224,5 @@ public class SqliteTypewriterRepository {
 
     private static String nz(String s) {
         return s == null ? "" : s;
-    }
-
-    private static boolean blank(String s) {
-        return s == null || s.isBlank();
     }
 }

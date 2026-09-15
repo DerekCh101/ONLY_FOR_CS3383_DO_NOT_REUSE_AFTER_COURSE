@@ -23,6 +23,30 @@ public class SchedulerEngine {
         this.system = system;
     }
 
+    /** Keep PAST where they sit. Refit everyone else. */
+    public void refitActiveTasks() {
+        placeAlreadyPlacedTasks(new ArrayList<>(system.getPlacedTasks()));
+
+        ArrayList<Task> toSchedule = new ArrayList<>();
+        addIfActive(toSchedule, system.getUnscheduledTasks());
+        addIfActive(toSchedule, system.getPendingTasks());
+        addIfActive(toSchedule, unscheduledTasks);
+        scheduleTasks(toSchedule);
+    }
+
+    private void addIfActive(List<Task> out, List<Task> src) {
+        if (src == null) return;
+        for (Task task : src) {
+            if (!isPast(task) && !out.contains(task)) {
+                out.add(task);
+            }
+        }
+    }
+
+    private static boolean isPast(Task task) {
+        return task != null && task.getLifeCycle() == TaskLifeCycle.PAST;
+    }
+
     private LocalDate searchStart() {
         LocalDate today = AppTimeReference.getCurrentDate();
         if (today.isAfter(baseDate)) return today;
@@ -41,6 +65,16 @@ public class SchedulerEngine {
             Day day = daysGrid.get(date);
             int slot = AppTimeReference.localTimeToSlot(time);
 
+            if (isPast(task)) {
+                pinOnGrid(day, slot, task);
+                system.getPendingTasks().remove(task);
+                system.getUnscheduledTasks().remove(task);
+                if (!system.getPlacedTasks().contains(task)) {
+                    system.getPlacedTasks().add(task);
+                }
+                continue;
+            }
+
             if (!day.canPlace(task, date, slot, true, true)
                     || !respectsDeadlineTime(task, date, slot)) {
                 markUnscheduled(task);
@@ -56,18 +90,35 @@ public class SchedulerEngine {
         }
     }
 
+    private void pinOnGrid(Day day, int slot, Task task) {
+        int count = task.getDurationSlots();
+        if (slot < 0 || slot + count > AppTimeReference.SLOTS_PER_DAY) return;
+        Task[] grid = day.returnDayGrid();
+        boolean already = true;
+        for (int i = 0; i < count; i++) {
+            if (grid[slot + i] != task) {
+                already = false;
+                break;
+            }
+        }
+        if (!already) {
+            day.placeTask(slot, task);
+        }
+    }
+
     public void scheduleTasks(List<Task> tasks) {
         if (tasks == null || tasks.isEmpty()) {
-            unscheduledTasks.clear();
+            dropActiveUnscheduledOnly();
             return;
         }
 
-        unscheduledTasks.clear();
+        dropActiveUnscheduledOnly();
 
         ArrayList<Task> deadlineTasks = new ArrayList<>();
         ArrayList<Task> flexibleTasks = new ArrayList<>();
 
         for (Task task : tasks) {
+            if (isPast(task)) continue;
             if (task.hasDeadline()) {
                 deadlineTasks.add(task);
             } else if (task.isFlexible()) {
@@ -84,8 +135,12 @@ public class SchedulerEngine {
         placeDeadlineTasks(deadlineTasks);
         placeFlexibleTasks(flexibleTasks);
 
-        system.getPendingTasks().clear();
+        system.getPendingTasks().removeIf(t -> !isPast(t));
         system.getUnscheduledTasks().removeAll(system.getPlacedTasks());
+    }
+
+    private void dropActiveUnscheduledOnly() {
+        unscheduledTasks.removeIf(t -> !isPast(t));
     }
 
     private void placeDeadlineTasks(ArrayList<Task> tasks) {
@@ -180,6 +235,7 @@ public class SchedulerEngine {
     }
 
     private void markUnscheduled(Task task) {
+        if (isPast(task)) return;
         removeFromGrid(task);
         system.getPlacedTasks().remove(task);
         task.setPlacedDate(null);

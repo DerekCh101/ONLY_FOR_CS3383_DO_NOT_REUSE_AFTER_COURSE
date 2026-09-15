@@ -3,9 +3,12 @@ package org.example.GUI;
 import javafx.animation.PauseTransition;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
@@ -22,10 +25,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 public class TypewriterPane extends BorderPane {
 
@@ -111,6 +113,7 @@ public class TypewriterPane extends BorderPane {
     private final Button tabLists = railBtn("Lists");
     private final Button tabPages = railBtn("Pages");
 
+    private final StackPane layers = new StackPane();
     private final StackPane leftStack = new StackPane();
     private final StackPane centerStack = new StackPane();
 
@@ -150,6 +153,9 @@ public class TypewriterPane extends BorderPane {
     private boolean fillingEditor;
     private boolean fillingList;
 
+    private StackPane overlay;
+    private javafx.event.EventHandler<KeyEvent> overlayEsc;
+
     private final PauseTransition saveDebounce = new PauseTransition(Duration.millis(400));
 
     public TypewriterPane() {
@@ -164,7 +170,6 @@ public class TypewriterPane extends BorderPane {
         tabDiary.setOnAction(e -> showMode(Mode.DIARY));
         tabLists.setOnAction(e -> showMode(Mode.LISTS));
         tabPages.setOnAction(e -> showMode(Mode.PAGES));
-        setTop(rail);
 
         buildDiaryNav();
         buildListsNav();
@@ -178,8 +183,13 @@ public class TypewriterPane extends BorderPane {
         VBox leftWrap = new VBox(leftStack);
         leftWrap.setPrefWidth(280);
         leftWrap.setStyle("-fx-background-color: #e7dfd0;");
-        setLeft(leftWrap);
-        setCenter(centerStack);
+
+        BorderPane body = new BorderPane();
+        body.setTop(rail);
+        body.setLeft(leftWrap);
+        body.setCenter(centerStack);
+        layers.getChildren().add(body);
+        setCenter(layers);
 
         TypewriterStore.Data data = TypewriterStore.load();
         if (data.diary.isEmpty() && data.lists.isEmpty()
@@ -194,11 +204,14 @@ public class TypewriterPane extends BorderPane {
             listNames.getItems().setAll(lists);
             rebuildPageTree(data.pagesRoot);
         }
+        TypewriterStore.pruneEmptyDiary(diaryPages);
         showMode(Mode.DIARY);
     }
 
     public void saveAll() {
+        TypewriterStore.pruneEmptyDiary(diaryPages);
         TypewriterStore.save(diaryPages, lists, pagesRoot);
+        rebuildCalendar();
     }
 
     private void touch() {
@@ -206,19 +219,104 @@ public class TypewriterPane extends BorderPane {
         saveDebounce.playFromStart();
     }
 
-    private boolean confirm(String header, String body) {
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION);
-        a.setTitle("Delete");
-        a.setHeaderText(header);
-        a.setContentText(body);
-        Optional<ButtonType> r = a.showAndWait();
-        return r.isPresent() && r.get() == ButtonType.OK;
+    private static boolean hasWriting(TwNote n) {
+        return TypewriterStore.hasContent(n);
     }
 
-    private static boolean hasWriting(TwNote n) {
-        if (n == null) return false;
-        if (n.body != null && !n.body.isBlank()) return true;
-        return n.images != null && !n.images.isEmpty();
+    private void dismissOverlay() {
+        Scene scene = getScene();
+        if (scene != null && overlayEsc != null) {
+            scene.removeEventFilter(KeyEvent.KEY_PRESSED, overlayEsc);
+        }
+        overlayEsc = null;
+        if (overlay != null) {
+            layers.getChildren().remove(overlay);
+            overlay = null;
+        }
+    }
+
+    private void showOverlayBox(VBox box) {
+        dismissOverlay();
+        overlay = GuiHelper.createDimmedOverlay(layers);
+        layers.getChildren().add(overlay);
+        overlay.getChildren().add(box);
+        StackPane.setAlignment(box, Pos.CENTER);
+        Scene scene = getScene();
+        if (scene != null) {
+            overlayEsc = ev -> {
+                if (ev.getCode() == KeyCode.ESCAPE) {
+                    ev.consume();
+                    dismissOverlay();
+                }
+            };
+            scene.addEventFilter(KeyEvent.KEY_PRESSED, overlayEsc);
+        }
+    }
+
+    private void showConfirmOverlay(String header, String body, String yesText, String noText,
+                                    Runnable onYes) {
+        VBox box = GuiHelper.createWhiteBox();
+        Label h = new Label(header);
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        Label m = new Label(body);
+        m.setWrapText(true);
+        Button yes = new Button(yesText);
+        Button no = new Button(noText);
+        HBox buttons = new HBox(10, yes, no);
+        box.getChildren().addAll(h, m, buttons);
+        showOverlayBox(box);
+        yes.setOnAction(e -> {
+            dismissOverlay();
+            if (onYes != null) onYes.run();
+        });
+        no.setOnAction(e -> dismissOverlay());
+    }
+
+    private void showNoticeOverlay(String header, String body) {
+        VBox box = GuiHelper.createWhiteBox();
+        Label h = new Label(header);
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        Label m = new Label(body);
+        m.setWrapText(true);
+        Button ok = new Button("Okay");
+        box.getChildren().addAll(h, m, ok);
+        showOverlayBox(box);
+        ok.setOnAction(e -> dismissOverlay());
+    }
+
+    private void showPromptOverlay(String header, String seed, Consumer<String> onOk) {
+        VBox box = GuiHelper.createWhiteBox();
+        Label h = new Label(header);
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        TextField field = new TextField(seed == null ? "" : seed);
+        Button save = new Button("Save");
+        Button cancel = new Button("Cancel");
+        HBox buttons = new HBox(10, save, cancel);
+        box.getChildren().addAll(h, field, buttons);
+        showOverlayBox(box);
+        save.setOnAction(e -> {
+            String v = field.getText() == null ? "" : field.getText().trim();
+            dismissOverlay();
+            if (onOk != null) onOk.accept(v);
+        });
+        cancel.setOnAction(e -> dismissOverlay());
+    }
+
+    private void pruneEmptyDays() {
+        showConfirmOverlay(
+                "Delete empty days?",
+                "Days with no text and no photos will be discarded.",
+                "Delete empty",
+                "Cancel",
+                () -> {
+                    int n = TypewriterStore.pruneEmptyDiary(diaryPages);
+                    if (currentNote != null && !hasWriting(currentNote)) bindNote(null);
+                    rebuildCalendar();
+                    if (n > 0) touch();
+                    showNoticeOverlay("Removed " + n + " empty day(s)",
+                            "Days with no text and no photos were discarded.");
+                }
+        );
     }
 
     private void rebuildPageTree(TwFolder loaded) {
@@ -286,7 +384,7 @@ public class TypewriterPane extends BorderPane {
             diaryDate = AppTimeReference.getCurrentDate();
             diaryMonth = YearMonth.from(diaryDate);
             showFind(false);
-            openDiary(diaryDate);
+            openDiary(diaryDate, false);
         } else if (next == Mode.LISTS) {
             if (currentList == null && !lists.isEmpty()) {
                 listNames.getSelectionModel().select(0);
@@ -319,25 +417,28 @@ public class TypewriterPane extends BorderPane {
         HBox monthRow = new HBox(8, prev, diaryMonthLbl, next);
         monthRow.setAlignment(Pos.CENTER);
 
-        Button today = pill("Today");
+        Button today = pill("Jump to Today");
         today.setOnAction(e -> {
             showFind(false);
             diaryDate = AppTimeReference.getCurrentDate();
             diaryMonth = YearMonth.from(diaryDate);
-            openDiary(diaryDate);
+            openDiary(diaryDate, false);
         });
 
-        Button find = pill("Find entries");
+        Button find = pill("Find entries by date");
         find.setOnAction(e -> showFind(true));
 
         Button clearDay = pill("Clear this day");
         clearDay.setOnAction(e -> deleteDiaryDay());
 
+        Button prune = pill("Delete empty days");
+        prune.setOnAction(e -> pruneEmptyDays());
+
         diaryCal.setHgap(4);
         diaryCal.setVgap(4);
         diaryCal.setAlignment(Pos.CENTER);
 
-        calBox.getChildren().addAll(monthRow, diaryCal, today, find, clearDay);
+        calBox.getChildren().addAll(monthRow, diaryCal, today, find, clearDay, prune);
 
         findTitle.setStyle("-fx-font-family: Georgia; -fx-font-size: 13px; -fx-text-fill: #6a5c4a;");
         findList.setPrefHeight(280);
@@ -449,7 +550,7 @@ public class TypewriterPane extends BorderPane {
             int day = Integer.parseInt(sel.split("\\s+")[0]);
             LocalDate date = LocalDate.of(findYear, findMonth, day);
             showFind(false);
-            openDiary(date);
+            openDiary(date, false);
         }
     }
 
@@ -469,18 +570,22 @@ public class TypewriterPane extends BorderPane {
 
     private void deleteDiaryDay() {
         TwNote n = diaryPages.get(diaryDate);
-        if (n == null || !hasWriting(n) && (n.images == null || n.images.isEmpty())) {
-            return;
-        }
-        if (!confirm("Clear " + diaryDate + "?", "The text and photos for this day will be removed.")) return;
-        n.body = "";
-        n.images.clear();
-        n.title = diaryDate.getDayOfMonth() + " "
-                + diaryDate.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
-        diaryPages.remove(diaryDate);
-        bindNote(pageFor(diaryDate));
-        rebuildCalendar();
-        touch();
+        if (n == null || !hasWriting(n)) return;
+        showConfirmOverlay(
+                "Clear " + diaryDate + "?",
+                "The text and photos for this day will be removed.",
+                "Clear",
+                "Cancel",
+                () -> {
+                    n.body = "";
+                    n.images.clear();
+                    diaryPages.remove(diaryDate);
+                    bindNote(null);
+                    dateLabel.setText(diaryDate + "  (not created)");
+                    rebuildCalendar();
+                    touch();
+                }
+        );
     }
 
     private void rebuildCalendar() {
@@ -514,25 +619,45 @@ public class TypewriterPane extends BorderPane {
             cell.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + fg
                     + "; -fx-border-color: " + border + "; -fx-font-weight: " + weight
                     + "; -fx-background-radius: 6; -fx-border-radius: 6; -fx-padding: 0;");
-            cell.setOnAction(e -> openDiary(date));
+            cell.setOnAction(e -> openDiary(date, true));
             int row = (shift + d - 1) / 7 + 1;
             int col = (shift + d - 1) % 7;
             diaryCal.add(cell, col, row);
         }
     }
 
-    private TwNote pageFor(LocalDate date) {
-        return diaryPages.computeIfAbsent(date, d -> new TwNote(
-                d.getDayOfMonth() + " "
-                        + d.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
-                d));
+    private TwNote newDay(LocalDate date) {
+        return new TwNote(
+                date.getDayOfMonth() + " "
+                        + date.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                date);
     }
 
-    private void openDiary(LocalDate date) {
+    private void openDiary(LocalDate date, boolean askIfMissing) {
         diaryDate = date;
         diaryMonth = YearMonth.from(date);
         rebuildCalendar();
-        bindNote(pageFor(date));
+        TwNote existing = diaryPages.get(date);
+        if (hasWriting(existing)) {
+            bindNote(existing);
+            return;
+        }
+        if (existing != null) diaryPages.remove(date);
+        bindNote(null);
+        dateLabel.setText(date + "  (not created)");
+        if (!askIfMissing) return;
+        showConfirmOverlay(
+                "No entry for " + date,
+                "Create this day?",
+                "Create",
+                "Not now",
+                () -> {
+                    TwNote created = newDay(date);
+                    diaryPages.put(date, created);
+                    bindNote(created);
+                    rebuildCalendar();
+                }
+        );
     }
 
     private void buildListsNav() {
@@ -558,13 +683,14 @@ public class TypewriterPane extends BorderPane {
     private void deleteList() {
         TwList list = currentList;
         if (list == null) return;
-        if (!confirm("Delete list?", list.title)) return;
-        lists.remove(list);
-        listNames.getItems().remove(list);
-        currentList = listNames.getItems().isEmpty() ? null : listNames.getItems().get(0);
-        if (currentList != null) listNames.getSelectionModel().select(currentList);
-        openList(currentList);
-        touch();
+        showConfirmOverlay("Delete list?", list.title, "Delete", "Cancel", () -> {
+            lists.remove(list);
+            listNames.getItems().remove(list);
+            currentList = listNames.getItems().isEmpty() ? null : listNames.getItems().get(0);
+            if (currentList != null) listNames.getSelectionModel().select(currentList);
+            openList(currentList);
+            touch();
+        });
     }
 
     private void buildListsEditor() {
@@ -664,22 +790,27 @@ public class TypewriterPane extends BorderPane {
         Object v = sel.getValue();
         String label = String.valueOf(v);
         if (v instanceof TwFolder) {
-            if (!confirm("Delete folder?", label + " and everything inside will be removed.")) return;
-            TwFolder folder = (TwFolder) v;
-            TwFolder parent = folderOf(sel.getParent());
-            parent.children.remove(folder);
+            showConfirmOverlay("Delete folder?",
+                    label + " and everything inside will be removed.",
+                    "Delete", "Cancel", () -> {
+                        TwFolder folder = (TwFolder) v;
+                        TwFolder parent = folderOf(sel.getParent());
+                        parent.children.remove(folder);
+                        TreeItem<Object> parentItem = sel.getParent();
+                        parentItem.getChildren().remove(sel);
+                        touch();
+                    });
         } else if (v instanceof TwNote) {
-            if (!confirm("Delete page?", label)) return;
-            TwNote note = (TwNote) v;
-            TwFolder parent = folderOf(sel.getParent());
-            parent.notes.remove(note);
-            if (currentNote == note) bindNote(null);
-        } else {
-            return;
+            showConfirmOverlay("Delete page?", label, "Delete", "Cancel", () -> {
+                TwNote note = (TwNote) v;
+                TwFolder parent = folderOf(sel.getParent());
+                parent.notes.remove(note);
+                if (currentNote == note) bindNote(null);
+                TreeItem<Object> parentItem = sel.getParent();
+                parentItem.getChildren().remove(sel);
+                touch();
+            });
         }
-        TreeItem<Object> parentItem = sel.getParent();
-        parentItem.getChildren().remove(sel);
-        touch();
     }
 
     private void buildNoteEditor() {
@@ -771,10 +902,8 @@ public class TypewriterPane extends BorderPane {
         }
         final TreeItem<Object> destItem = parentItem;
         final TwFolder destFolder = parentFolder;
-        TextInputDialog dlg = new TextInputDialog("New folder");
-        dlg.setHeaderText("Folder name");
-        dlg.showAndWait().ifPresent(name -> {
-            TwFolder child = new TwFolder(name.trim().isEmpty() ? "Folder" : name.trim());
+        showPromptOverlay("Folder name", "New folder", name -> {
+            TwFolder child = new TwFolder(name == null || name.isBlank() ? "Folder" : name);
             destFolder.children.add(child);
             TreeItem<Object> created = new TreeItem<>(child);
             destItem.getChildren().add(created);
