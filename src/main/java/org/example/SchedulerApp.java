@@ -25,11 +25,17 @@ public class SchedulerApp extends Application {
     @Override
     public void start(Stage primaryStage) {
         stage = primaryStage;
-        if (Endpoints.hasSavedServer()) {
-            showLogin();
-        } else {
+        if (needServerPick()) {
             showServerPick();
+        } else {
+            showLogin();
         }
+    }
+
+    private static boolean needServerPick() {
+        if (!Endpoints.hasSavedServer()) return true;
+        if (Endpoints.isCreatorHost()) return false;
+        return Endpoints.postgresPassword().isBlank();
     }
 
     public static void returnToLogin() {
@@ -48,8 +54,10 @@ public class SchedulerApp extends Application {
         StackPane wrap = new StackPane(pick);
         wrap.setStyle("-fx-background-color: #1c2430;");
         setStageRoot(wrap);
+        stage.setMaximized(true);
         stage.setTitle("Scheduler");
         stage.show();
+
     }
 
     private static void showLogin() {
@@ -149,6 +157,8 @@ public class SchedulerApp extends Application {
         }
         stage.show();
     }
+
+
 
     public static void main(String[] args) {
         launch(args);
