@@ -36,12 +36,7 @@ public final class TypewriterStore {
     private static final SqliteTypewriterRepository sqlite =
             new SqliteTypewriterRepository("jdbc:sqlite:scheduler-cache.db");
 
-    private static final PostgresTypewriterRepository postgres = new PostgresTypewriterRepository(
-            Endpoints.postgresUrl(),
-            "postgres",
-            Endpoints.postgresPassword()
-    );
-
+    private static PostgresTypewriterRepository postgres;
     private static boolean postgresAvailable;
 
     static {
@@ -52,13 +47,34 @@ public final class TypewriterStore {
         } catch (Exception e) {
             System.out.println("Typewriter SQLite init failed: " + e.getMessage());
         }
+    }
+
+    public static void resetPostgres() {
+        postgres = null;
+        postgresAvailable = false;
+    }
+
+    private static PostgresTypewriterRepository pg() {
+        if (Endpoints.isCreatorHost()) {
+            postgresAvailable = false;
+            return null;
+        }
+        if (postgres != null && postgresAvailable) return postgres;
         try {
+            postgres = new PostgresTypewriterRepository(
+                    Endpoints.postgresUrl(),
+                    "postgres",
+                    Endpoints.postgresPassword()
+            );
             postgres.initialize();
             postgresAvailable = true;
-            System.out.println("Typewriter Postgres ready");
+            System.out.println("Typewriter Postgres ready " + Endpoints.postgresUrl());
+            return postgres;
         } catch (Exception e) {
+            postgres = null;
             postgresAvailable = false;
             System.out.println("Typewriter Postgres offline: " + e.getMessage());
+            return null;
         }
     }
 
@@ -127,16 +143,19 @@ public final class TypewriterStore {
                 }
             }
 
-            if (postgresAvailable) {
+            PostgresTypewriterRepository pg = pg();
+            if (pg != null) {
                 Instant remote = null;
                 try {
-                    remote = postgres.lastUpdated(uid);
+                    remote = pg.lastUpdated(uid);
                 } catch (SQLException e) {
                     postgresAvailable = false;
+                    postgres = null;
                     System.out.println("Typewriter Postgres read failed: " + e.getMessage());
+                    pg = null;
                 }
-                if (postgresAvailable && remote != null && (local == null || remote.isAfter(local))) {
-                    Data pulled = postgres.fetchAll(uid);
+                if (pg != null && remote != null && (local == null || remote.isAfter(local))) {
+                    Data pulled = pg.fetchAll(uid);
                     pruneEmptyDiary(pulled.diary);
                     if (!isEmpty(pulled) || isEmpty(localData)) {
                         sqlite.replaceAll(uid, pulled.diary, pulled.lists, pulled.pagesRoot);
@@ -144,12 +163,13 @@ public final class TypewriterStore {
                     }
                     System.out.println("Typewriter kept local; Postgres row was newer but empty");
                 }
-                if (postgresAvailable && !isEmpty(localData)
+                if (pg != null && !isEmpty(localData)
                         && (remote == null || (local != null && local.isAfter(remote)))) {
                     try {
-                        postgres.replaceAll(uid, localData.diary, localData.lists, localData.pagesRoot);
+                        pg.replaceAll(uid, localData.diary, localData.lists, localData.pagesRoot);
                     } catch (SQLException e) {
                         postgresAvailable = false;
+                        postgres = null;
                         System.out.println("Typewriter push failed: " + e.getMessage());
                     }
                 }
@@ -179,11 +199,13 @@ public final class TypewriterStore {
             ex.printStackTrace();
             return;
         }
-        if (postgresAvailable) {
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
             try {
-                postgres.replaceAll(uid, diary, lists, pagesRoot);
+                pg.replaceAll(uid, diary, lists, pagesRoot);
             } catch (Exception ex) {
                 postgresAvailable = false;
+                postgres = null;
                 System.out.println("Typewriter Postgres save failed: " + ex.getMessage());
                 ex.printStackTrace();
             }
@@ -208,11 +230,13 @@ public final class TypewriterStore {
     private static void persistLocalAndServer(String uid, Data data) throws Exception {
         pruneEmptyDiary(data.diary);
         sqlite.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
-        if (postgresAvailable) {
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
             try {
-                postgres.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+                pg.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
             } catch (SQLException e) {
                 postgresAvailable = false;
+                postgres = null;
                 System.out.println("Typewriter Postgres write after Node pull failed: " + e.getMessage());
             }
         }
@@ -234,8 +258,8 @@ public final class TypewriterStore {
     }
 
     public static void rebuildPages(Connection c, String uid, TypewriterPane.TwFolder root,
-                                    boolean postgres) throws SQLException {
-        String sql = postgres
+                                    boolean postgresFlag) throws SQLException {
+        String sql = postgresFlag
                 ? "SELECT id, parent_id, kind, title, body, images FROM TASK.tw_pages WHERE user_id = ? ORDER BY pos"
                 : "SELECT id, parent_id, kind, title, body, images FROM tw_pages WHERE user_id = ? ORDER BY pos";
         Map<String, TypewriterPane.TwFolder> folders = new LinkedHashMap<>();

@@ -32,11 +32,7 @@ public class TaskRepository {
     private final SqliteTaskRepository sqlite =
             new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
 
-    private final PostgresTaskRepository postgres = new PostgresTaskRepository(
-            Endpoints.postgresUrl(),
-            "postgres",
-            Endpoints.postgresPassword()
-    );
+    private PostgresTaskRepository postgres;
 
     private final String deviceId = DeviceConfig.getOrCreateDeviceId();
     private boolean postgresAvailable = false;
@@ -48,17 +44,36 @@ public class TaskRepository {
         } catch (Exception e) {
             e.printStackTrace();
         }
+        rebuildPostgres();
+    }
 
+    private void rebuildPostgres() {
+        if (Endpoints.isCreatorHost()) {
+            postgres = null;
+            postgresAvailable = false;
+            System.out.println("Creator host — Java skips Postgres JDBC");
+            return;
+        }
         try {
+            postgres = new PostgresTaskRepository(
+                    Endpoints.postgresUrl(),
+                    "postgres",
+                    Endpoints.postgresPassword()
+            );
             postgres.initialize();
             postgresAvailable = true;
-            System.out.println("Postgres Connected OK");
+            System.out.println("Postgres Connected OK " + Endpoints.postgresUrl());
         } catch (Exception e) {
+            postgres = null;
             postgresAvailable = false;
             System.out.println("Postgres offline — SQLite only");
             System.out.println("Postgres reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    public void tryReconnectPostgres() {
+        rebuildPostgres();
     }
 
     public boolean isPostgresAvailable() {
@@ -69,15 +84,6 @@ public class TaskRepository {
         return deviceId;
     }
 
-    public void tryReconnectPostgres() {
-        try {
-            postgres.initialize();
-            postgresAvailable = true;
-            System.out.println("Postgres reconnected");
-        } catch (Exception e) {
-            postgresAvailable = false;
-        }
-    }
 
     public String allocateNewTaskId() {
         while (true) {

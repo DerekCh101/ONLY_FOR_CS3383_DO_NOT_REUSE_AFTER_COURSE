@@ -73,11 +73,15 @@ public final class Endpoints {
     }
 
     public static String postgresPassword() {
-        String file = read(PG_FILE);
-        if (file != null && !file.isBlank()) return file;
+        try {
+            if (Files.isRegularFile(PG_FILE)) {
+                String s = Files.readString(PG_FILE).trim();
+                if (!s.isBlank()) return s;
+            }
+        } catch (Exception ignored) {
+        }
         String env = System.getenv(PG_ENV);
-        if (env != null && !env.isBlank()) return env;
-        return "";
+        return env == null ? "" : env.trim();
     }
 
     /**

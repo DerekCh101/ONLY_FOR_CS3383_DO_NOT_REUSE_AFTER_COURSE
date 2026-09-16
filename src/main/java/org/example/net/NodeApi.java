@@ -13,7 +13,6 @@ import java.util.Map;
 
 public class NodeApi {
 
-    private static final String BASE = Endpoints.nodeBase();
 
     private static final int CONNECT_MS = 8000;
     private static final int READ_MS = 8000;
@@ -132,7 +131,7 @@ public class NodeApi {
     }
 
     private AuthResult postAuth(String path, String user, String password) throws Exception {
-        String url = BASE + path;
+        String url = Endpoints.nodeBase() + path;
         System.out.println("auth POST " + url);
 
         String body = "{\"username\":\"" + escape(user) + "\",\"password\":\"" + escape(password) + "\"}";
@@ -153,7 +152,7 @@ public class NodeApi {
             throw new IllegalStateException("login required");
         }
 
-        HttpURLConnection c = (HttpURLConnection) new URL(BASE + path).openConnection();
+        HttpURLConnection c = (HttpURLConnection) new URL(Endpoints.nodeBase() + path).openConnection();
         c.setRequestMethod(method);
         c.setConnectTimeout(CONNECT_MS);
         c.setReadTimeout(readMs);

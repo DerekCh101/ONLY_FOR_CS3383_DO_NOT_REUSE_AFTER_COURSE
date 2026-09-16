@@ -18,6 +18,8 @@ import org.example.net.Api;
 import org.example.net.Endpoints;
 import org.example.net.LoginView;
 
+import static org.example.GUI.TypewriterStore.resetPostgres;
+
 public class SchedulerApp extends Application {
 
     private static Stage stage;
@@ -40,6 +42,7 @@ public class SchedulerApp extends Application {
 
     public static void returnToLogin() {
         Api.INSTANCE.logout();
+        resetPostgres();
         TaskManagementSystem.resetInstance();
         Platform.runLater(SchedulerApp::showLogin);
     }
