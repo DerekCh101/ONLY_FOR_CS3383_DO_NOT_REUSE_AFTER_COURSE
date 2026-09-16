@@ -60,7 +60,7 @@ public final class ServerPickView extends VBox {
         Label creatorHint = hint("The hosted copy. Different database. Your PC data is not deleted. Current Version not implemented.");
 
         RadioButton thisPc = radio("This computer is the server");
-        Label thisHint = hint("Node + Postgres on this PC. Uses http://127.0.0.1:3456");
+        Label thisHint = hint("You must have Postgres and Node, and run them (node server.js) on this PC. Uses http://127.0.0.1:3456");
 
         RadioButton other = radio("This device is a client from your self-host server (Tailscale or wifi)");
         Label otherHint = hint("This window is a client. Same host PC = same data. Only the address changes.");
