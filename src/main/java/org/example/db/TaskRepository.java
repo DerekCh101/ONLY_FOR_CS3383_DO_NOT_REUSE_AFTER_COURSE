@@ -456,6 +456,15 @@ public class TaskRepository {
         for (Map<String, String> row : Api.INSTANCE.getBlocked()) {
             BlockedTime remote = blockedFromNode(row);
             if (remote == null || remote.getId() == null) continue;
+            if (remote.getStartTime() == null || remote.getEndTime() == null) {
+                System.err.println("skip blocked missing time id=" + remote.getId()
+                        + " start=" + remote.getStartTime()
+                        + " end=" + remote.getEndTime()
+                        + " keys=" + row.keySet()
+                        + " start_time=" + row.get("start_time")
+                        + " end_time=" + row.get("end_time"));
+                continue;
+            }
             remoteList.add(remote);
         }
 
@@ -465,6 +474,7 @@ public class TaskRepository {
             }
             BlockedTime local = sqlite.findBlockedById(remote.getId());
             BlockedTime merged = (local == null) ? remote : mergeBlocked(local, remote);
+            if (merged.getStartTime() == null || merged.getEndTime() == null) continue;
             sqlite.upsertBlocked(merged);
         }
 
@@ -485,7 +495,6 @@ public class TaskRepository {
             }
         }
     }
-
     private static Task taskFromNode(Map<String, String> row) {
         String id = first(row, "id");
         if (id == null) return null;
@@ -542,13 +551,16 @@ public class TaskRepository {
         Instant last = parseInstant(first(row, "last_updated_at", "lastUpdatedAt"));
         if (last == null) last = Instant.now();
 
+        LocalTime start = parseTime(first(row, "start_time", "startTime", "start"));
+        LocalTime end = parseTime(first(row, "end_time", "endTime", "end"));
+
         BlockedTime b = new BlockedTime(
                 id,
                 first(row, "title"),
                 toDayOfWeek(wd),
                 parseDate(first(row, "specific_date", "specificDate")),
-                parseTime(first(row, "start_time", "startTime")),
-                parseTime(first(row, "end_time", "endTime")),
+                start,
+                end,
                 last,
                 first(row, "user_id", "userId")
         );
@@ -557,6 +569,19 @@ public class TaskRepository {
         return b;
     }
 
+    private static LocalTime parseTime(String s) {
+        if (s == null || s.isBlank() || "null".equalsIgnoreCase(s)) return null;
+        String t = s.trim();
+        int dot = t.indexOf('.');
+        if (dot > 0) t = t.substring(0, dot);
+        if (t.length() >= 8) t = t.substring(0, 8);
+        else if (t.length() == 5) t = t + ":00";
+        try {
+            return LocalTime.parse(t);
+        } catch (Exception e) {
+            return null;
+        }
+    }
     private static String first(Map<String, String> row, String... keys) {
         for (String k : keys) {
             String v = row.get(k);
@@ -590,16 +615,6 @@ public class TaskRepository {
         }
     }
 
-    private static LocalTime parseTime(String s) {
-        if (s == null || s.isBlank()) return null;
-        try {
-            String t = s.length() >= 8 ? s.substring(0, 8) : s;
-            if (t.length() == 5) t = t + ":00";
-            return LocalTime.parse(t);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 
     private static Instant parseInstant(String s) {
         if (s == null || s.isBlank()) return null;

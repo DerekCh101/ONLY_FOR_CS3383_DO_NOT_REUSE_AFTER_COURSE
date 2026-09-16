@@ -221,6 +221,7 @@ public class SqliteTaskRepository {
             ps.executeUpdate();
         }
     }
+
     public void recordDelete(String taskId, Instant deletedAt, String title) throws SQLException {
         String sql = """
             INSERT INTO sync_deletes(id, deleted_at, title, user_id) VALUES(?, ?, ?, ?)
@@ -379,6 +380,13 @@ public class SqliteTaskRepository {
     }
 
     public void upsertBlocked(BlockedTime b) throws SQLException {
+        if (b == null || b.getStartTime() == null || b.getEndTime() == null) {
+            System.out.println("sqlite skip blocked missing time id="
+                    + (b == null ? "null" : b.getId())
+                    + " start=" + (b == null ? null : b.getStartTime())
+                    + " end=" + (b == null ? null : b.getEndTime()));
+            return;
+        }
         String sql = """
             INSERT INTO blocked_times (
                 id, title, weekday, specific_date, start_time, end_time,
@@ -633,16 +641,34 @@ public class SqliteTaskRepository {
 
     private static LocalDate parseDate(String s) {
         if (s == null || s.isBlank()) return null;
-        return LocalDate.parse(s);
+        try {
+            return LocalDate.parse(s.substring(0, Math.min(10, s.length())));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static LocalTime parseTime(String s) {
         if (s == null || s.isBlank()) return null;
-        return LocalTime.parse(s);
+        String t = s.trim();
+        if (t.length() >= 8) t = t.substring(0, 8);
+        try {
+            return LocalTime.parse(t);
+        } catch (Exception e) {
+            try {
+                return LocalTime.parse(t.substring(0, Math.min(5, t.length())));
+            } catch (Exception e2) {
+                return null;
+            }
+        }
     }
 
     private static Instant parseInstant(String s) {
         if (s == null || s.isBlank()) return null;
-        return Instant.parse(s);
+        try {
+            return Instant.parse(s);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
