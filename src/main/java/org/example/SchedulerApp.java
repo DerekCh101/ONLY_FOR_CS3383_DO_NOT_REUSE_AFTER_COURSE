@@ -9,11 +9,13 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
-import org.example.GUI.SchedulerController;
+import org.example.GUI.ServerPickView;
 import org.example.net.Api;
+import org.example.net.Endpoints;
 import org.example.net.LoginView;
 
 public class SchedulerApp extends Application {
@@ -23,13 +25,31 @@ public class SchedulerApp extends Application {
     @Override
     public void start(Stage primaryStage) {
         stage = primaryStage;
-        showLogin();
+        if (Endpoints.hasSavedServer()) {
+            showLogin();
+        } else {
+            showServerPick();
+        }
     }
 
     public static void returnToLogin() {
         Api.INSTANCE.logout();
         TaskManagementSystem.resetInstance();
         Platform.runLater(SchedulerApp::showLogin);
+    }
+
+    public static void showServerPick() {
+        if (stage == null) return;
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(SchedulerApp::showServerPick);
+            return;
+        }
+        ServerPickView pick = new ServerPickView(SchedulerApp::showLogin);
+        StackPane wrap = new StackPane(pick);
+        wrap.setStyle("-fx-background-color: #1c2430;");
+        setStageRoot(wrap);
+        stage.setTitle("Scheduler");
+        stage.show();
     }
 
     private static void showLogin() {

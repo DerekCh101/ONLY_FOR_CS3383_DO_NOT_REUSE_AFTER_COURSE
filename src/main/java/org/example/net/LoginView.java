@@ -10,6 +10,8 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
+import static org.example.SchedulerApp.showServerPick;
+
 public class LoginView {
     public void show(Stage stage, Runnable onOk) {
         TextField user = new TextField();
@@ -22,6 +24,8 @@ public class LoginView {
 
         login.setOnAction(e -> go(false, user.getText(), pass.getText(), err, login, register, onOk));
         register.setOnAction(e -> go(true, user.getText(), pass.getText(), err, login, register, onOk));
+        Button changeServer = new Button("Change server");
+        changeServer.setOnAction(e -> showServerPick());
 
         VBox box = new VBox(8, user, pass, login, register, err);
         box.setPadding(new Insets(16));
