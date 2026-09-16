@@ -46,9 +46,17 @@ public class WeekGridBuilder {
         var gridData = system.getGrid();
         LocalDate weekStart = AppTimeReference.getStartOfWeek(AppTimeReference.getCurrentDate());
         List<BlockedTime> blocked = loadBlocked();
+        List<Task> placed = system.getPlacedTasks() == null
+                ? List.of() : new ArrayList<>(system.getPlacedTasks());
 
         LocalTime now = AppTimeReference.getCurrentTime();
         int nowSlot = AppTimeReference.localTimeToSlot(now);
+
+        System.out.println("weekStart=" + weekStart
+                + " offset=" + weekOffset
+                + " today=" + AppTimeReference.getCurrentDate()
+                + " gridDates=" + (gridData == null ? "null" : gridData.keySet())
+                + " placed=" + placed.size());
 
         for (int col = 0; col < 7; col++) {
             LocalDate date = weekStart.plusDays(weekOffset * 7L + col);
@@ -76,15 +84,12 @@ public class WeekGridBuilder {
                 cell.setMinHeight(CELL_HEIGHT);
                 cell.setMaxHeight(CELL_HEIGHT);
 
-                Task taskInCell = null;
-                if (gridData != null && gridData.containsKey(date)) {
-                    taskInCell = gridData.get(date).returnDayGrid()[slotIndex];
-                    if (taskInCell != null) {
-                        cell.getChildren().add(taskLabel(taskInCell));
-                        if (!(taskInCell.getWorkflow() == Workflow.FINISHED
-                                || taskInCell.getLifeCycle() == TaskLifeCycle.PAST)) {
-                            dragDrop.makeDraggable(cell, taskInCell, date, slotIndex);
-                        }
+                Task taskInCell = taskAt(gridData, placed, date, slotIndex);
+                if (taskInCell != null) {
+                    cell.getChildren().add(taskLabel(taskInCell));
+                    if (!(taskInCell.getWorkflow() == Workflow.FINISHED
+                            || taskInCell.getLifeCycle() == TaskLifeCycle.PAST)) {
+                        dragDrop.makeDraggable(cell, taskInCell, date, slotIndex);
                     }
                 }
 
@@ -174,6 +179,26 @@ public class WeekGridBuilder {
             sb.append("(failed to load)\n");
         }
         sidePanel.setText(sb.toString());
+    }
+
+    private static Task taskAt(java.util.Map<LocalDate, Day> gridData,
+                               List<Task> placed, LocalDate date, int slotIndex) {
+        if (gridData != null && gridData.containsKey(date)) {
+            Task[] cells = gridData.get(date).returnDayGrid();
+            if (cells != null && slotIndex >= 0 && slotIndex < cells.length && cells[slotIndex] != null) {
+                return cells[slotIndex];
+            }
+        }
+        for (Task t : placed) {
+            if (t == null || t.getPlacedDate() == null || t.getPlacedTime() == null) continue;
+            if (!date.equals(t.getPlacedDate())) continue;
+            int start = AppTimeReference.localTimeToSlot(t.getPlacedTime());
+            if (start < 0) continue;
+            int count = t.getDurationSlots();
+            if (count < 1) count = 1;
+            if (slotIndex >= start && slotIndex < start + count) return t;
+        }
+        return null;
     }
 
     private static Label taskLabel(Task task) {
@@ -267,6 +292,10 @@ public class WeekGridBuilder {
                     "-fx-background-color: linear-gradient(to right, #c3d2c6, #dfe6dc);"
                             + "-fx-border-color: #8ea494 #c5cec8 #c5cec8 #6f8a76;"
                             + "-fx-border-width: 1 1 1 4;");
+            return;
+        }
+        if (task != null) {
+            cell.setStyle("-fx-background-color: #f6e7b2; -fx-border-color: #999999;");
             return;
         }
         if (isPast(date, time)) {
