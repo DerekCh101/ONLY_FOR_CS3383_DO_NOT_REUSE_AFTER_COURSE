@@ -166,8 +166,15 @@ public class SchedulerController {
                 ex.printStackTrace();
                 typewriterPane = null;
             }
-            refresh();
+            refreshAfterLoad();
         });
+    }
+
+    public void refreshAfterLoad() {
+        refresh();
+        Platform.runLater(this::scrollToCurrentTime);
+        System.out.println("calendar refresh placed=" + system.getPlacedTasks().size()
+                + " days=" + system.getGrid().size());
     }
 
     private void showTypewriter(boolean on) {
@@ -191,8 +198,8 @@ public class SchedulerController {
 
     private void setSchedChrome(boolean on) {
         if (btnPrev != null) { btnPrev.setVisible(on); btnPrev.setManaged(on); }
-        if (btnNext != null) { btnNext.setVisible(on); btnNext.setManaged(on); }
         if (btnMonthView != null) { btnMonthView.setVisible(on); btnMonthView.setManaged(on); }
+        if (btnNext != null) { btnNext.setVisible(on); btnNext.setManaged(on); }
         if (btnAdd != null) { btnAdd.setVisible(on); btnAdd.setManaged(on); }
         if (btnBlocked != null) { btnBlocked.setVisible(on); btnBlocked.setManaged(on); }
         if (btnUndo != null) { btnUndo.setVisible(on); btnUndo.setManaged(on); }
