@@ -294,10 +294,6 @@ public class WeekGridBuilder {
                             + "-fx-border-width: 1 1 1 4;");
             return;
         }
-        if (task != null) {
-            cell.setStyle("-fx-background-color: #f6e7b2; -fx-border-color: #999999;");
-            return;
-        }
         if (isPast(date, time)) {
             cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
             return;
