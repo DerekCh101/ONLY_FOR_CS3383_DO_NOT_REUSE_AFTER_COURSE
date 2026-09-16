@@ -1,280 +1,210 @@
-Task Scheduler System – README
-1. Project Overview
-This project is a command-based task scheduling system with a GUI calendar view.
+Task Scheduler
+==============
 
-It allows you to:
+JavaFX calendar and typewriter notes. Local SQLite first, then optional
+sync through Node and Postgres.
 
-Add tasks manually through CLI
-Add multiple tasks from a file
-Automatically schedule tasks into a weekly calendar
-Mark tasks as finished
-Undo and redo commands
-View scheduled tasks in a GUI
-Print all tasks in the CLI
-The system separates data storage, scheduling logic, command handling, and GUI display.
+The GUI is the main app. The CLI still works.
 
-2. How the System Is Structured
-Below is an explanation of each Java file and its role.
 
-SchedulerApp.java
-This is the JavaFX GUI application.
+What it does
+------------
+- Place, move, finish, and unfinish tasks on a week / month grid
+- Fixed, deadline, and flexible tasks
+- Blocked time (weekday repeat or one-off date)
+- Typewriter pages (text + images)
+- Undo / redo for recorded CLI commands
+- Bulk import from a 6-line-per-task file
+- Offline-first cache on this PC
+- Multi-device sync when Node + Postgres are up
 
-It:
 
-Displays the weekly calendar
-Shows scheduled tasks
-Refreshes the GUI when the update command is executed
-This is the main entry point if running with GUI.
+Layout
+------
+Task_Scheduler/
+  src/main/java/org/example/
+    SchedulerApp.java          JavaFX entry
+    TaskManagementSystem.java  in-memory store
+    SchedulerEngine.java       placement engine
+    Task.java, Day.java, BlockedTime*.java
+    Command/                   CLI commands
+    CliRunner/                 CLI loop
+    GUI/                       calendar, dialogs, typewriter, server pick
+    db/                        SQLite + Postgres
+    net/                       login, Node client, Endpoints
+  server/                      Node HTTP API + web UI
+  scheduler-cache.db           local SQLite (runtime)
+  .scheduler/                  Node URL + Postgres password (runtime)
+  typewriter-images/           image cache (runtime)
 
-SchedulerEngine.java
-This is the core scheduling engine.
+Do not commit:
+  .scheduler/
+  scheduler-cache.db
+  scheduler-device-id.txt
+  typewriter-images/
 
-It is responsible for:
 
-Taking all tasks from the system
-Deciding where to place them in the weekly calendar
-Preventing time conflicts
-Respecting task priority rules
-Scheduling priority order:
+How data is stored
+------------------
+This PC writes SQLite first. Then it copies the same change to Postgres
+and Node if they are reachable.
 
-Fixed tasks (highest priority)
-Deadline tasks
-Flexible tasks (lowest priority)
-This ensures correct and logical scheduling.
+  scheduler-cache.db
+      Tasks, blocked times, typewriter. Works offline.
 
-Task.java
-This is the task data model.
+  Postgres
+      Shared DB when the host is up.
+      Java skips JDBC on the creator host.
 
-Each task stores:
+  Node (server/)
+      HTTP API, auth, typewriter images.
 
-Task name
-Deadline date (optional)
-Deadline time (optional)
-Starting date (optional)
-Starting time (optional)
-Duration (in hours)
-A task can be:
+Local files live in the project working directory
+(repo root in IntelliJ):
 
-Fixed (has starting date/time)
-Deadline-based (has deadline)
-Flexible (no deadline and no fixed start)
-A task cannot be both fixed and deadline-based.
+  .scheduler/server.txt
+      Node URL (http://127.0.0.1:3456 or Tailscale)
 
-TaskManagementSystem.java
-This acts as the central storage system.
+  .scheduler/postgres.pw
+      Postgres password for Java
 
-It:
+  scheduler-cache.db
+      SQLite cache
 
-Stores all tasks in an ArrayList
-Provides access to tasks
-Is shared between CLI, scheduler engine, and GUI
-Think of this as the internal database of the system.
+  scheduler-device-id.txt
+      This install's device id
 
-ClIRunner.java
-This is the command-line controller.
+  typewriter-images/
+      Image cache
 
-It:
+Java does not need env vars if those files exist.
 
-Reads user input
-Recognizes commands such as:
-addTask
-addTaskWithFile
-update
-undo
-redo
-printAll
-Executes the corresponding command
-Command.java
-This is an interface that defines:
+Fallbacks:
+  postgres_pw
+  PGPASSWORD
+  SCHEDULER_NODE
+  SCHEDULER_PG
 
-execute()
-undo()
-redo()
-All command classes follow this structure.
+Node still needs postgres_pw in ITS terminal.
+setx does not update a Node process that is already running.
+Open a new terminal after Continue on the server-pick screen.
 
-RecordedCommand.java
-This is the base class for commands that support undo and redo.
 
-It maintains:
-
-An undo stack
-A redo stack
-When a command executes:
-
-It is added to the undo list
-The redo list is cleared
-Undo and redo operations are managed here.
-
-AddTask.java
-This handles adding a single task via CLI.
-
-Flow:
-
-Ask for task name
-Ask for deadline (optional)
-If deadline exists, do NOT ask for fixed start
-If no deadline, ask for fixed start (optional)
-Ask for duration
-Create Task object
-This command supports undo and redo.
-
-AddTaskWithFile.java
-This loads multiple tasks from:
-
-taskInput1.txt
-
-Each task must follow this 6-line format:
-
-TaskName
-DeadlineDate
-DeadlineTime
-Duration
-StartingDate
-StartingTime
-
-If a task contains both a deadline and a fixed starting time, it will be skipped.
-
-FinishTask.java
-This marks a task as finished.
-
-It likely:
-
-Changes task state
-Removes or updates scheduling
-Supports undo/redo
-PrintAllTask.java
-Prints all tasks in the system through CLI.
-
-Useful for debugging.
-
-Undo.java
-Calls undo on the most recent command.
-
-Redo.java
-Reapplies the most recently undone command.
-
-BlockedTimePeriod.java
-Represents occupied time slots in the calendar.
-
-Used internally by the scheduling engine to prevent overlaps.
-
-TaskStates.java
-Currently not used.
-
-It was likely intended for managing task states such as:
-
-PENDING
-FINISHED
-CANCELLED
-Since it is not integrated, it can be ignored for now.
-
-taskInput1.txt
-This file is used for bulk task input.
-
-It must strictly follow the 6-line format per task.
-
-3. Scheduling Algorithm (How Tasks Are Placed)
-The weekly calendar:
-
-7 days
-6:00 to 22:00
-1-hour blocks
-Total available slots per week:
-7 × 17 = 119 time slots
-
-Scheduling process:
-
-Step 1: Place fixed tasks
-
-These must be placed at exact date/time
-Step 2: Place deadline tasks
-
-Scheduled as early as possible
-Must be before deadline
-Step 3: Place flexible tasks
-
-Fill earliest available free time slots
-This ensures:
-Fixed > Deadline > Flexible priority.
-
-4. Undo / Redo Logic
-The system uses the Command Pattern.
-
-When a command executes:
-
-It is added to the undo stack
-Redo stack is cleared
-Undo:
-
-Reverses last command
-Moves it to redo stack
-Redo:
-
-Reapplies last undone command
-5. How to Run the Project
 Requirements
-JDK 17 or above
-JavaFX SDK (for GUI)
-JavaFX is NOT included in modern JDK versions.
+------------
+- JDK 17+
+- JavaFX SDK for the GUI: https://openjfx.io
+- Node.js on the host PC
+- PostgreSQL on the host PC if you want multi-device sync
 
-If Using IntelliJ
-Download JavaFX SDK from:
-https://openjfx.io
 
-Add VM options:
+Run the GUI (IntelliJ)
+----------------------
+1. Open Task_Scheduler.
+   Working directory must be the repo root, not src\...
 
---module-path "path_to_javafx/lib" --add-modules javafx.controls,javafx.fxml
+2. VM options:
 
-Run SchedulerApp.java
-If Running CLI Only
-JavaFX is not required.
+   --module-path "<path-to-javafx>/lib" --add-modules javafx.controls,javafx.fxml
 
-You can run ClIRunner directly.
+3. Run org.example.SchedulerApp
 
-6. Typical Usage Flow
-Example:
+First launch (or missing password on a non-creator PC) shows server pick:
 
-addTask
-addTaskWithFile
-printAll
-update
-undo
-redo
+  - Node URL, for example http://127.0.0.1:3456 or http://100.x.x.x:3456
+  - Postgres password
+  - Continue writes .scheduler/ and setx postgres_pw
 
-Important:
-You must run update to refresh the GUI after adding tasks.
+Then log in.
 
-7. Design Pattern Used
-This project uses:
+Change server later from the UI. That logs out and rebuilds the
+Node and Postgres clients.
 
-Command Pattern
-Separation of concerns
-Model (Task)
-Engine (SchedulerEngine)
-View (SchedulerApp)
-Controller (ClIRunner)
-The architecture is modular and extendable.
 
-8. Current Limitations
-No persistent database (no save to disk)
-No automatic priority sorting among deadline tasks
-No advanced overflow detection
-TaskStates not implemented
-Limited input validation
-9. Summary
-This system:
+Run Node (host)
+---------------
+  cd server
+  node server.js
 
-Automatically schedules tasks
-Prevents deadline/fixed conflict
-Supports undo/redo
-Supports bulk file import
-Uses structured architecture
-Separates scheduling logic from interface
-Everything flows through TaskManagementSystem.
+Use a NEW terminal after setx so Node can see postgres_pw.
 
-If something breaks:
+Defaults: listen 0.0.0.0:3456
 
-Check file format
-Check JavaFX configuration
-Check update command
-End of documentation.
+HOST_LISTEN_IP and HostNodeServerListenToWherePort are optional.
+Java does not set them.
+
+
+CLI only
+--------
+JavaFX is not required. Run:
+
+  org.example.CliRunner.CLIRunner
+
+Typical commands:
+  addTask
+  addTaskWithFile
+  printAll
+  update
+  undo
+  redo
+  finish / unfinish / clear
+
+File import (taskInput1.txt), six lines per task:
+
+  TaskName
+  DeadlineDate
+  DeadlineTime
+  Duration
+  StartingDate
+  StartingTime
+
+A row with both a deadline and a fixed start is skipped.
+
+After CLI changes, run update or reopen the GUI so the calendar reloads.
+
+
+Scheduling
+----------
+Hours: 06:00-22:00
+
+Order:
+  1. Fixed (exact slot)
+  2. Deadline (as early as possible, before the deadline)
+  3. Flexible (first free slot)
+
+Blocked periods stay off the grid.
+Undo / redo uses the Command pattern.
+
+
+Sync (short)
+------------
+- Add / update / delete -> SQLite, then Postgres if up, then Node if a token exists
+- On load: wipe local cache if the logged-in user changed,
+  pull Postgres, pull Node, load memory
+- Deletes are tombstoned so they do not return from another device
+- Typewriter pages follow the same path. Images can live on Node
+- Creator host: Java does not open Postgres JDBC. Node owns that DB
+
+
+If something breaks
+-------------------
+Server pick every launch
+  Check .scheduler/server.txt and .scheduler/postgres.pw
+  under the project root
+
+Files appearing under src\...
+  IntelliJ working directory is wrong
+
+Node cannot open Postgres
+  Restart Node after Continue / setx
+  Run: echo %postgres_pw%
+
+GUI empty after CLI
+  Run update or restart the GUI
+
+Change server still hits the old DB
+  returnToLogin must call TypewriterStore.resetPostgres()
+  and TaskManagementSystem.resetInstance()
+
+Duplicate method compile error
+  Only one tryReconnectPostgres() in TaskRepository
