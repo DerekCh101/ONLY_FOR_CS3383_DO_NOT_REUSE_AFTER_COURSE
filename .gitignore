@@ -14,12 +14,22 @@ javafx-sdk-26/
 .DS_Store
 
 # Local DB / device identity
+# Live copies sit in the project root (IntelliJ working dir):
+#   Task_Scheduler\scheduler-cache.db
+#   Task_Scheduler\scheduler-device-id.txt
 scheduler-cache.db
 scheduler-device-id.txt
-**/typewriter.db
-**/.task_scheduler/
+
+# Local server pick / postgres password
+# Task_Scheduler\.scheduler\server.txt
+# Task_Scheduler\.scheduler\postgres.pw
+.scheduler/
+
+# Typewriter image cache
+# Task_Scheduler\typewriter-images\
+typewriter-images/
+
 
 db.properties
-**/db.properties
 .env
 .env.*

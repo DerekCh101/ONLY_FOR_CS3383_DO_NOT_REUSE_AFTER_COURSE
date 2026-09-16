@@ -27,8 +27,7 @@ public final class Endpoints {
     public static final String LOCAL_NODE = "http://127.0.0.1:3456";
     public static final String DEFAULT_TAILSCALE_NODE = "http://100.113.239.82:3456";
 
-    private static final Path DIR = Path.of(System.getProperty("user.home"), ".scheduler");
-    private static final Path SERVER_FILE = DIR.resolve("server.txt");
+    private static final Path DIR = Path.of(System.getProperty("user.dir"), ".scheduler");    private static final Path SERVER_FILE = DIR.resolve("server.txt");
     private static final Path PG_FILE = DIR.resolve("postgres.pw");
 
     public static Path dir() {
