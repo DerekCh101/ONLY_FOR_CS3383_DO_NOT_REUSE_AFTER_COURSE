@@ -872,11 +872,19 @@ public class TaskRepository {
         out.setPlacementUpdatedAt(local.getPlacementUpdatedAt());
         out.setLastUpdatedAt(local.getLastUpdatedAt());
 
-        int placeCmp = compareInstant(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt());
-        if (placeCmp <= 0) {
+        boolean localHas = local.getPlacedDate() != null && local.getPlacedTime() != null;
+        boolean remoteHas = remote.getPlacedDate() != null && remote.getPlacedTime() != null;
+        if (remoteHas && !localHas) {
             out.setPlacedDate(remote.getPlacedDate());
             out.setPlacedTime(remote.getPlacedTime());
             out.setPlacementUpdatedAt(remote.getPlacementUpdatedAt());
+        } else if (localHas && remoteHas) {
+            int placeCmp = compareInstant(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt());
+            if (placeCmp <= 0) {
+                out.setPlacedDate(remote.getPlacedDate());
+                out.setPlacedTime(remote.getPlacedTime());
+                out.setPlacementUpdatedAt(remote.getPlacementUpdatedAt());
+            }
         }
 
         int lastCmp = compareInstant(local.getLastUpdatedAt(), remote.getLastUpdatedAt());

@@ -530,8 +530,11 @@ public class SqliteTaskRepository {
                 : task.getState() == 2 ? "Deadline" : "Flexible";
         TaskLifeCycle life = task.getLifeCycle() != null ? task.getLifeCycle() : TaskLifeCycle.UNSCHEDULED;
         Workflow flow = task.getWorkflow() != null ? task.getWorkflow() : Workflow.UNFINISHED;
-        Instant placement = task.getPlacementUpdatedAt() != null ? task.getPlacementUpdatedAt() : Instant.now();
         Instant last = task.getLastUpdatedAt() != null ? task.getLastUpdatedAt() : Instant.now();
+        Instant placement = task.getPlacementUpdatedAt();
+        if (placement == null && task.getPlacedDate() != null) {
+            placement = last;
+        }
         String uid = currentUserId();
 
         ps.setString(1, task.getID());
@@ -549,7 +552,7 @@ public class SqliteTaskRepository {
         }
         ps.setString(9, life.name());
         ps.setString(10, flow.name());
-        ps.setString(11, placement.toString());
+        ps.setString(11, placement != null ? placement.toString() : null);
         ps.setString(12, last.toString());
         ps.setString(13, (uid != null && !uid.isBlank()) ? uid : null);
     }
