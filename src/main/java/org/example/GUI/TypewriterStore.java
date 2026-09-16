@@ -36,7 +36,7 @@ public final class TypewriterStore {
             new SqliteTypewriterRepository("jdbc:sqlite:scheduler-cache.db");
 
     private static final PostgresTypewriterRepository postgres = new PostgresTypewriterRepository(
-            "jdbc:postgresql://100.113.239.82:5432/Scheduler",
+            "jdbc:postgresql://127.0.0.1:5432/Scheduler",
             "postgres",
             System.getenv("postgres_pw")
     );
