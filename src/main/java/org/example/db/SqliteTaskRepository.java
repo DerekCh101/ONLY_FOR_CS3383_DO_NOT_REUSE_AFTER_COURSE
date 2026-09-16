@@ -317,7 +317,7 @@ public class SqliteTaskRepository {
         List<Task> list = new ArrayList<>();
         String sql = (uid == null || uid.isBlank())
                 ? "SELECT * FROM tasks WHERE 1 = 0"
-                : "SELECT * FROM tasks WHERE user_id = ?";
+                : "SELECT * FROM tasks WHERE user_id = ? OR user_id IS NULL";
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             if (uid != null && !uid.isBlank()) ps.setString(1, uid);
@@ -332,7 +332,7 @@ public class SqliteTaskRepository {
         String uid = currentUserId();
         String sql = (uid == null || uid.isBlank())
                 ? "SELECT * FROM tasks WHERE id = ? AND 1 = 0"
-                : "SELECT * FROM tasks WHERE id = ? AND user_id = ?";
+                : "SELECT * FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)";
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);

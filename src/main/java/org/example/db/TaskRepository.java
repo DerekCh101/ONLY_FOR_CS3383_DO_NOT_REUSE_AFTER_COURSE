@@ -261,10 +261,16 @@ public class TaskRepository {
 
         if (Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank()) {
             pullFromNode();
+            System.out.println("sqlite tasks=" + sqlite.fetchAll().size()
+                    + " blocked=" + sqlite.fetchAllBlocked().size());
         }
 
         loadBlockedIntoMemory(theSystem);
         loadSqliteIntoMemory(theSystem);
+        System.out.println("memory placed=" + theSystem.getPlacedTasks().size()
+                + " pending=" + theSystem.getPendingTasks().size()
+                + " unscheduled=" + theSystem.getUnscheduledTasks().size()
+                + " days=" + theSystem.getGrid().size());
     }
 
     public void reloadFromSqlite(TaskManagementSystem theSystem) throws SQLException {
