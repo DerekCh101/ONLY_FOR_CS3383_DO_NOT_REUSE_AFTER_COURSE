@@ -277,20 +277,68 @@ public class NodeApi {
 
     private static Map<String, String> fieldsOf(String obj) {
         Map<String, String> map = new LinkedHashMap<>();
+        if (obj == null) return map;
         int i = 0;
-        while (i < obj.length()) {
-            int q1 = obj.indexOf('"', i);
-            if (q1 < 0) break;
-            int q2 = nextUnescapedQuote(obj, q1 + 1);
+        int n = obj.length();
+        while (i < n) {
+            while (i < n && obj.charAt(i) != '"') i++;
+            if (i >= n) break;
+            int q2 = nextUnescapedQuote(obj, i + 1);
             if (q2 < 0) break;
+            String key = obj.substring(i + 1, q2);
             int colon = obj.indexOf(':', q2 + 1);
             if (colon < 0) break;
-            String key = obj.substring(q1 + 1, q2);
-            String val = extract(obj.substring(q1), key);
+            int[] pos = {colon + 1};
+            String val = parseJsonScalar(obj, pos);
             map.put(key, val);
-            i = colon + 1;
+            i = pos[0];
         }
         return map;
+    }
+
+    private static String parseJsonScalar(String s, int[] pos) {
+        int p = pos[0];
+        while (p < s.length() && Character.isWhitespace(s.charAt(p))) p++;
+        if (p >= s.length()) {
+            pos[0] = p;
+            return null;
+        }
+        if (s.startsWith("null", p)
+                && (p + 4 >= s.length() || !Character.isLetterOrDigit(s.charAt(p + 4)))) {
+            pos[0] = p + 4;
+            return null;
+        }
+        if (s.charAt(p) == '"') {
+            StringBuilder val = new StringBuilder();
+            int k = p + 1;
+            while (k < s.length()) {
+                char ch = s.charAt(k);
+                if (ch == '\\' && k + 1 < s.length()) {
+                    char nch = s.charAt(++k);
+                    if (nch == 'n') val.append('\n');
+                    else if (nch == 'r') val.append('\r');
+                    else if (nch == 't') val.append('\t');
+                    else val.append(nch);
+                    k++;
+                } else if (ch == '"') {
+                    pos[0] = k + 1;
+                    return val.toString();
+                } else {
+                    val.append(ch);
+                    k++;
+                }
+            }
+            pos[0] = k;
+            return val.toString();
+        }
+        int end = p;
+        while (end < s.length()) {
+            char ch = s.charAt(end);
+            if (ch == ',' || ch == '}' || ch == ']' || Character.isWhitespace(ch)) break;
+            end++;
+        }
+        pos[0] = end;
+        return s.substring(p, end);
     }
 
     private static int nextUnescapedQuote(String s, int from) {
