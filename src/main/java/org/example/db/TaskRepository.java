@@ -2,6 +2,7 @@ package org.example.db;
 
 import org.example.*;
 import org.example.net.Api;
+import org.example.net.Endpoints;
 
 import java.sql.SQLException;
 import java.time.DayOfWeek;
@@ -32,9 +33,9 @@ public class TaskRepository {
             new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
 
     private final PostgresTaskRepository postgres = new PostgresTaskRepository(
-            System.getenv("TailscaleEraPostgresIP"),
+            Endpoints.postgresUrl(),
             "postgres",
-            System.getenv("postgres_pw")
+            Endpoints.postgresPassword()
     );
 
     private final String deviceId = DeviceConfig.getOrCreateDeviceId();

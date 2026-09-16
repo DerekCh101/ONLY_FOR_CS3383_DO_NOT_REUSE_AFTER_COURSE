@@ -13,7 +13,7 @@ import java.util.Map;
 
 public class NodeApi {
 
-    private static final String BASE = "http://127.0.0.1:3456";
+    private static final String BASE = Endpoints.nodeBase();
 
     private static final int CONNECT_MS = 8000;
     private static final int READ_MS = 8000;

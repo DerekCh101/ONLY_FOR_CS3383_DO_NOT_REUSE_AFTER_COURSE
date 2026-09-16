@@ -3,6 +3,7 @@ package org.example.GUI;
 import org.example.db.PostgresTypewriterRepository;
 import org.example.db.SqliteTypewriterRepository;
 import org.example.net.Api;
+import org.example.net.Endpoints;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -36,9 +37,9 @@ public final class TypewriterStore {
             new SqliteTypewriterRepository("jdbc:sqlite:scheduler-cache.db");
 
     private static final PostgresTypewriterRepository postgres = new PostgresTypewriterRepository(
-            "jdbc:postgresql://127.0.0.1:5432/Scheduler",
+            Endpoints.postgresUrl(),
             "postgres",
-            System.getenv("postgres_pw")
+            Endpoints.postgresPassword()
     );
 
     private static boolean postgresAvailable;
