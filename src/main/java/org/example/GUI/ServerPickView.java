@@ -57,10 +57,13 @@ public final class ServerPickView extends VBox {
         ToggleGroup g = new ToggleGroup();
 
         RadioButton creator = radio("Use the creator's server");
-        Label creatorHint = hint("The hosted copy. Different database. Your PC data is not deleted. Current Version not implemented.");
+        Label creatorHint = hint("The hosted copy. Different database.\n" +
+                "Caution: your original host local cache data might be replaced or wiped.\n" +
+                "Current Version not implemented this option :P.");
 
         RadioButton thisPc = radio("This computer is the server");
-        Label thisHint = hint("You must have Postgres and Node, and run them (node server.js) on this PC. Uses http://127.0.0.1:3456");
+        Label thisHint = hint("You must have installed Postgres and Node already, and run them (node server.js) on this PC. \n" +
+                "Uses http://127.0.0.1:3456");
 
         RadioButton other = radio("This device is a client from your self-host server (Tailscale or wifi)");
         Label otherHint = hint("This window is a client. Same host PC = same data. Only the address changes.");
@@ -79,7 +82,7 @@ public final class ServerPickView extends VBox {
         need.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-line-spacing: 4px;" + FONT);
 
         Label hostIp = label("Host address");
-        TextField custom = field("http://100.113.239.82:3456");
+        TextField custom = field("http://HOST:3456");
 
         Label pwLabel = label("postgres_pw");
         PasswordField pwField = new PasswordField();
@@ -102,7 +105,8 @@ public final class ServerPickView extends VBox {
         dataNote.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-line-spacing: 4px;" + FONT);
 
         String saved = Endpoints.hasSavedServer() ? Endpoints.nodeBase() : "";
-        if (!saved.isBlank() && saved.startsWith(Endpoints.CREATOR_HOST)) {
+        if (!saved.isBlank() && saved.startsWith(Endpoints.CREATOR_HOST)
+                && !Endpoints.CREATOR_HOST.contains("YOUR-DOMAIN")) {
             creator.setSelected(true);
         } else if (saved.contains("127.0.0.1") || saved.contains("localhost") || saved.isBlank()) {
             thisPc.setSelected(true);
@@ -118,9 +122,6 @@ public final class ServerPickView extends VBox {
             setShown(hostIp, remote);
             setShown(custom, remote);
             custom.setDisable(!remote);
-            if (remote && custom.getText().isBlank()) {
-                custom.setText(Endpoints.DEFAULT_TAILSCALE_NODE);
-            }
             setShown(pwLabel, selfHost);
             setShown(pwField, selfHost);
             setShown(pwHint, selfHost);
@@ -159,8 +160,8 @@ public final class ServerPickView extends VBox {
                 }
             } else {
                 url = custom.getText() == null ? "" : custom.getText().trim();
-                if (url.isBlank() || !url.startsWith("http")) {
-                    err.setText("Enter the host URL, e.g. http://100.113.239.82:3456");
+                if (url.isBlank() || !(url.startsWith("http://") || url.startsWith("https://"))) {
+                    err.setText("Enter the host URL, e.g. http://HOST:3456");
                     return;
                 }
             }
@@ -214,8 +215,7 @@ public final class ServerPickView extends VBox {
     }
 
     private static VBox block(RadioButton radio, Label hint) {
-        VBox b = new VBox(6, radio, hint);
-        return b;
+        return new VBox(6, radio, hint);
     }
 
     private static void setShown(javafx.scene.Node n, boolean on) {

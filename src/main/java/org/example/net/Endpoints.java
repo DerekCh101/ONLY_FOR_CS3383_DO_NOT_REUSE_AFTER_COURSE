@@ -11,11 +11,13 @@ import java.sql.Statement;
 import java.util.Locale;
 
 /**
- * Server URL: ~/.scheduler/server.txt
+ * Server URL: {workingDir}/.scheduler/server.txt
  * Postgres password name: postgres_pw
- *   1. ~/.scheduler/postgres.pw
+ *   1. {workingDir}/.scheduler/postgres.pw
  *   2. env postgres_pw
  * On first self-host pick the app writes both and on Windows runs setx postgres_pw.
+ *
+ * Do not put a Tailscale / LAN IP in this class. Real URLs live in server.txt (gitignored).
  */
 public final class Endpoints {
 
@@ -25,9 +27,9 @@ public final class Endpoints {
 
     public static final String CREATOR_HOST = "https://YOUR-DOMAIN-HERE";
     public static final String LOCAL_NODE = "http://127.0.0.1:3456";
-    public static final String DEFAULT_TAILSCALE_NODE = "http://100.113.239.82:3456";
 
-    private static final Path DIR = Path.of(System.getProperty("user.dir"), ".scheduler");    private static final Path SERVER_FILE = DIR.resolve("server.txt");
+    private static final Path DIR = Path.of(System.getProperty("user.dir"), ".scheduler");
+    private static final Path SERVER_FILE = DIR.resolve("server.txt");
     private static final Path PG_FILE = DIR.resolve("postgres.pw");
 
     public static Path dir() {
@@ -41,6 +43,10 @@ public final class Endpoints {
     public static String nodeBase() {
         String saved = read(SERVER_FILE);
         if (saved != null && !saved.isBlank()) return trimSlash(saved);
+
+        String env = System.getenv("SCHEDULER_NODE");
+        if (env != null && !env.isBlank()) return trimSlash(env);
+
         return LOCAL_NODE;
     }
 
@@ -58,8 +64,12 @@ public final class Endpoints {
 
     public static boolean isCreatorHost() {
         String n = nodeBase();
+        String creator = CREATOR_HOST;
+        if (creator == null || creator.isBlank() || creator.contains("YOUR-DOMAIN-HERE")) {
+            return false;
+        }
         return n.toLowerCase(Locale.ROOT).startsWith("https://")
-                && n.startsWith(CREATOR_HOST);
+                && n.startsWith(creator);
     }
 
     public static boolean isLocalHost() {
@@ -85,7 +95,7 @@ public final class Endpoints {
 
     /**
      * First self-host: reuse env postgres_pw if set, else generate,
-     * write ~/.scheduler/postgres.pw, persist env name postgres_pw, ALTER local role if possible.
+     * write .scheduler/postgres.pw, persist env name postgres_pw, ALTER local role if possible.
      */
     public static String ensurePostgresPassword() {
         if (isCreatorHost()) return "";
