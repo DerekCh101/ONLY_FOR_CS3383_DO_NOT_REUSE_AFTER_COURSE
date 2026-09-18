@@ -1,6 +1,7 @@
 package org.example;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -48,8 +49,8 @@ public class SchedulerEngine {
     }
 
     private LocalDate searchStart() {
-        LocalDate today = AppTimeReference.getCurrentDate();
-        if (today.isAfter(baseDate)) return today;
+        LocalDate col = AppTimeReference.currentColumnDate();
+        if (col.isAfter(baseDate)) return col;
         return baseDate;
     }
 
@@ -61,8 +62,9 @@ public class SchedulerEngine {
             LocalTime time = task.getPlacedTime();
             if (date == null || time == null) continue;
 
-            daysGrid.putIfAbsent(date, new Day(blockedTime));
-            Day day = daysGrid.get(date);
+            LocalDate column = AppTimeReference.columnDateFor(date, time);
+            daysGrid.putIfAbsent(column, new Day(blockedTime));
+            Day day = daysGrid.get(column);
             int slot = AppTimeReference.localTimeToSlot(time);
 
             if (isPast(task)) {
@@ -75,8 +77,8 @@ public class SchedulerEngine {
                 continue;
             }
 
-            if (!day.canPlace(task, date, slot, true, true)
-                    || !respectsDeadlineTime(task, date, slot)) {
+            if (!day.canPlace(task, column, slot, true, true)
+                    || !respectsDeadlineTime(task, column, slot)) {
                 markUnscheduled(task);
                 continue;
             }
@@ -171,25 +173,20 @@ public class SchedulerEngine {
     private boolean tryPlaceDeadline(Task task, LocalDate fromDay, long lastDay,
                                      boolean ignoreBlocked, boolean ignoreOverload) {
         LocalDate limit = baseDate.plusDays(lastDay);
-        for (LocalDate thisDay = fromDay;
-             thisDay.isBefore(limit);
-             thisDay = thisDay.plusDays(1)) {
+        for (LocalDate column = fromDay;
+             column.isBefore(limit) || column.equals(limit);
+             column = column.plusDays(1)) {
 
-            daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-            Day theDay = daysGrid.get(thisDay);
+            daysGrid.putIfAbsent(column, new Day(blockedTime));
+            Day theDay = daysGrid.get(column);
 
-            int startSlot = firstSlotOn(thisDay);
+            int startSlot = firstSlotOn(column);
 
             for (int slot = startSlot; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
-                if (theDay.canPlace(task, thisDay, slot, ignoreBlocked, ignoreOverload)
-                        && respectsDeadlineTime(task, thisDay, slot)) {
+                if (theDay.canPlace(task, column, slot, ignoreBlocked, ignoreOverload)
+                        && respectsDeadlineTime(task, column, slot)) {
 
-                    theDay.placeTask(slot, task);
-                    task.setPlacedDate(thisDay);
-                    task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
-                    if (!system.getPlacedTasks().contains(task)) {
-                        system.getPlacedTasks().add(task);
-                    }
+                    applyPlacement(theDay, task, column, slot);
                     return true;
                 }
             }
@@ -204,19 +201,14 @@ public class SchedulerEngine {
         for (Task task : tasks) {
             boolean placed = false;
 
-            for (LocalDate thisDay = from; thisDay.isBefore(limit) && !placed; thisDay = thisDay.plusDays(1)) {
-                daysGrid.putIfAbsent(thisDay, new Day(blockedTime));
-                Day theDay = daysGrid.get(thisDay);
-                int startSlot = firstSlotOn(thisDay);
+            for (LocalDate column = from; column.isBefore(limit) && !placed; column = column.plusDays(1)) {
+                daysGrid.putIfAbsent(column, new Day(blockedTime));
+                Day theDay = daysGrid.get(column);
+                int startSlot = firstSlotOn(column);
 
                 for (int slot = startSlot; slot < AppTimeReference.SLOTS_PER_DAY && !placed; slot++) {
-                    if (theDay.canPlace(task, thisDay, slot, false, true)) {
-                        theDay.placeTask(slot, task);
-                        task.setPlacedDate(thisDay);
-                        task.setPlacedTime(AppTimeReference.slotToLocalTime(slot));
-                        if (!system.getPlacedTasks().contains(task)) {
-                            system.getPlacedTasks().add(task);
-                        }
+                    if (theDay.canPlace(task, column, slot, false, true)) {
+                        applyPlacement(theDay, task, column, slot);
                         placed = true;
                     }
                 }
@@ -228,10 +220,22 @@ public class SchedulerEngine {
         }
     }
 
-    private int firstSlotOn(LocalDate day) {
-        if (!day.equals(AppTimeReference.getCurrentDate())) return 0;
+    private void applyPlacement(Day day, Task task, LocalDate column, int slot) {
+        day.placeTask(slot, task);
+        LocalDateTime start = AppTimeReference.dateTimeForSlot(column, slot);
+        task.setPlacedDate(start.toLocalDate());
+        task.setPlacedTime(start.toLocalTime());
+        if (!system.getPlacedTasks().contains(task)) {
+            system.getPlacedTasks().add(task);
+        }
+    }
+
+    private int firstSlotOn(LocalDate column) {
+        LocalDate nowCol = AppTimeReference.currentColumnDate();
+        if (column.isBefore(nowCol)) return AppTimeReference.SLOTS_PER_DAY;
+        if (!column.equals(nowCol)) return 0;
         int start = AppTimeReference.currentSlotIndex() + 1;
-        return Math.max(0, start);
+        return Math.min(AppTimeReference.SLOTS_PER_DAY, Math.max(0, start));
     }
 
     private void markUnscheduled(Task task) {
@@ -257,31 +261,23 @@ public class SchedulerEngine {
         }
     }
 
-    private boolean respectsDeadlineTime(Task task, LocalDate day, int startSlot) {
+    private boolean respectsDeadlineTime(Task task, LocalDate column, int startSlot) {
         if (!task.hasDeadline() || task.getDeadLineDate() == null) {
             return true;
         }
-        if (day.isAfter(task.getDeadLineDate())) {
-            return false;
-        }
-        if (day.isBefore(task.getDeadLineDate())) {
-            return true;
-        }
         if (task.getDeadLineTime() == null) {
-            return true;
+            LocalDate startDate = AppTimeReference.calendarDateForSlot(column, startSlot);
+            return !startDate.isAfter(task.getDeadLineDate());
         }
 
-        LocalTime start = AppTimeReference.slotToLocalTime(startSlot);
+        LocalDateTime start = AppTimeReference.dateTimeForSlot(column, startSlot);
         long durationMin = (long) task.getDurationSlots() * AppTimeReference.MINUTES_PER_SLOT;
         if (durationMin <= 0) {
             durationMin = AppTimeReference.MINUTES_PER_SLOT;
         }
-
-        LocalTime finish = start.plusMinutes(durationMin);
-        if (finish.isBefore(start)) {
-            return false;
-        }
-        return !finish.isAfter(task.getDeadLineTime());
+        LocalDateTime finish = start.plusMinutes(durationMin);
+        LocalDateTime deadline = LocalDateTime.of(task.getDeadLineDate(), task.getDeadLineTime());
+        return !finish.isAfter(deadline);
     }
 
     public String printUnscheduledTask() {

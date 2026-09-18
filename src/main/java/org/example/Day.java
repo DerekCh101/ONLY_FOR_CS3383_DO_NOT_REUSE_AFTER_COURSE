@@ -1,6 +1,7 @@
 package org.example;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 public class Day {
@@ -18,20 +19,22 @@ public class Day {
         this.overloadFlag = false;
     }
 
-    public boolean canPlace(Task task, LocalDate thisDay, int slotIndex,
+    public boolean canPlace(Task task, LocalDate columnDate, int slotIndex,
                             boolean ignoreBlocked, boolean ignoreOverload) {
         int slotCount = Math.max(1, task.getDurationSlots());
         if (slotIndex < 0 || slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
             return false;
         }
-        if (thisDay.equals(AppTimeReference.getCurrentDate())) {
-            if (slotIndex <= AppTimeReference.currentSlotIndex()) {
-                return false;
-            }
+
+        LocalDateTime slotStart = AppTimeReference.dateTimeForSlot(columnDate, slotIndex);
+        if (!slotStart.isAfter(AppTimeReference.getCurrentDateTime())) {
+            return false;
         }
+
         if (!ignoreOverload && overloadFlag) {
             return false;
         }
+
         for (int i = 0; i < slotCount; i++) {
             int slot = slotIndex + i;
             if (todayTaskGrid[slot] != null
@@ -39,8 +42,9 @@ public class Day {
                 return false;
             }
             if (!ignoreBlocked) {
+                LocalDate checkDate = AppTimeReference.calendarDateForSlot(columnDate, slot);
                 LocalTime checkTime = AppTimeReference.slotToLocalTime(slot);
-                if (blockedTime.isBlocked(thisDay, checkTime)) {
+                if (blockedTime.isBlocked(checkDate, checkTime)) {
                     return false;
                 }
             }

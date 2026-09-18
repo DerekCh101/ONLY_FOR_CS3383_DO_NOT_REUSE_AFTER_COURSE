@@ -84,7 +84,6 @@ public class TaskRepository {
         return deviceId;
     }
 
-
     public String allocateNewTaskId() {
         while (true) {
             String id = UUID.randomUUID().toString();
@@ -508,6 +507,7 @@ public class TaskRepository {
             }
         }
     }
+
     private static Task taskFromNode(Map<String, String> row) {
         String id = first(row, "id");
         if (id == null) return null;
@@ -595,6 +595,7 @@ public class TaskRepository {
             return null;
         }
     }
+
     private static String first(Map<String, String> row, String... keys) {
         for (String k : keys) {
             String v = row.get(k);
@@ -627,7 +628,6 @@ public class TaskRepository {
             return null;
         }
     }
-
 
     private static Instant parseInstant(String s) {
         if (s == null || s.isBlank()) return null;
@@ -961,8 +961,9 @@ public class TaskRepository {
             TaskLifeCycle lifeFromDb = task.getLifeCycle();
 
             if (placedDate != null && placedTime != null) {
-                theSystem.getGrid().putIfAbsent(placedDate, new Day(theSystem.getBlockedTime()));
-                Day day = theSystem.getGrid().get(placedDate);
+                LocalDate column = AppTimeReference.columnDateFor(placedDate, placedTime);
+                theSystem.getGrid().putIfAbsent(column, new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(column);
                 int slot = AppTimeReference.localTimeToSlot(placedTime);
                 day.placeTask(slot, task);
                 theSystem.getPlacedTasks().add(task);

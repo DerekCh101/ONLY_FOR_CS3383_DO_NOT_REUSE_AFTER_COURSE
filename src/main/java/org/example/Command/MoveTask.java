@@ -4,6 +4,7 @@ import org.example.*;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 public class MoveTask implements Command {
@@ -11,9 +12,9 @@ public class MoveTask implements Command {
     private final TaskManagementSystem theSystem;
     private final Task task;
 
-    private final LocalDate oldDate;
+    private final LocalDate oldColumn;
     private final int oldStartSlot;
-    private final LocalDate newDate;
+    private final LocalDate newColumn;
     private final int newStartSlot;
 
     private LocalDate oldStartingDate;
@@ -32,9 +33,9 @@ public class MoveTask implements Command {
 
         this.theSystem = TaskManagementSystem.getInstance();
         this.task = task;
-        this.oldDate = oldDate;
+        this.oldColumn = oldDate;
         this.oldStartSlot = oldStartSlot;
-        this.newDate = newDate;
+        this.newColumn = newDate;
         this.newStartSlot = newStartSlot;
 
         if (task.isFixedTime()) {
@@ -43,7 +44,6 @@ public class MoveTask implements Command {
         }
     }
 
-    /** Same deadline / range rules as drag UI — hard stop for DB. */
     private boolean isLegalTarget() {
         if (task == null) return false;
 
@@ -51,12 +51,8 @@ public class MoveTask implements Command {
         if (slotCount <= 0) return false;
         if (newStartSlot + slotCount > AppTimeReference.SLOTS_PER_DAY) return false;
 
-        LocalTime newStart = AppTimeReference.slotToLocalTime(newStartSlot);
-        LocalDate today = AppTimeReference.getCurrentDate();
-        LocalTime now = AppTimeReference.getCurrentTime();
-
-        if (newDate.isBefore(today)
-                || (newDate.isEqual(today) && !newStart.isAfter(now))) {
+        LocalDateTime newStart = AppTimeReference.dateTimeForSlot(newColumn, newStartSlot);
+        if (!newStart.isAfter(AppTimeReference.getCurrentDateTime())) {
             return false;
         }
 
@@ -64,23 +60,16 @@ public class MoveTask implements Command {
             LocalDate deadlineDate = task.getDeadLineDate();
             LocalTime deadlineTime = task.getDeadLineTime();
             if (deadlineDate == null) return false;
-            if (newDate.isAfter(deadlineDate)) return false;
-
-            if (newDate.isEqual(deadlineDate) && deadlineTime != null) {
-                long durationMin = (long) slotCount * AppTimeReference.MINUTES_PER_SLOT;
-                LocalTime finish = newStart.plusMinutes(durationMin);
-                boolean wrappedPastMidnight = finish.isBefore(newStart);
-
-                if (newStart.isAfter(deadlineTime)
-                        || wrappedPastMidnight
-                        || finish.isAfter(deadlineTime)) {
-                    return false;
-                }
-            }
+            LocalDateTime finish = newStart.plusMinutes(
+                    (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
+            LocalDateTime deadline = deadlineTime == null
+                    ? deadlineDate.plusDays(1).atStartOfDay()
+                    : LocalDateTime.of(deadlineDate, deadlineTime);
+            if (finish.isAfter(deadline)) return false;
         }
 
-        theSystem.getGrid().putIfAbsent(newDate, new Day(theSystem.getBlockedTime()));
-        Day newDay = theSystem.getGrid().get(newDate);
+        theSystem.getGrid().putIfAbsent(newColumn, new Day(theSystem.getBlockedTime()));
+        Day newDay = theSystem.getGrid().get(newColumn);
         Task[] slots = newDay.returnDayGrid();
         for (int i = 0; i < slotCount; i++) {
             Task existing = slots[newStartSlot + i];
@@ -89,8 +78,8 @@ public class MoveTask implements Command {
         return true;
     }
 
-    private void clearSlots(LocalDate date, int startSlot) {
-        Day day = theSystem.getGrid().get(date);
+    private void clearSlots(LocalDate column, int startSlot) {
+        Day day = theSystem.getGrid().get(column);
         if (day == null) return;
         int slotCount = task.getDurationSlots();
         Task[] slots = day.returnDayGrid();
@@ -102,21 +91,24 @@ public class MoveTask implements Command {
         }
     }
 
-    private void doMove() throws SQLException {
-        clearSlots(oldDate, oldStartSlot);
+    private void applyClock(LocalDate column, int startSlot) {
+        LocalDateTime start = AppTimeReference.dateTimeForSlot(column, startSlot);
+        task.setPlacedDate(start.toLocalDate());
+        task.setPlacedTime(start.toLocalTime());
+        if (task.isFixedTime()) {
+            task.setStartingDate(start.toLocalDate());
+            task.setStartingTime(start.toLocalTime());
+        }
+    }
 
-        theSystem.getGrid().putIfAbsent(newDate, new Day(theSystem.getBlockedTime()));
-        Day newDay = theSystem.getGrid().get(newDate);
+    private void doMove() throws SQLException {
+        clearSlots(oldColumn, oldStartSlot);
+
+        theSystem.getGrid().putIfAbsent(newColumn, new Day(theSystem.getBlockedTime()));
+        Day newDay = theSystem.getGrid().get(newColumn);
         newDay.placeTask(newStartSlot, task);
 
-        LocalTime newTime = AppTimeReference.slotToLocalTime(newStartSlot);
-        task.setPlacedDate(newDate);
-        task.setPlacedTime(newTime);
-
-        if (task.isFixedTime()) {
-            task.setStartingDate(newDate);
-            task.setStartingTime(newTime);
-        }
+        applyClock(newColumn, newStartSlot);
 
         if (!theSystem.getPlacedTasks().contains(task)) {
             theSystem.getPlacedTasks().add(task);
@@ -130,7 +122,7 @@ public class MoveTask implements Command {
     @Override
     public boolean execute() throws SQLException {
         if (!isLegalTarget()) {
-            return false; // do not move, do not write DB, do not push undo
+            return false;
         }
         doMove();
         RecordedCommand.getRedoList().clear();
@@ -140,15 +132,13 @@ public class MoveTask implements Command {
 
     @Override
     public void undo() throws SQLException {
-        clearSlots(newDate, newStartSlot);
+        clearSlots(newColumn, newStartSlot);
 
-        theSystem.getGrid().putIfAbsent(oldDate, new Day(theSystem.getBlockedTime()));
-        Day oldDay = theSystem.getGrid().get(oldDate);
+        theSystem.getGrid().putIfAbsent(oldColumn, new Day(theSystem.getBlockedTime()));
+        Day oldDay = theSystem.getGrid().get(oldColumn);
         oldDay.placeTask(oldStartSlot, task);
 
-        LocalTime oldTime = AppTimeReference.slotToLocalTime(oldStartSlot);
-        task.setPlacedDate(oldDate);
-        task.setPlacedTime(oldTime);
+        applyClock(oldColumn, oldStartSlot);
 
         if (task.isFixedTime()) {
             task.setStartingDate(oldStartingDate);

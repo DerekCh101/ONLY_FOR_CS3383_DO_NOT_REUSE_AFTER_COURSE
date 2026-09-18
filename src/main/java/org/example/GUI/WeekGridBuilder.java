@@ -11,6 +11,7 @@ import org.example.*;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +56,7 @@ public class WeekGridBuilder {
         System.out.println("weekStart=" + weekStart
                 + " offset=" + weekOffset
                 + " today=" + AppTimeReference.getCurrentDate()
+                + " column=" + AppTimeReference.currentColumnDate()
                 + " gridDates=" + (gridData == null ? "null" : gridData.keySet())
                 + " placed=" + placed.size());
 
@@ -75,28 +77,28 @@ public class WeekGridBuilder {
             grid.add(timeLabel, 0, row);
 
             for (int col = 1; col <= 7; col++) {
-                LocalDate date = weekStart.plusDays(weekOffset * 7L + (col - 1));
-                BlockedTime block = blockedAt(blocked, date, slotIndex);
-                boolean past = isPast(date, AppTimeReference.slotToLocalTime(slotIndex));
+                LocalDate columnDate = weekStart.plusDays(weekOffset * 7L + (col - 1));
+                BlockedTime block = blockedAt(blocked, columnDate, slotIndex);
+                boolean past = isPast(columnDate, slotIndex);
 
                 Pane cell = new Pane();
                 cell.setPrefSize(CELL_WIDTH, CELL_HEIGHT);
                 cell.setMinHeight(CELL_HEIGHT);
                 cell.setMaxHeight(CELL_HEIGHT);
 
-                Task taskInCell = taskAt(gridData, placed, date, slotIndex);
+                Task taskInCell = taskAt(gridData, placed, columnDate, slotIndex);
                 if (taskInCell != null) {
                     cell.getChildren().add(taskLabel(taskInCell));
                     if (!(taskInCell.getWorkflow() == Workflow.FINISHED
                             || taskInCell.getLifeCycle() == TaskLifeCycle.PAST)) {
-                        dragDrop.makeDraggable(cell, taskInCell, date, slotIndex);
+                        dragDrop.makeDraggable(cell, taskInCell, columnDate, slotIndex);
                     }
                 }
 
-                applyDayStyle(cell, date, AppTimeReference.slotToLocalTime(slotIndex), block, taskInCell);
+                applyDayStyle(cell, columnDate, slotIndex, block, taskInCell);
 
                 if (taskInCell == null && !past && block != null
-                        && isSegmentStart(blocked, date, slotIndex, block)) {
+                        && isSegmentStart(blocked, columnDate, slotIndex, block)) {
                     String title = block.getTitle() == null || block.getTitle().isBlank()
                             ? "blocked" : block.getTitle();
                     Label why = new Label(title + "  " + block.getStartTime() + "–" + block.getEndTime());
@@ -105,7 +107,7 @@ public class WeekGridBuilder {
                     cell.getChildren().add(why);
                 }
 
-                final LocalDate finalDate = date;
+                final LocalDate finalColumn = columnDate;
                 final int finalSlotIndex = slotIndex;
                 final Task finalTaskInCell = taskInCell;
                 final BlockedTime finalBlock = block;
@@ -119,25 +121,25 @@ public class WeekGridBuilder {
                 cell.setOnMouseClicked(e -> {
                     if (Math.abs(e.getScreenX() - mouseDown[0]) < 5
                             && Math.abs(e.getScreenY() - mouseDown[1]) < 5) {
+                        LocalDate clickDate = AppTimeReference.calendarDateForSlot(finalColumn, finalSlotIndex);
                         if (finalTaskInCell == null) {
-                            dialogs.showTaskPopup(true, finalDate, finalSlotIndex);
+                            dialogs.showTaskPopup(true, clickDate, finalSlotIndex);
                         } else {
-                            dialogs.showTaskInfoPopup(finalTaskInCell, finalDate, finalSlotIndex);
+                            dialogs.showTaskInfoPopup(finalTaskInCell, clickDate, finalSlotIndex);
                         }
                     }
                 });
 
                 cell.setOnMouseEntered(e -> {
-                    if (finalTaskInCell == null && finalBlock == null && !isPast(
-                            finalDate, AppTimeReference.slotToLocalTime(finalSlotIndex))) {
+                    if (finalTaskInCell == null && finalBlock == null
+                            && !isPast(finalColumn, finalSlotIndex)) {
                         cell.setStyle("-fx-background-color: #ffccdd; -fx-border-color: #999999;");
                     }
                 });
                 cell.setOnMouseExited(e -> applyDayStyle(
-                        cell, finalDate, AppTimeReference.slotToLocalTime(finalSlotIndex),
-                        finalBlock, finalTaskInCell));
+                        cell, finalColumn, finalSlotIndex, finalBlock, finalTaskInCell));
 
-                dragDrop.setupDropTarget(cell, date, slotIndex);
+                dragDrop.setupDropTarget(cell, columnDate, slotIndex);
                 grid.add(cell, col, row);
             }
         }
@@ -182,16 +184,17 @@ public class WeekGridBuilder {
     }
 
     private static Task taskAt(java.util.Map<LocalDate, Day> gridData,
-                               List<Task> placed, LocalDate date, int slotIndex) {
-        if (gridData != null && gridData.containsKey(date)) {
-            Task[] cells = gridData.get(date).returnDayGrid();
+                               List<Task> placed, LocalDate columnDate, int slotIndex) {
+        if (gridData != null && gridData.containsKey(columnDate)) {
+            Task[] cells = gridData.get(columnDate).returnDayGrid();
             if (cells != null && slotIndex >= 0 && slotIndex < cells.length && cells[slotIndex] != null) {
                 return cells[slotIndex];
             }
         }
         for (Task t : placed) {
             if (t == null || t.getPlacedDate() == null || t.getPlacedTime() == null) continue;
-            if (!date.equals(t.getPlacedDate())) continue;
+            LocalDate col = AppTimeReference.columnDateFor(t.getPlacedDate(), t.getPlacedTime());
+            if (!columnDate.equals(col)) continue;
             int start = AppTimeReference.localTimeToSlot(t.getPlacedTime());
             if (start < 0) continue;
             int count = t.getDurationSlots();
@@ -222,7 +225,10 @@ public class WeekGridBuilder {
     public static double fractionWithinSlot(LocalTime time) {
         int totalMinutes = time.getHour() * 60 + time.getMinute();
         int relative = totalMinutes - AppTimeReference.GRID_START_MINUTES;
-        if (relative < 0) return 0;
+        if (relative < 0) {
+            relative = (AppTimeReference.MINUTES_PER_DAY - AppTimeReference.GRID_START_MINUTES)
+                    + totalMinutes;
+        }
         int intoSlot = relative % AppTimeReference.MINUTES_PER_SLOT;
         return intoSlot / (double) AppTimeReference.MINUTES_PER_SLOT;
     }
@@ -245,14 +251,13 @@ public class WeekGridBuilder {
         return holder.blockedPeriod;
     }
 
-    private static boolean isPast(LocalDate date, LocalTime time) {
-        LocalDate today = AppTimeReference.getCurrentDate();
-        LocalTime now = AppTimeReference.getCurrentTime();
-        return date.isBefore(today)
-                || (date.equals(today) && (time.isBefore(now) || time.equals(now)));
+    private static boolean isPast(LocalDate columnDate, int slotIndex) {
+        LocalDateTime start = AppTimeReference.dateTimeForSlot(columnDate, slotIndex);
+        return !start.isAfter(AppTimeReference.getCurrentDateTime());
     }
 
-    private static BlockedTime blockedAt(List<BlockedTime> blocked, LocalDate date, int slotIndex) {
+    private static BlockedTime blockedAt(List<BlockedTime> blocked, LocalDate columnDate, int slotIndex) {
+        LocalDate date = AppTimeReference.calendarDateForSlot(columnDate, slotIndex);
         LocalTime slotStart = AppTimeReference.slotToLocalTime(slotIndex);
         LocalTime slotEnd = slotStart.plusMinutes(AppTimeReference.MINUTES_PER_SLOT);
 
@@ -278,15 +283,16 @@ public class WeekGridBuilder {
         return daily;
     }
 
-    private static boolean isSegmentStart(List<BlockedTime> blocked, LocalDate date,
+    private static boolean isSegmentStart(List<BlockedTime> blocked, LocalDate columnDate,
                                           int slotIndex, BlockedTime current) {
         if (current == null || slotIndex <= 0) return current != null;
-        BlockedTime prev = blockedAt(blocked, date, slotIndex - 1);
+        BlockedTime prev = blockedAt(blocked, columnDate, slotIndex - 1);
         if (prev == null) return true;
         return !java.util.Objects.equals(prev.getId(), current.getId());
     }
 
-    private void applyDayStyle(Pane cell, LocalDate date, LocalTime time, BlockedTime block, Task task) {
+    private void applyDayStyle(Pane cell, LocalDate columnDate, int slotIndex,
+                               BlockedTime block, Task task) {
         if (task != null && task.getWorkflow() == Workflow.FINISHED) {
             cell.setStyle(
                     "-fx-background-color: linear-gradient(to right, #c3d2c6, #dfe6dc);"
@@ -294,7 +300,7 @@ public class WeekGridBuilder {
                             + "-fx-border-width: 1 1 1 4;");
             return;
         }
-        if (isPast(date, time)) {
+        if (isPast(columnDate, slotIndex)) {
             cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
             return;
         }
@@ -302,8 +308,7 @@ public class WeekGridBuilder {
             cell.setStyle(blockedStyle(block));
             return;
         }
-        if (date.equals(AppTimeReference.getCurrentDate())
-                && time.isAfter(AppTimeReference.getCurrentTime())) {
+        if (columnDate.equals(AppTimeReference.currentColumnDate())) {
             cell.setStyle("-fx-background-color: #70d9f1; -fx-border-color: #999999;");
         } else {
             cell.setStyle("-fx-border-color: #999999;");

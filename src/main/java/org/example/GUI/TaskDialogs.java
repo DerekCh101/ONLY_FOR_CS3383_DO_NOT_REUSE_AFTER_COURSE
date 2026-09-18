@@ -12,6 +12,7 @@ import org.example.net.Api;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -248,7 +249,7 @@ public class TaskDialogs {
 
         String placedText = (task.getPlacedDate() != null && task.getPlacedTime() != null)
                 ? task.getPlacedDate() + " " + task.getPlacedTime()
-                : date + " " + AppTimeReference.formatSlotLabel(slotIndex);
+                : date + " " + AppTimeReference.slotToLocalTime(slotIndex);
         Label placedLabel = new Label("Currently placed: " + placedText);
 
         CheckBox finishBtn = new CheckBox();
@@ -273,8 +274,6 @@ public class TaskDialogs {
             }
             if (onChanged != null) onChanged.run();
         });
-
-
 
         clearBtn.setOnAction(e -> {
             showAlertPopup(scene, "Task is cleared, press undo to restore");
@@ -383,15 +382,13 @@ public class TaskDialogs {
                     durationSpinner.getValue() == null ? 1.0 : durationSpinner.getValue());
             int slotCount = AppTimeReference.hoursToSlots(durationHours);
 
-            LocalDate today = AppTimeReference.getCurrentDate();
-            LocalTime now = AppTimeReference.getCurrentTime();
+            LocalDateTime nowDt = AppTimeReference.getCurrentDateTime();
 
             LocalTime clickedTime = null;
             if (fromGridClick) {
                 clickedTime = AppTimeReference.slotToLocalTime(slotIndex);
-                if (clickedDate.isBefore(today)
-                        || (clickedDate.equals(today)
-                        && (clickedTime.isBefore(now) || clickedTime.equals(now)))) {
+                LocalDateTime clickDt = LocalDateTime.of(clickedDate, clickedTime);
+                if (!clickDt.isAfter(nowDt)) {
                     showAlertPopup(scene, "Cannot create a task in the past.");
                     return;
                 }
@@ -399,7 +396,6 @@ public class TaskDialogs {
 
             boolean isFixed = fixedRadio.isSelected();
             boolean isDeadline = deadlineRadio.isSelected();
-            boolean isFlexible = flexibleRadio.isSelected();
 
             LocalDate startDate = null;
             LocalTime startTime = null;
@@ -419,8 +415,7 @@ public class TaskDialogs {
                         }
                         startTime = parseSlotCombo(startSlotBox.getValue());
                     }
-                    if (startDate.isBefore(today)
-                            || (startDate.equals(today) && startTime.isBefore(now))) {
+                    if (!LocalDateTime.of(startDate, startTime).isAfter(nowDt)) {
                         showAlertPopup(scene, "Cannot create Fixed task in the past.");
                         return;
                     }
@@ -431,19 +426,16 @@ public class TaskDialogs {
                         return;
                     }
                     deadlineTime = parseSlotCombo(deadlineSlotBox.getValue());
-                    if (deadlineDate.isBefore(today)
-                            || (deadlineDate.equals(today) && deadlineTime.isBefore(now))) {
+                    if (!LocalDateTime.of(deadlineDate, deadlineTime).isAfter(nowDt)) {
                         showAlertPopup(scene, "Cannot set deadline in the past.");
                         return;
                     }
                     if (fromGridClick) {
-                        long durationMin = (long) slotCount * AppTimeReference.MINUTES_PER_SLOT;
-                        LocalTime finish = clickedTime.plusMinutes(durationMin);
-                        boolean wrappedPastMidnight = finish.isBefore(clickedTime);
-
-                        if (clickedDate.isAfter(deadlineDate)
-                                || (clickedDate.equals(deadlineDate)
-                                && (wrappedPastMidnight || finish.isAfter(deadlineTime)))) {
+                        LocalDateTime start = LocalDateTime.of(clickedDate, clickedTime);
+                        LocalDateTime finish = start.plusMinutes(
+                                (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
+                        LocalDateTime deadline = LocalDateTime.of(deadlineDate, deadlineTime);
+                        if (finish.isAfter(deadline)) {
                             showAlertPopup(scene, "Cannot place deadline task after its deadline.");
                             return;
                         }
@@ -456,25 +448,24 @@ public class TaskDialogs {
 
             LocalDate placeDate = null;
             LocalTime placeTime = null;
-            int placeSlot = -1;
 
             if (fromGridClick) {
                 placeDate = clickedDate;
                 placeTime = clickedTime;
-                placeSlot = slotIndex;
             } else if (isFixed && startDate != null && startTime != null) {
                 placeDate = startDate;
                 placeTime = startTime;
-                placeSlot = AppTimeReference.localTimeToSlot(startTime);
             }
 
-            if (placeDate != null && placeTime != null && placeSlot >= 0) {
+            if (placeDate != null && placeTime != null) {
+                LocalDate column = AppTimeReference.columnDateFor(placeDate, placeTime);
+                int placeSlot = AppTimeReference.localTimeToSlot(placeTime);
                 if (placeSlot + slotCount > AppTimeReference.SLOTS_PER_DAY) {
                     showAlertPopup(scene, "Task exceeds daily time range.");
                     return;
                 }
-                system.getGrid().putIfAbsent(placeDate, new Day(system.getBlockedTime()));
-                Day day = system.getGrid().get(placeDate);
+                system.getGrid().putIfAbsent(column, new Day(system.getBlockedTime()));
+                Day day = system.getGrid().get(column);
                 for (int i = 0; i < slotCount; i++) {
                     if (day.returnDayGrid()[placeSlot + i] != null) {
                         showAlertPopup(scene, "Time conflict with another task.");
@@ -499,7 +490,7 @@ public class TaskDialogs {
                 if (isDeadline) {
                     showAlertPopup(scene,
                             "Could not fit this deadline task before its deadline.\nTask was not created.");
-                } else if (isFlexible) {
+                } else if (flexibleRadio.isSelected()) {
                     showAlertPopup(scene,
                             "Could not place this flexible task.\nTask was not created.");
                 } else {
@@ -574,7 +565,6 @@ public class TaskDialogs {
         currentConfirmOverlay.getChildren().add(pane);
         root.getChildren().add(currentConfirmOverlay);
 
-
         cancel.setOnAction(e -> {
             root.getChildren().remove(currentConfirmOverlay);
             currentConfirmOverlay = null;
@@ -585,9 +575,7 @@ public class TaskDialogs {
             root.getChildren().remove(currentConfirmOverlay);
             currentConfirmOverlay = null;
             closeEverything(scene);
-
         });
-
     }
 
     private void dismissConfirmation() {
@@ -638,19 +626,25 @@ public class TaskDialogs {
     private ComboBox<String> createSlotCombo(int defaultSlotIndex) {
         ComboBox<String> box = new ComboBox<>();
         for (int s = 0; s < AppTimeReference.SLOTS_PER_DAY; s++) {
-            box.getItems().add(AppTimeReference.formatSlotLabel(s));
+            box.getItems().add(clockLabel(s));
         }
         if (defaultSlotIndex < 0) defaultSlotIndex = 0;
         if (defaultSlotIndex >= AppTimeReference.SLOTS_PER_DAY) {
             defaultSlotIndex = AppTimeReference.SLOTS_PER_DAY - 1;
         }
-        box.setValue(AppTimeReference.formatSlotLabel(defaultSlotIndex));
+        box.setValue(clockLabel(defaultSlotIndex));
         box.setPrefWidth(90);
         return box;
     }
 
+    private static String clockLabel(int slotIndex) {
+        LocalTime t = AppTimeReference.slotToLocalTime(slotIndex);
+        return String.format("%02d:%02d", t.getHour(), t.getMinute());
+    }
+
     private LocalTime parseSlotCombo(String value) {
-        String[] p = value.split(":");
-        return LocalTime.of(Integer.parseInt(p[0]), Integer.parseInt(p[1]));
+        String raw = value == null ? "" : value.replace("+", "").trim();
+        String[] p = raw.split(":");
+        return LocalTime.of(Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()));
     }
 }
