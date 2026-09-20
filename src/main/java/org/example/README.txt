@@ -134,6 +134,43 @@ HOST_LISTEN_IP and HostNodeServerListenToWherePort are optional.
 Java does not set them.
 
 
+Run Node and Postgres with Docker
+----------------------------------
+Docker Compose starts PostgreSQL, waits for it to become healthy, and then
+starts the Node server. The PostgreSQL database and the TASK schema are
+created automatically on the first start.
+
+From the repo root:
+
+  docker compose up --build
+
+The Node API is available at:
+
+  http://127.0.0.1:3456 // default ip and port
+
+Use that URL in the Java server-pick screen when Docker is running on the
+same PC. Stop the containers with:
+
+  docker compose down
+
+PostgreSQL data is stored in the Docker volume postgres-data and survives
+container restarts. To remove the containers and all stored PostgreSQL data:
+
+  docker compose down -v
+
+Optional .env settings in the repo root:
+
+  NODE_HOST_IP=0.0.0.0
+  NODE_PORT=3456
+  DB_NAME=Scheduler
+  DB_USER=postgres
+  DB_PASSWORD=change-this-password
+
+The Compose file passes these settings to Node as HOST_LISTEN_IP,
+HostNodeServerListenToWherePort, PGUSER, PGPASSWORD, and PGDATABASE.
+Inside Docker, Node connects to PostgreSQL using the service name postgres.
+
+
 CLI only
 --------
 JavaFX is not required. Run:
