@@ -137,6 +137,7 @@ public class TypewriterPane extends BorderPane {
     private final ListView<TwList> listNames = new ListView<>();
     private final VBox listRows = new VBox(6);
     private final TextField listTitleField = new TextField();
+    private final TextField addItemField = new TextField();
     private final VBox listsNav = new VBox(10);
     private final VBox listsEditor = new VBox(12);
 
@@ -703,21 +704,39 @@ public class TypewriterPane extends BorderPane {
             listNames.refresh();
             touch();
         });
-        Button addRow = pill("Add item");
-        addRow.setOnAction(e -> {
+
+        addItemField.setPromptText("Add item and press Enter");
+        addItemField.setStyle("-fx-background-color: #fbf7ef; -fx-font-family: Georgia; -fx-font-size: 14px;");
+        Button addRow = pill("Add");
+        addRow.setMaxWidth(80);
+        Runnable addItem = () -> {
             if (currentList == null) return;
-            currentList.items.add(new TwItem(""));
+            String text = addItemField.getText() == null ? "" : addItemField.getText().trim();
+            currentList.items.add(new TwItem(text));
+            addItemField.clear();
             rebuildListRows();
+            addItemField.requestFocus();
             touch();
-        });
-        listsEditor.getChildren().addAll(listTitleField, listRows, addRow);
+        };
+        addRow.setOnAction(e -> addItem.run());
+        addItemField.setOnAction(e -> addItem.run());
+        HBox addRowBox = new HBox(8, addItemField, addRow);
+        addRowBox.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(addItemField, Priority.ALWAYS);
+
+        ScrollPane rowsScroll = new ScrollPane(listRows);
+        rowsScroll.setFitToWidth(true);
+        rowsScroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        VBox.setVgrow(rowsScroll, Priority.ALWAYS);
+
+        listsEditor.getChildren().addAll(listTitleField, addRowBox, rowsScroll);
         listsEditor.setPadding(new Insets(28, 36, 24, 28));
-        VBox.setVgrow(listRows, Priority.ALWAYS);
     }
 
     private void openList(TwList list) {
         currentList = list;
         fillingList = true;
+        addItemField.clear();
         if (list == null) {
             listTitleField.setText("");
             listRows.getChildren().clear();

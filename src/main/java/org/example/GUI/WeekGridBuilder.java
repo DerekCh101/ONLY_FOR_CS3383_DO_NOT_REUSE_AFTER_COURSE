@@ -53,13 +53,6 @@ public class WeekGridBuilder {
         LocalTime now = AppTimeReference.getCurrentTime();
         int nowSlot = AppTimeReference.localTimeToSlot(now);
 
-        System.out.println("weekStart=" + weekStart
-                + " offset=" + weekOffset
-                + " today=" + AppTimeReference.getCurrentDate()
-                + " column=" + AppTimeReference.currentColumnDate()
-                + " gridDates=" + (gridData == null ? "null" : gridData.keySet())
-                + " placed=" + placed.size());
-
         for (int col = 0; col < 7; col++) {
             LocalDate date = weekStart.plusDays(weekOffset * 7L + col);
             String text = date.getDayOfWeek().toString().substring(0, 3) + " "

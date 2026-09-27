@@ -26,8 +26,6 @@ public class TaskDialogs {
     private boolean popupIsOpen = false;
     private boolean areYouSureIsOpen = false;
     private boolean alertIsOpen = false;
-    private boolean discardIt = false;
-    private boolean madeDecisionOnConfirmation = false;
     private EventHandler<KeyEvent> escHandler;
 
     private StackPane currentDimmedOverlay;
@@ -70,13 +68,6 @@ public class TaskDialogs {
         });
         HBox whenRow = new HBox(8, everyDay, exceptionBox, new Label("From"), fromPicker, new Label("To"), toPicker);
 
-        VBox listBox = new VBox(6);
-        rebuildBlockedList(scene, listBox);
-        ScrollPane listScroll = new ScrollPane(listBox);
-        listScroll.setFitToWidth(true);
-        listScroll.setPrefHeight(220);
-        listScroll.setMaxHeight(220);
-
         TextField nameField = new TextField();
         nameField.setPromptText("title (morning)");
 
@@ -89,6 +80,13 @@ public class TaskDialogs {
         Button addBtn = new Button("Add");
         Button closeBtn = new Button("Close");
         HBox buttons = new HBox(10, addBtn, closeBtn);
+
+        VBox listBox = new VBox(6);
+        rebuildBlockedList(scene, listBox);
+        ScrollPane listScroll = new ScrollPane(listBox);
+        listScroll.setFitToWidth(true);
+        listScroll.setPrefHeight(220);
+        listScroll.setMaxHeight(220);
 
         addBtn.setOnAction(e -> {
             String name = nameField.getText().trim();
@@ -155,13 +153,13 @@ public class TaskDialogs {
 
         content.getChildren().addAll(
                 title,
-                new Label("Existing:"),
-                listScroll,
                 new Label("New block:"),
                 nameField,
                 whenRow,
                 timeRow,
-                buttons
+                buttons,
+                new Label("Existing:"),
+                listScroll
         );
         currentPopup.getChildren().add(content);
         popupIsOpen = true;

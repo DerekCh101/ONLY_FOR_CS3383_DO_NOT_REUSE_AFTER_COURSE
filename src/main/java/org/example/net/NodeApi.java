@@ -13,7 +13,6 @@ import java.util.Map;
 
 public class NodeApi {
 
-
     private static final int CONNECT_MS = 8000;
     private static final int READ_MS = 8000;
     private static final int IMAGE_READ_MS = 60000;
@@ -131,9 +130,6 @@ public class NodeApi {
     }
 
     private AuthResult postAuth(String path, String user, String password) throws Exception {
-        String url = Endpoints.nodeBase() + path;
-        System.out.println("auth POST " + url);
-
         String body = "{\"username\":\"" + escape(user) + "\",\"password\":\"" + escape(password) + "\"}";
         String json = request("POST", path, body, false, READ_MS);
 
@@ -170,11 +166,6 @@ public class NodeApi {
 
         int code = c.getResponseCode();
         String json = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
-        if (path.startsWith("/typewriter/images") || path.equals("/typewriter")) {
-            System.out.println(method + " " + path + " HTTP " + code + " len=" + json.length());
-        } else {
-            System.out.println(method + " " + path + " HTTP " + code + " " + json);
-        }
 
         if (code < 200 || code >= 300) {
             String msg = extract(json, "message");

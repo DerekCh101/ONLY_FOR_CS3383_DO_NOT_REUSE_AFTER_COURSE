@@ -78,15 +78,13 @@ public class MoveTask implements Command {
         return true;
     }
 
-    private void clearSlots(LocalDate column, int startSlot) {
+    private void clearTaskFrom(LocalDate column) {
         Day day = theSystem.getGrid().get(column);
         if (day == null) return;
-        int slotCount = task.getDurationSlots();
         Task[] slots = day.returnDayGrid();
-        for (int i = 0; i < slotCount; i++) {
-            int s = startSlot + i;
-            if (s >= 0 && s < slots.length && slots[s] == task) {
-                slots[s] = null;
+        for (int i = 0; i < slots.length; i++) {
+            if (slots[i] == task) {
+                slots[i] = null;
             }
         }
     }
@@ -102,7 +100,10 @@ public class MoveTask implements Command {
     }
 
     private void doMove() throws SQLException {
-        clearSlots(oldColumn, oldStartSlot);
+        clearTaskFrom(oldColumn);
+        if (!oldColumn.equals(newColumn)) {
+            clearTaskFrom(newColumn);
+        }
 
         theSystem.getGrid().putIfAbsent(newColumn, new Day(theSystem.getBlockedTime()));
         Day newDay = theSystem.getGrid().get(newColumn);
@@ -132,7 +133,10 @@ public class MoveTask implements Command {
 
     @Override
     public void undo() throws SQLException {
-        clearSlots(newColumn, newStartSlot);
+        clearTaskFrom(newColumn);
+        if (!oldColumn.equals(newColumn)) {
+            clearTaskFrom(oldColumn);
+        }
 
         theSystem.getGrid().putIfAbsent(oldColumn, new Day(theSystem.getBlockedTime()));
         Day oldDay = theSystem.getGrid().get(oldColumn);

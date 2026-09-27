@@ -2,7 +2,6 @@ package org.example;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 
 public class Day {
 
@@ -40,13 +39,6 @@ public class Day {
             if (todayTaskGrid[slot] != null
                     && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
-            }
-            if (!ignoreBlocked) {
-                LocalDate checkDate = AppTimeReference.calendarDateForSlot(columnDate, slot);
-                LocalTime checkTime = AppTimeReference.slotToLocalTime(slot);
-                if (blockedTime.isBlocked(checkDate, checkTime)) {
-                    return false;
-                }
             }
         }
         return true;

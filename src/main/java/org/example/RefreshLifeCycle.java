@@ -1,8 +1,7 @@
 package org.example;
 
 import java.sql.SQLException;
-import java.time.LocalDate;
-import java.time.LocalTime;
+import java.time.LocalDateTime;
 
 public final class RefreshLifeCycle {
 
@@ -14,23 +13,21 @@ public final class RefreshLifeCycle {
             task.setLifeCycle(TaskLifeCycle.UNSCHEDULED);
             return;
         }
-        LocalDate today = AppTimeReference.getCurrentDate();
-        LocalTime now = AppTimeReference.getCurrentTime();
-        LocalTime end = task.getPlacedTime().plusMinutes(
-                (long) task.getDurationSlots() * AppTimeReference.MINUTES_PER_SLOT);
-        boolean wrapped = !end.isAfter(task.getPlacedTime()) && task.getDurationSlots() > 0;
 
-        boolean past = task.getPlacedDate().isBefore(today)
-                || (task.getPlacedDate().isEqual(today) && (wrapped || !end.isAfter(now)));
+        LocalDateTime start = LocalDateTime.of(task.getPlacedDate(), task.getPlacedTime());
+        int slots = task.getDurationSlots();
+        if (slots < 1) slots = 1;
+        LocalDateTime end = start.plusMinutes((long) slots * AppTimeReference.MINUTES_PER_SLOT);
+        LocalDateTime now = AppTimeReference.getCurrentDateTime();
 
-        task.setLifeCycle(past ? TaskLifeCycle.PAST : TaskLifeCycle.ONGOING);
+        task.setLifeCycle(!end.isAfter(now) ? TaskLifeCycle.PAST : TaskLifeCycle.ONGOING);
     }
 
     /** @return true if any task changed PAST / ONGOING / UNSCHEDULED */
     public static boolean refreshAll(TaskManagementSystem system) {
         if (system == null) return false;
         boolean changed = false;
-        for (Task task : system.getPlacedTasks()) { // use your real list getter
+        for (Task task : system.getPlacedTasks()) {
             TaskLifeCycle before = task.getLifeCycle();
             refreshLifeCycle(task);
             if (before != task.getLifeCycle()) changed = true;
@@ -41,6 +38,5 @@ public final class RefreshLifeCycle {
     public static void refreshLifeCycleAndSave(Task task) throws SQLException {
         refreshLifeCycle(task);
         TaskManagementSystem.getInstance().getTaskRepo().dbUpdateWorkflow(task);
-        // only if you also persist lifecycle; otherwise drop the db call here
     }
 }

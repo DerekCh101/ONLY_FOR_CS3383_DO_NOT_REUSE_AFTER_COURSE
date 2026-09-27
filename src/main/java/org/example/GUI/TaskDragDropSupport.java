@@ -8,14 +8,17 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.example.AppTimeReference;
+import org.example.BlockedTime;
+import org.example.BlockedTimePeriod;
 import org.example.Day;
 import org.example.Task;
 import org.example.TaskManagementSystem;
 import org.example.Command.MoveTask;
 
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 import java.util.function.IntConsumer;
 
 public class TaskDragDropSupport {
@@ -79,12 +82,18 @@ public class TaskDragDropSupport {
             if (day == null) return;
 
             Task[] slots = day.returnDayGrid();
-            int realStartSlot = clickedSlotIndex;
-            while (realStartSlot > 0 && slots[realStartSlot - 1] == task) {
-                realStartSlot--;
+            if (slots == null || clickedSlotIndex < 0 || clickedSlotIndex >= slots.length) return;
+
+            int realStartSlot = AppTimeReference.localTimeToSlot(task.getPlacedTime());
+            if (realStartSlot < 0) {
+                realStartSlot = clickedSlotIndex;
+                while (realStartSlot > 0 && slots[realStartSlot - 1] == task) {
+                    realStartSlot--;
+                }
             }
 
             int slotCount = task.getDurationSlots();
+            if (slotCount < 1) slotCount = 1;
 
             VBox dbContainer = new VBox(1);
             root.getChildren().add(dbContainer);
@@ -222,7 +231,7 @@ public class TaskDragDropSupport {
                         (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
                 LocalDateTime deadline = deadlineTime == null
                         ? deadlineDate.plusDays(1).atStartOfDay()
-                        : java.time.LocalDateTime.of(deadlineDate, deadlineTime);
+                        : LocalDateTime.of(deadlineDate, deadlineTime);
                 if (finish.isAfter(deadline)) return false;
             }
 
@@ -236,11 +245,55 @@ public class TaskDragDropSupport {
         }
     }
 
+    private List<BlockedTime> loadBlocked() {
+        BlockedTimePeriod holder = system.getBlockedTime();
+        if (holder == null || holder.blockedPeriod == null) return List.of();
+        return holder.blockedPeriod;
+    }
+
+    private static BlockedTime blockedAt(List<BlockedTime> blocked, LocalDate columnDate, int slotIndex) {
+        LocalDate date = AppTimeReference.calendarDateForSlot(columnDate, slotIndex);
+        LocalTime slotStart = AppTimeReference.slotToLocalTime(slotIndex);
+        LocalTime slotEnd = slotStart.plusMinutes(AppTimeReference.MINUTES_PER_SLOT);
+
+        BlockedTime daily = null;
+        BlockedTime specific = null;
+        boolean exception = false;
+
+        for (BlockedTime b : blocked) {
+            if (b.getStartTime() == null || b.getEndTime() == null) continue;
+            if (!(slotStart.isBefore(b.getEndTime()) && slotEnd.isAfter(b.getStartTime()))) continue;
+
+            if (b.isException()) {
+                if (date.equals(b.getSpecificDate())) exception = true;
+            } else if (b.isDaily()) {
+                daily = b;
+            } else if (b.appliesOn(date)) {
+                specific = b;
+            }
+        }
+
+        if (specific != null) return specific;
+        if (exception) return null;
+        return daily;
+    }
+
     private void applyDayStyle(Pane cell, LocalDate columnDate, int slotIndex) {
         LocalDateTime start = AppTimeReference.dateTimeForSlot(columnDate, slotIndex);
         if (!start.isAfter(AppTimeReference.getCurrentDateTime())) {
             cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
-        } else if (columnDate.equals(AppTimeReference.currentColumnDate())) {
+            return;
+        }
+        BlockedTime block = blockedAt(loadBlocked(), columnDate, slotIndex);
+        if (block != null && block.getStartTime() != null) {
+            int hour = block.getStartTime().getHour();
+            String fill = (hour >= 21 || hour < 8) ? "#c5cbe8"
+                    : (hour >= 11 && hour < 14) ? "#f3d5a3"
+                      : (hour < 11) ? "#b9dde6" : "#ddc6ea";
+            cell.setStyle("-fx-background-color: " + fill + "; -fx-border-color: #999999; -fx-border-width: 1;");
+            return;
+        }
+        if (columnDate.equals(AppTimeReference.currentColumnDate())) {
             cell.setStyle("-fx-background-color: #70d9f1; -fx-border-color: #999999;");
         } else {
             cell.setStyle("-fx-border-color: #999999;");
