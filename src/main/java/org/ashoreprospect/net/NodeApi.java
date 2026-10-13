@@ -34,10 +34,21 @@ public class NodeApi {
     }
 
     public void applySession(AuthResult r) {
+        applySession(r, true);
+    }
+
+    public void applySession(AuthResult r, boolean remember) {
         apply(r);
+        LocalSession.savePrefs(remember, r.username);
+        if (remember) {
+            LocalSession.save(r.userId, r.username, r.token);
+        } else {
+            LocalSession.clear();
+        }
     }
 
     public boolean restoreSession() {
+        if (!LocalSession.wantRemember()) return false;
         LocalSession.Data saved = LocalSession.load();
         if (saved == null) return false;
         this.token = saved.token;
@@ -143,7 +154,6 @@ public class NodeApi {
         this.token = r.token;
         this.userId = r.userId;
         this.username = r.username;
-        LocalSession.save(r.userId, r.username, r.token);
     }
 
     private AuthResult postAuth(String path, String user, String password) throws Exception {

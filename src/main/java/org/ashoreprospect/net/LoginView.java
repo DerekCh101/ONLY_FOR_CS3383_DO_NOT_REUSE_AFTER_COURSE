@@ -7,6 +7,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
@@ -37,12 +38,17 @@ public class LoginView {
         PasswordField pass = new PasswordField();
         pass.setPromptText("password");
         pass.setStyle(fieldStyle());
+        String last = LocalSession.lastUsername();
+        if (!last.isBlank()) user.setText(last);
 
-        Label remember = new Label(
-                "This PC remembers the last login and opens the local cache if you are offline."
+        CheckBox remember = new CheckBox("Remember login");
+        remember.setSelected(LocalSession.wantRemember());
+        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: Georgia;");
+        Label rememberHint = new Label(
+                "Checked: next launch skips this screen and opens the local cache, even offline."
         );
-        remember.setWrapText(true);
-        remember.setStyle("-fx-text-fill: #5c564c; -fx-font-size: 12px; -fx-font-family: Georgia;");
+        rememberHint.setWrapText(true);
+        rememberHint.setStyle("-fx-text-fill: #5c564c; -fx-font-size: 12px; -fx-font-family: Georgia;");
 
         Label err = new Label();
         err.setWrapText(true);
@@ -58,11 +64,17 @@ public class LoginView {
         register.setMaxWidth(Double.MAX_VALUE);
         changeServer.setMaxWidth(Double.MAX_VALUE);
 
-        login.setOnAction(e -> go(false, user.getText(), pass.getText(), err, login, register, onOk));
-        register.setOnAction(e -> go(true, user.getText(), pass.getText(), err, login, register, onOk));
+        login.setOnAction(e -> go(
+                false, user.getText(), pass.getText(), remember.isSelected(), err, login, register, onOk
+        ));
+        register.setOnAction(e -> go(
+                true, user.getText(), pass.getText(), remember.isSelected(), err, login, register, onOk
+        ));
         changeServer.setOnAction(e -> showServerPick());
 
-        VBox card = new VBox(12, kicker, title, where, user, pass, login, register, changeServer, remember, err);
+        VBox card = new VBox(
+                12, kicker, title, where, user, pass, remember, rememberHint, login, register, changeServer, err
+        );
         card.setPadding(new Insets(36, 40, 36, 40));
         card.setMaxWidth(420);
         card.setPrefWidth(420);
@@ -89,7 +101,7 @@ public class LoginView {
         stage.show();
     }
 
-    private void go(boolean register, String user, String password,
+    private void go(boolean register, String user, String password, boolean remember,
                     Label err, Button login, Button registerBtn, Runnable onOk) {
         err.setText("");
         login.setDisable(true);
@@ -105,7 +117,7 @@ public class LoginView {
                         registerBtn.setDisable(false);
                         return;
                     }
-                    Api.INSTANCE.applySession(incoming);
+                    Api.INSTANCE.applySession(incoming, remember);
                     onOk.run();
                 });
             } catch (Exception ex) {

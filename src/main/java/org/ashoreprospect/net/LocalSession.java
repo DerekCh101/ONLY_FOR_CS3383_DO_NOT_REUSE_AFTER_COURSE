@@ -11,6 +11,7 @@ import java.util.Properties;
 public final class LocalSession {
 
     private static final Path FILE = Endpoints.dir().resolve("session.txt");
+    private static final Path PREFS = Endpoints.dir().resolve("login.txt");
 
     private LocalSession() {}
 
@@ -42,6 +43,44 @@ public final class LocalSession {
         String token = p.getProperty("token", "").trim();
         if (userId.isEmpty() || token.isEmpty()) return null;
         return new Data(userId, p.getProperty("username", "").trim(), token);
+    }
+
+    public static void savePrefs(boolean remember, String lastUsername) {
+        Properties p = new Properties();
+        p.setProperty("remember", remember ? "true" : "false");
+        p.setProperty("lastUser", lastUsername == null ? "" : lastUsername.trim());
+        try {
+            Files.createDirectories(PREFS.getParent());
+            try (OutputStream out = Files.newOutputStream(PREFS)) {
+                p.store(out, "ashore login prefs");
+            }
+        } catch (IOException e) {
+            System.err.println("login prefs save failed: " + e.getMessage());
+        }
+        if (!remember) clear();
+    }
+
+    public static boolean wantRemember() {
+        Properties p = loadPrefs();
+        if (p == null) return true;
+        return !"false".equalsIgnoreCase(p.getProperty("remember", "true"));
+    }
+
+    public static String lastUsername() {
+        Properties p = loadPrefs();
+        if (p == null) return "";
+        return p.getProperty("lastUser", "").trim();
+    }
+
+    private static Properties loadPrefs() {
+        if (!Files.isRegularFile(PREFS)) return null;
+        Properties p = new Properties();
+        try (InputStream in = Files.newInputStream(PREFS)) {
+            p.load(in);
+            return p;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     public static void clear() {
