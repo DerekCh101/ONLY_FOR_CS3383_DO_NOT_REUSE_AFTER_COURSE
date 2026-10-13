@@ -1148,3 +1148,6 @@ document.addEventListener("click", async (e) => {
         toast(ex.message, true);
     }
 });
+
+window.addEventListener("online", () => toast("Online"));
+window.addEventListener("offline", () => toast("Offline — using local cache", true));

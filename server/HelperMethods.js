@@ -37,8 +37,8 @@ function parseDuration(raw) {
 
 /**
  * Shape / enum / date checks only.
- * Does NOT enforce blocked time (user may place Flexible on blocked slots;
- * the Java scheduler is what obeys blocked time).
+ * Blocked overlap for Flexible is enforced in overlap.taskConflict;
+ * Fixed and Deadline may sit in blocked time.
  *
  * @returns {string|null} error, or null if OK
  */

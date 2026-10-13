@@ -86,7 +86,13 @@ export async function taskConflict(userId, task) {
         }
     }
 
+    // Fixed and Deadline may occupy blocked time. Flexible may not.
+    const state = String(task.state ?? "").trim().toLowerCase();
+    const flexible = state === "flexible" || state === "3";
+    if (!flexible) return null;
+
     for (const b of blocked) {
+        if (isExceptionRow(b)) continue;
         if (!blockedAppliesOn(b, win.day)) continue;
         const b0 = minutesOf(b.start_time);
         const b1 = minutesOf(b.end_time);

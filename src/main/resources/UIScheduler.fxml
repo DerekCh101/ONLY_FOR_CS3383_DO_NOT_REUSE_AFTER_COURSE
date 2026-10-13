@@ -20,7 +20,7 @@
            prefHeight="700.0" prefWidth="1200.0"
            xmlns="http://javafx.com/javafx/23"
            xmlns:fx="http://javafx.com/fxml/1"
-           fx:controller="org.example.GUI.SchedulerController">
+           fx:controller="org.ashoreprospect.GUI.SchedulerController">
 
     <BorderPane fx:id="borderPane">
 
