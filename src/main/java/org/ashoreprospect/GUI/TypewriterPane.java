@@ -1,6 +1,7 @@
 package org.ashoreprospect.GUI;
 
 import javafx.animation.PauseTransition;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -192,11 +193,17 @@ public class TypewriterPane extends BorderPane {
         layers.getChildren().add(body);
         setCenter(layers);
 
-        TypewriterStore.Data data = TypewriterStore.load();
+        applyLoaded(TypewriterStore.load(), true);
+        TypewriterStore.syncRemoteInBackground(fresh -> Platform.runLater(() -> applyLoaded(fresh, false)));
+    }
+
+    private void applyLoaded(TypewriterStore.Data data, boolean seedIfEmpty) {
         if (data.diary.isEmpty() && data.lists.isEmpty()
                 && data.pagesRoot.children.isEmpty() && data.pagesRoot.notes.isEmpty()) {
-            seedDefaults();
-            saveAll();
+            if (seedIfEmpty) {
+                seedDefaults();
+                saveAll();
+            }
         } else {
             diaryPages.clear();
             diaryPages.putAll(data.diary);
@@ -206,7 +213,7 @@ public class TypewriterPane extends BorderPane {
             rebuildPageTree(data.pagesRoot);
         }
         TypewriterStore.pruneEmptyDiary(diaryPages);
-        showMode(Mode.DIARY);
+        showMode(mode);
     }
 
     public void saveAll() {

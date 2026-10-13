@@ -21,6 +21,10 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import org.ashoreprospect.net.NetworkWatch;
 
 public final class TypewriterStore {
 
@@ -31,6 +35,12 @@ public final class TypewriterStore {
         public final List<TypewriterPane.TwList> lists = new ArrayList<>();
         public final TypewriterPane.TwFolder pagesRoot = new TypewriterPane.TwFolder("Pages");
     }
+
+    private static final ExecutorService remoteIo = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "tw-remote");
+        t.setDaemon(true);
+        return t;
+    });
 
     private static final File IMAGE_DIR = new File("typewriter-images");
 
@@ -56,7 +66,7 @@ public final class TypewriterStore {
     }
 
     private static PostgresTypewriterRepository pg() {
-        if (Endpoints.isCreatorHost()) {
+        if (!NetworkWatch.isOnline() || Endpoints.isCreatorHost()) {
             postgresAvailable = false;
             return null;
         }
@@ -120,70 +130,89 @@ public final class TypewriterStore {
         try {
             Data localData = sqlite.fetchAll(uid);
             pruneEmptyDiary(localData.diary);
-            Instant local = sqlite.lastUpdated(uid);
-
-            if (nodeReady()) {
-                try {
-                    Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
-                    Instant remoteTs = TaskRepository.normalizeInstant(
-                            first(remoteRow, "last_updated_at", "lastUpdatedAt"));
-                    Data remoteData = parseBundle(first(remoteRow, "content"));
-                    pruneEmptyDiary(remoteData.diary);
-                    if (remoteTs != null && TaskRepository.preferRemote(local, remoteTs)) {
-                        persistLocalAndServer(uid, remoteData);
-                        System.out.println("Typewriter pulled from Node into SQLite+Postgres");
-                        return sqlite.fetchAll(uid);
-                    }
-                    if (!isEmpty(localData)
-                            && (remoteTs == null || !TaskRepository.preferRemote(local, remoteTs))) {
-                        Api.INSTANCE.postTypewriter(
-                                toBundle(localData),
-                                local != null ? local.toString() : Instant.now().toString()
-                        );
-                    }
-                } catch (Exception e) {
-                    System.out.println("Typewriter Node load failed: " + e.getMessage());
-                }
-            }
-
-            PostgresTypewriterRepository pg = pg();
-            if (pg != null) {
-                Instant remote = null;
-                try {
-                    remote = pg.lastUpdated(uid);
-                } catch (SQLException e) {
-                    postgresAvailable = false;
-                    postgres = null;
-                    System.out.println("Typewriter Postgres read failed: " + e.getMessage());
-                    pg = null;
-                }
-                if (pg != null && remote != null && TaskRepository.preferRemote(local, remote)) {
-                    Data pulled = pg.fetchAll(uid);
-                    pruneEmptyDiary(pulled.diary);
-                    if (!isEmpty(pulled) || isEmpty(localData)) {
-                        sqlite.replaceAll(uid, pulled.diary, pulled.lists, pulled.pagesRoot);
-                        return pulled;
-                    }
-                    System.out.println("Typewriter kept local; Postgres row was newer but empty");
-                }
-                if (pg != null && !isEmpty(localData)
-                        && (remote == null || !TaskRepository.preferRemote(local, remote))) {
-                    try {
-                        pg.replaceAll(uid, localData.diary, localData.lists, localData.pagesRoot);
-                    } catch (SQLException e) {
-                        postgresAvailable = false;
-                        postgres = null;
-                        System.out.println("Typewriter push failed: " + e.getMessage());
-                    }
-                }
-                return localData;
-            }
             return localData;
         } catch (Exception ex) {
             System.out.println("Typewriter load skipped: " + ex.getMessage());
             ex.printStackTrace();
             return empty;
         }
+    }
+
+    /** Node/Postgres after SQLite so the Typewriter tab never freezes the UI. */
+    public static void syncRemoteInBackground(Consumer<Data> onRemoteNewer) {
+        if (!NetworkWatch.isOnline()) return;
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) return;
+        remoteIo.execute(() -> {
+            try {
+                Data localData = sqlite.fetchAll(uid);
+                pruneEmptyDiary(localData.diary);
+                Instant local = sqlite.lastUpdated(uid);
+                Data newer = pullRemote(uid, localData, local);
+                if (newer != null && onRemoteNewer != null) onRemoteNewer.accept(newer);
+            } catch (Exception e) {
+                System.out.println("Typewriter remote sync failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private static Data pullRemote(String uid, Data localData, Instant local) throws Exception {
+        if (nodeReady()) {
+            try {
+                Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
+                Instant remoteTs = TaskRepository.normalizeInstant(
+                        first(remoteRow, "last_updated_at", "lastUpdatedAt"));
+                Data remoteData = parseBundle(first(remoteRow, "content"));
+                pruneEmptyDiary(remoteData.diary);
+                if (remoteTs != null && TaskRepository.preferRemote(local, remoteTs)) {
+                    persistLocalAndServer(uid, remoteData);
+                    System.out.println("Typewriter pulled from Node into SQLite+Postgres");
+                    return sqlite.fetchAll(uid);
+                }
+                if (!isEmpty(localData)
+                        && (remoteTs == null || !TaskRepository.preferRemote(local, remoteTs))) {
+                    Api.INSTANCE.postTypewriter(
+                            toBundle(localData),
+                            local != null ? local.toString() : Instant.now().toString()
+                    );
+                }
+            } catch (Exception e) {
+                System.out.println("Typewriter Node load failed: " + e.getMessage());
+            }
+        }
+
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
+            Instant remote = null;
+            try {
+                remote = pg.lastUpdated(uid);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                postgres = null;
+                System.out.println("Typewriter Postgres read failed: " + e.getMessage());
+                pg = null;
+            }
+            if (pg != null && remote != null && TaskRepository.preferRemote(local, remote)) {
+                Data pulled = pg.fetchAll(uid);
+                pruneEmptyDiary(pulled.diary);
+                if (!isEmpty(pulled) || isEmpty(localData)) {
+                    sqlite.replaceAll(uid, pulled.diary, pulled.lists, pulled.pagesRoot);
+                    return pulled;
+                }
+                System.out.println("Typewriter kept local; Postgres row was newer but empty");
+            }
+            if (pg != null && !isEmpty(localData)
+                    && (remote == null || !TaskRepository.preferRemote(local, remote))) {
+                try {
+                    pg.replaceAll(uid, localData.diary, localData.lists, localData.pagesRoot);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    postgres = null;
+                    System.out.println("Typewriter push failed: " + e.getMessage());
+                }
+            }
+        }
+        return null;
     }
 
     public static void save(Map<LocalDate, TypewriterPane.TwNote> diary,
@@ -202,23 +231,27 @@ public final class TypewriterStore {
             ex.printStackTrace();
             return;
         }
+        if (!NetworkWatch.isOnline()) return;
+        Data snap = new Data();
+        snap.diary.putAll(diary);
+        snap.lists.addAll(lists);
+        copyFolder(pagesRoot, snap.pagesRoot);
+        remoteIo.execute(() -> pushRemote(uid, snap));
+    }
+
+    private static void pushRemote(String uid, Data data) {
         PostgresTypewriterRepository pg = pg();
         if (pg != null) {
             try {
-                pg.replaceAll(uid, diary, lists, pagesRoot);
+                pg.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
             } catch (Exception ex) {
                 postgresAvailable = false;
                 postgres = null;
                 System.out.println("Typewriter Postgres save failed: " + ex.getMessage());
-                ex.printStackTrace();
             }
         }
         if (nodeReady()) {
             try {
-                Data data = new Data();
-                data.diary.putAll(diary);
-                data.lists.addAll(lists);
-                copyFolder(pagesRoot, data.pagesRoot);
                 Instant local = sqlite.lastUpdated(uid);
                 Api.INSTANCE.postTypewriter(
                         toBundle(data),

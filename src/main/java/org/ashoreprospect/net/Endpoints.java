@@ -96,7 +96,7 @@ public final class Endpoints {
     }
 
     public static String postgresUrl() {
-        return "jdbc:postgresql://" + jdbcHost() + ":5432/Scheduler";
+        return "jdbc:postgresql://" + jdbcHost() + ":5432/Scheduler?connectTimeout=2&socketTimeout=3";
     }
 
     public static String postgresPassword() {

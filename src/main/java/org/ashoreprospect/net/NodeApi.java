@@ -13,8 +13,8 @@ import java.util.Map;
 
 public class NodeApi {
 
-    private static final int CONNECT_MS = 8000;
-    private static final int READ_MS = 8000;
+    private static final int CONNECT_MS = 1500;
+    private static final int READ_MS = 2500;
     private static final int IMAGE_READ_MS = 60000;
 
     private String token;

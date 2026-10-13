@@ -269,7 +269,11 @@ public class TaskRepository {
             sqlite.setMeta("user_id", uid);
         }
 
-        if (postgresAvailable) {
+        boolean net = org.ashoreprospect.net.NetworkWatch.isOnline();
+        if (!net) {
+            System.out.println("Offline — SQLite only, skip Postgres/Node");
+            maybeWarnLocalStaleOffline();
+        } else if (postgresAvailable) {
             try {
                 fullOnlineSync();
             } catch (SQLException e) {
@@ -281,7 +285,7 @@ public class TaskRepository {
             maybeWarnLocalStaleOffline();
         }
 
-        if (Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank()) {
+        if (net && Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank()) {
             pullFromNode();
             System.out.println("sqlite tasks=" + sqlite.fetchAll().size()
                     + " blocked=" + sqlite.fetchAllBlocked().size());
