@@ -46,18 +46,24 @@ public final class LocalSession {
     }
 
     public static void savePrefs(boolean remember, String lastUsername) {
-        Properties p = new Properties();
+        Properties p = prefsOrEmpty();
         p.setProperty("remember", remember ? "true" : "false");
         p.setProperty("lastUser", lastUsername == null ? "" : lastUsername.trim());
-        try {
-            Files.createDirectories(PREFS.getParent());
-            try (OutputStream out = Files.newOutputStream(PREFS)) {
-                p.store(out, "ashore login prefs");
-            }
-        } catch (IOException e) {
-            System.err.println("login prefs save failed: " + e.getMessage());
-        }
+        writePrefs(p);
         if (!remember) clear();
+    }
+
+    /** Opt-in: random online security check after Remember-me auto-login. */
+    public static boolean wantRandomChallenge() {
+        Properties p = loadPrefs();
+        if (p == null) return false;
+        return "true".equalsIgnoreCase(p.getProperty("randomChallenge", "false"));
+    }
+
+    public static void setRandomChallenge(boolean on) {
+        Properties p = prefsOrEmpty();
+        p.setProperty("randomChallenge", on ? "true" : "false");
+        writePrefs(p);
     }
 
     public static boolean wantRemember() {
@@ -80,6 +86,22 @@ public final class LocalSession {
             return p;
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    private static Properties prefsOrEmpty() {
+        Properties p = loadPrefs();
+        return p == null ? new Properties() : p;
+    }
+
+    private static void writePrefs(Properties p) {
+        try {
+            Files.createDirectories(PREFS.getParent());
+            try (OutputStream out = Files.newOutputStream(PREFS)) {
+                p.store(out, "ashore login prefs");
+            }
+        } catch (IOException e) {
+            System.err.println("login prefs save failed: " + e.getMessage());
         }
     }
 

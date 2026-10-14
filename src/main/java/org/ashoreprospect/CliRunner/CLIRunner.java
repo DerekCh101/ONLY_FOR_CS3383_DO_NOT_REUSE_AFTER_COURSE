@@ -83,6 +83,11 @@ public class CLIRunner {
                         }
                         break;
 
+                    case "clearPast":
+                        Command clearPast = new ClearPastTasks(theSystem);
+                        clearPast.execute();
+                        break;
+
                     case "printAll":
                         Command printAll = new PrintAllTask(theSystem);
                         printAll.execute();

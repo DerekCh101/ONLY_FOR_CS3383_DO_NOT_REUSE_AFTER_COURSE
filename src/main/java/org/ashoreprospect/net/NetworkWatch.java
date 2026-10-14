@@ -2,6 +2,9 @@ package org.ashoreprospect.net;
 
 import java.net.NetworkInterface;
 import java.util.Enumeration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import org.ashoreprospect.SchedulerApp;
 
 /** Polls NIC up/down so login and the main window can toast Online / Offline. */
@@ -9,6 +12,7 @@ public final class NetworkWatch {
 
     private static volatile boolean running;
     private static volatile Boolean last;
+    private static final List<Consumer<Boolean>> listeners = new CopyOnWriteArrayList<>();
 
     private NetworkWatch() {}
 
@@ -41,10 +45,20 @@ public final class NetworkWatch {
                 last = now;
                 if (prev != null && prev != now) {
                     SchedulerApp.notifyNetwork(now);
+                    for (Consumer<Boolean> c : listeners) {
+                        try {
+                            c.accept(now);
+                        } catch (Exception ignored) {
+                        }
+                    }
                 }
             }
         }, "network-watch");
         t.setDaemon(true);
         t.start();
+    }
+
+    public static void addListener(Consumer<Boolean> listener) {
+        if (listener != null) listeners.add(listener);
     }
 }

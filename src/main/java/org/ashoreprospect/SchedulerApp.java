@@ -6,17 +6,16 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.geometry.Rectangle2D;
 import javafx.scene.Parent;
-import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import org.ashoreprospect.GUI.AppTheme;
 import org.ashoreprospect.GUI.ServerPickView;
+import org.ashoreprospect.GUI.WindowFrame;
 import org.ashoreprospect.net.Api;
 import org.ashoreprospect.net.Endpoints;
 import org.ashoreprospect.net.LoginView;
@@ -31,6 +30,7 @@ public class SchedulerApp extends Application {
     @Override
     public void start(Stage primaryStage) {
         stage = primaryStage;
+        WindowFrame.install(stage);
         NetworkWatch.start();
         if (Api.INSTANCE.restoreSession()) {
             showMain();
@@ -53,6 +53,7 @@ public class SchedulerApp extends Application {
         Api.INSTANCE.logout();
         resetPostgres();
         TaskManagementSystem.resetInstance();
+        org.ashoreprospect.GUI.AppTheme.clearListeners();
         Platform.runLater(SchedulerApp::showLogin);
     }
 
@@ -66,8 +67,8 @@ public class SchedulerApp extends Application {
         StackPane wrap = new StackPane(pick);
         wrap.setStyle("-fx-background-color: #1c2430;");
         setStageRoot(wrap);
-        stage.setMaximized(true);
-        stage.setTitle("Scheduler");
+        stage.setTitle("Ashore Prospect");
+        WindowFrame.snapWorkArea();
         stage.show();
 
     }
@@ -108,14 +109,9 @@ public class SchedulerApp extends Application {
         VBox box = new VBox(16, spin, msg);
         box.setAlignment(Pos.CENTER);
         box.setStyle("-fx-background-color: #1c2430;");
-        Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-        if (stage.getScene() == null) {
-            stage.setScene(new Scene(box, bounds.getWidth(), bounds.getHeight()));
-        } else {
-            stage.getScene().setRoot(box);
-        }
-        stage.setTitle("Scheduler");
-        stage.setMaximized(true);
+        setStageRoot(box);
+        stage.setTitle("Ashore Prospect");
+        WindowFrame.snapWorkArea();
         stage.show();
     }
 
@@ -126,14 +122,9 @@ public class SchedulerApp extends Application {
             if (loader.getController() == null) {
                 System.err.println("FXML controller is null");
             }
-            if (stage.getScene() == null) {
-                Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-                stage.setScene(new Scene(root, bounds.getWidth(), bounds.getHeight()));
-            } else {
-                stage.getScene().setRoot(root);
-            }
-            stage.setTitle("Scheduler");
-            stage.setMaximized(true);
+            setStageRoot(root);
+            stage.setTitle("Ashore Prospect");
+            WindowFrame.snapWorkArea();
             stage.show();
         } catch (Exception e) {
             e.printStackTrace();
@@ -141,32 +132,10 @@ public class SchedulerApp extends Application {
         }
     }
 
-    private static void setStageRoot(Parent root) {
+    public static void setStageRoot(Parent root) {
         if (stage == null) return;
-        boolean maximized = stage.isMaximized();
-        boolean fullScreen = stage.isFullScreen();
-        double w = stage.getWidth();
-        double h = stage.getHeight();
-        if (w <= 1 || h <= 1 || Double.isNaN(w) || Double.isNaN(h)) {
-            Rectangle2D bounds = Screen.getPrimary().getVisualBounds();
-            w = bounds.getWidth();
-            h = bounds.getHeight();
-        }
-        if (stage.getScene() == null) {
-            stage.setScene(new Scene(root, w, h));
-        } else {
-            stage.getScene().setRoot(root);
-        }
-        stage.setTitle("Scheduler");
-        if (fullScreen) {
-            stage.setFullScreen(true);
-        } else {
-            stage.setMaximized(maximized);
-            if (!maximized) {
-                stage.setWidth(w);
-                stage.setHeight(h);
-            }
-        }
+        WindowFrame.setContent(root);
+        AppTheme.apply(stage.getScene());
         stage.show();
     }
 
@@ -182,14 +151,17 @@ public class SchedulerApp extends Application {
     private static void showToast(String msg, boolean bad) {
         if (stage == null || stage.getScene() == null) return;
         Parent root = stage.getScene().getRoot();
-        if (!(root instanceof StackPane stack)) return;
+        StackPane stack = root instanceof StackPane s
+                ? s
+                : org.ashoreprospect.GUI.WindowFrame.frame();
+        if (stack == null) return;
         Label toast = new Label(msg);
         toast.setStyle(
                 (bad
                         ? "-fx-background-color: #8b1e1e; -fx-text-fill: #f3eee4;"
                         : "-fx-background-color: #1c2430; -fx-text-fill: #f3eee4;")
                         + "-fx-background-radius: 8; -fx-padding: 10 16; -fx-font-size: 13px;"
-                        + "-fx-font-family: Georgia; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 16, 0.2, 0, 4);"
+                        + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 16, 0.2, 0, 4);"
         );
         StackPane.setAlignment(toast, Pos.BOTTOM_CENTER);
         StackPane.setMargin(toast, new Insets(0, 0, 28, 0));

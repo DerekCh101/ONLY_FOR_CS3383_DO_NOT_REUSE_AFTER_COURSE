@@ -162,6 +162,7 @@ public class TaskDialogs {
                 listScroll
         );
         currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
         popupIsOpen = true;
         setupEscHandler(scene);
     }
@@ -171,6 +172,7 @@ public class TaskDialogs {
         BlockedTimePeriod holder = system.getBlockedTime();
         if (holder == null || holder.blockedPeriod == null || holder.blockedPeriod.isEmpty()) {
             listBox.getChildren().add(new Label("(none)"));
+            GuiHelper.paintInk(listBox);
             return;
         }
         List<BlockedTime> items = new ArrayList<>(holder.blockedPeriod);
@@ -209,6 +211,7 @@ public class TaskDialogs {
             });
             listBox.getChildren().add(row);
         }
+        GuiHelper.paintInk(listBox);
     }
 
     public void showTaskInfoPopup(Task task, LocalDate date, int slotIndex) {
@@ -260,6 +263,7 @@ public class TaskDialogs {
 
         content.getChildren().addAll(title, nameLabel, typeLabel, durationLabel, extraLabel, placedLabel, buttonBox);
         currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
         popupIsOpen = true;
 
         finishBtn.setOnAction(e -> {
@@ -311,6 +315,7 @@ public class TaskDialogs {
         durationSpinner.setValueFactory(durationFactory);
         durationSpinner.setEditable(true);
         durationSpinner.setPrefWidth(100);
+        GuiHelper.styleSpinner(durationSpinner);
 
         ToggleGroup typeGroup = new ToggleGroup();
         RadioButton fixedRadio = new RadioButton("Fixed");
@@ -367,6 +372,7 @@ public class TaskDialogs {
         );
 
         currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
         popupIsOpen = true;
 
         saveBtn.setOnAction(e -> {
@@ -518,6 +524,7 @@ public class TaskDialogs {
         Button ok = new Button("Okay");
 
         box.getChildren().addAll(msg, ok);
+        GuiHelper.paintInk(box);
         overlay.getChildren().add(box);
         StackPane.setAlignment(box, Pos.CENTER);
         root.getChildren().add(overlay);
@@ -559,6 +566,7 @@ public class TaskDialogs {
         HBox buttons = new HBox(10, discard, cancel);
 
         box.getChildren().addAll(msg, buttons);
+        GuiHelper.paintInk(box);
         pane.getChildren().add(box);
         currentConfirmOverlay.getChildren().add(pane);
         root.getChildren().add(currentConfirmOverlay);

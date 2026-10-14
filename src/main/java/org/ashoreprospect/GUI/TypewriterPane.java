@@ -4,6 +4,7 @@ import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -151,6 +152,8 @@ public class TypewriterPane extends BorderPane {
     private final Label dateLabel = new Label();
     private final HBox photoStrip = new HBox(8);
     private final VBox noteEditor = new VBox(12);
+    private HBox rail;
+    private VBox leftWrap;
     private TwNote currentNote;
     private boolean fillingEditor;
     private boolean fillingList;
@@ -162,13 +165,11 @@ public class TypewriterPane extends BorderPane {
 
     public TypewriterPane() {
         getStyleClass().add("typewriter-root");
-        setStyle("-fx-background-color: #f3eee4;");
         saveDebounce.setOnFinished(e -> saveAll());
 
-        HBox rail = new HBox(8, tabDiary, tabLists, tabPages);
+        rail = new HBox(8, tabDiary, tabLists, tabPages);
         rail.setPadding(new Insets(14, 16, 8, 16));
         rail.setAlignment(Pos.CENTER_LEFT);
-        rail.setStyle("-fx-background-color: #e7dfd0;");
         tabDiary.setOnAction(e -> showMode(Mode.DIARY));
         tabLists.setOnAction(e -> showMode(Mode.LISTS));
         tabPages.setOnAction(e -> showMode(Mode.PAGES));
@@ -182,9 +183,8 @@ public class TypewriterPane extends BorderPane {
         leftStack.getChildren().addAll(pagesNav, listsNav, diaryNav);
         centerStack.getChildren().addAll(listsEditor, noteEditor);
 
-        VBox leftWrap = new VBox(leftStack);
+        leftWrap = new VBox(leftStack);
         leftWrap.setPrefWidth(280);
-        leftWrap.setStyle("-fx-background-color: #e7dfd0;");
 
         BorderPane body = new BorderPane();
         body.setTop(rail);
@@ -193,8 +193,60 @@ public class TypewriterPane extends BorderPane {
         layers.getChildren().add(body);
         setCenter(layers);
 
+        applyTheme();
         applyLoaded(TypewriterStore.load(), true);
         TypewriterStore.syncRemoteInBackground(fresh -> Platform.runLater(() -> applyLoaded(fresh, false)));
+    }
+
+    public void applyTheme() {
+        setStyle("-fx-background-color: " + AppTheme.typewriterBg() + ";");
+        if (rail != null) rail.setStyle("-fx-background-color: " + AppTheme.typewriterRail() + ";");
+        if (leftWrap != null) leftWrap.setStyle("-fx-background-color: " + AppTheme.typewriterRail() + ";");
+        diaryMonthLbl.setStyle("-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 14px; -fx-text-fill: "
+                + AppTheme.ink() + ";");
+        dateLabel.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 12px;");
+        titleField.setStyle(twTitleCss());
+        listTitleField.setStyle(twTitleCss());
+        bodyArea.setStyle(twBodyCss());
+        addItemField.setStyle(twItemCss());
+        rebuildCalendar();
+        rebuildListRows();
+        restylePills(this);
+        showMode(mode);
+    }
+
+    private static void restylePills(javafx.scene.Node n) {
+        if (n instanceof Button b) {
+            String s = b.getStyle() == null ? "" : b.getStyle();
+            if (s.contains("-fx-border-radius: 8")) b.setStyle(pillCss());
+        }
+        if (n instanceof javafx.scene.Parent p) {
+            for (javafx.scene.Node c : p.getChildrenUnmodifiable()) restylePills(c);
+        }
+    }
+
+    private static String twTitleCss() {
+        return "-fx-background-color: transparent; -fx-border-width: 0 0 1 0; "
+                + "-fx-border-color: " + AppTheme.muted() + "; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; "
+                + "-fx-font-size: 22px; -fx-text-fill: " + AppTheme.ink() + "; -fx-padding: 6 0;";
+    }
+
+    private static String twBodyCss() {
+        String paper = AppTheme.isDark() ? "#1a222c" : "#fbf7ef";
+        return "-fx-background-color: " + paper + "; -fx-control-inner-background: " + paper
+                + "; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 15px; -fx-border-color: transparent; "
+                + "-fx-text-fill: " + AppTheme.ink() + ";";
+    }
+
+    private static String twItemCss() {
+        String paper = AppTheme.isDark() ? "#1a222c" : "#fbf7ef";
+        return "-fx-background-color: " + paper + "; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 14px; "
+                + "-fx-text-fill: " + AppTheme.ink() + ";";
+    }
+
+    private static void mute(Label l) {
+        l.getStyleClass().add("tw-muted");
+        l.setStyle("-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 13px;");
     }
 
     private void applyLoaded(TypewriterStore.Data data, boolean seedIfEmpty) {
@@ -265,11 +317,13 @@ public class TypewriterPane extends BorderPane {
                                     Runnable onYes) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.ink() + ";");
         Label m = new Label(body);
         m.setWrapText(true);
+        m.setStyle("-fx-text-fill: " + AppTheme.ink() + ";");
         Button yes = new Button(yesText);
         Button no = new Button(noText);
+        no.setStyle("-fx-text-fill: " + AppTheme.ink() + ";");
         HBox buttons = new HBox(10, yes, no);
         box.getChildren().addAll(h, m, buttons);
         showOverlayBox(box);
@@ -283,9 +337,10 @@ public class TypewriterPane extends BorderPane {
     private void showNoticeOverlay(String header, String body) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.ink() + ";");
         Label m = new Label(body);
         m.setWrapText(true);
+        m.setStyle("-fx-text-fill: " + AppTheme.ink() + ";");
         Button ok = new Button("Okay");
         box.getChildren().addAll(h, m, ok);
         showOverlayBox(box);
@@ -295,8 +350,9 @@ public class TypewriterPane extends BorderPane {
     private void showPromptOverlay(String header, String seed, Consumer<String> onOk) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.ink() + ";");
         TextField field = new TextField(seed == null ? "" : seed);
+        field.setStyle(AppTheme.fieldCss());
         Button save = new Button("Save");
         Button cancel = new Button("Cancel");
         HBox buttons = new HBox(10, save, cancel);
@@ -353,21 +409,24 @@ public class TypewriterPane extends BorderPane {
     }
 
     private String railOn() {
-        return "-fx-background-color: #fbf7ef; -fx-text-fill: #1c2430; -fx-background-radius: 8; "
-                + "-fx-padding: 8 16; -fx-font-family: Georgia; -fx-font-size: 13px;";
+        return AppTheme.railOn();
     }
 
     private String railOff() {
-        return "-fx-background-color: transparent; -fx-text-fill: #6a5c4a; -fx-background-radius: 8; "
-                + "-fx-padding: 8 16; -fx-font-family: Georgia; -fx-font-size: 13px;";
+        return AppTheme.railOff();
     }
 
     private Button pill(String text) {
         Button b = new Button(text);
         b.setMaxWidth(Double.MAX_VALUE);
-        b.setStyle("-fx-background-color: #fbf7ef; -fx-border-color: #c9bba6; "
-                + "-fx-background-radius: 8; -fx-border-radius: 8; -fx-font-size: 12px;");
+        b.setStyle(pillCss());
         return b;
+    }
+
+    private static String pillCss() {
+        return "-fx-background-color: " + AppTheme.paper() + "; -fx-border-color: "
+                + AppTheme.muted() + "; -fx-background-radius: 8; -fx-border-radius: 8; "
+                + "-fx-font-size: 12px; -fx-text-fill: " + AppTheme.ink() + ";";
     }
 
     private void showMode(Mode next) {
@@ -407,7 +466,7 @@ public class TypewriterPane extends BorderPane {
 
     private void buildDiaryNav() {
         Label sideTitle = new Label("DIARY");
-        sideTitle.setStyle("-fx-font-family: Georgia; -fx-font-size: 13px; -fx-text-fill: #6a5c4a;");
+        mute(sideTitle);
 
         Button prev = pill("<");
         Button next = pill(">");
@@ -421,7 +480,8 @@ public class TypewriterPane extends BorderPane {
             diaryMonth = diaryMonth.plusMonths(1);
             rebuildCalendar();
         });
-        diaryMonthLbl.setStyle("-fx-font-family: Georgia; -fx-font-size: 14px;");
+        diaryMonthLbl.setStyle("-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 14px; -fx-text-fill: "
+                + AppTheme.ink() + ";");
         HBox monthRow = new HBox(8, prev, diaryMonthLbl, next);
         monthRow.setAlignment(Pos.CENTER);
 
@@ -448,7 +508,7 @@ public class TypewriterPane extends BorderPane {
 
         calBox.getChildren().addAll(monthRow, diaryCal, today, find, clearDay, prune);
 
-        findTitle.setStyle("-fx-font-family: Georgia; -fx-font-size: 13px; -fx-text-fill: #6a5c4a;");
+        mute(findTitle);
         findList.setPrefHeight(280);
         findList.setOnMouseClicked(e -> {
             if (e.getClickCount() >= 1) onFindPick();
@@ -604,7 +664,8 @@ public class TypewriterPane extends BorderPane {
         String[] heads = {"M", "T", "W", "T", "F", "S", "S"};
         for (int i = 0; i < 7; i++) {
             Label h = new Label(heads[i]);
-            h.setStyle("-fx-text-fill: #8a7b66; -fx-font-size: 11px;");
+            h.getStyleClass().add("tw-muted");
+            h.setStyle("-fx-font-size: 11px;");
             diaryCal.add(h, i, 0);
         }
 
@@ -620,9 +681,9 @@ public class TypewriterPane extends BorderPane {
             boolean selected = date.equals(diaryDate);
             boolean isToday = date.equals(today);
             boolean has = hasWriting(diaryPages.get(date));
-            String border = isToday ? "#1c2430" : "#c9bba6";
-            String bg = selected ? "#1c2430" : "#fbf7ef";
-            String fg = selected ? "#fbf7ef" : "#1c2430";
+            String border = isToday ? AppTheme.ink() : AppTheme.muted();
+            String bg = selected ? "#1c2430" : AppTheme.paper();
+            String fg = selected ? "#fbf7ef" : AppTheme.ink();
             String weight = has ? "bold" : "normal";
             cell.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + fg
                     + "; -fx-border-color: " + border + "; -fx-font-weight: " + weight
@@ -670,7 +731,7 @@ public class TypewriterPane extends BorderPane {
 
     private void buildListsNav() {
         Label sideTitle = new Label("LISTS");
-        sideTitle.setStyle("-fx-font-family: Georgia; -fx-font-size: 13px; -fx-text-fill: #6a5c4a;");
+        mute(sideTitle);
         listNames.setPrefHeight(320);
         listNames.getSelectionModel().selectedItemProperty().addListener((o, a, b) -> openList(b));
         Button add = pill("New list");
@@ -703,8 +764,7 @@ public class TypewriterPane extends BorderPane {
 
     private void buildListsEditor() {
         listTitleField.setPromptText("List name");
-        listTitleField.setStyle("-fx-background-color: transparent; -fx-border-width: 0 0 1 0; "
-                + "-fx-border-color: #c9bba6; -fx-font-family: Georgia; -fx-font-size: 22px;");
+        listTitleField.setStyle(twTitleCss());
         listTitleField.textProperty().addListener((o, a, b) -> {
             if (fillingList || currentList == null) return;
             currentList.title = b == null || b.isBlank() ? "Untitled list" : b;
@@ -713,7 +773,7 @@ public class TypewriterPane extends BorderPane {
         });
 
         addItemField.setPromptText("Add item and press Enter");
-        addItemField.setStyle("-fx-background-color: #fbf7ef; -fx-font-family: Georgia; -fx-font-size: 14px;");
+        addItemField.setStyle(twItemCss());
         Button addRow = pill("Add");
         addRow.setMaxWidth(80);
         Runnable addItem = () -> {
@@ -767,7 +827,7 @@ public class TypewriterPane extends BorderPane {
             });
             TextField tf = new TextField(item.text);
             tf.setPromptText("Item");
-            tf.setStyle("-fx-background-color: #fbf7ef; -fx-font-family: Georgia; -fx-font-size: 14px;");
+            tf.setStyle(twItemCss());
             tf.textProperty().addListener((o, a, b) -> {
                 item.text = b == null ? "" : b;
                 touch();
@@ -787,7 +847,7 @@ public class TypewriterPane extends BorderPane {
 
     private void buildPagesNav() {
         Label sideTitle = new Label("PAGES");
-        sideTitle.setStyle("-fx-font-family: Georgia; -fx-font-size: 13px; -fx-text-fill: #6a5c4a;");
+        mute(sideTitle);
 
         TreeItem<Object> rootItem = new TreeItem<>(pagesRoot);
         rootItem.setExpanded(true);
@@ -841,8 +901,7 @@ public class TypewriterPane extends BorderPane {
 
     private void buildNoteEditor() {
         titleField.setPromptText("Title");
-        titleField.setStyle("-fx-background-color: transparent; -fx-border-width: 0 0 1 0; "
-                + "-fx-border-color: #c9bba6; -fx-font-family: Georgia; -fx-font-size: 22px; -fx-padding: 6 0;");
+        titleField.setStyle(twTitleCss());
         titleField.textProperty().addListener((o, a, b) -> {
             if (fillingEditor || currentNote == null) return;
             currentNote.title = b;
@@ -851,12 +910,11 @@ public class TypewriterPane extends BorderPane {
             touch();
         });
 
-        dateLabel.setStyle("-fx-text-fill: #8a7b66; -fx-font-size: 12px;");
+        dateLabel.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 12px;");
 
         bodyArea.setWrapText(true);
         bodyArea.setPromptText("Start typing…");
-        bodyArea.setStyle("-fx-background-color: #fbf7ef; -fx-control-inner-background: #fbf7ef; "
-                + "-fx-font-family: Georgia; -fx-font-size: 15px; -fx-border-color: transparent;");
+        bodyArea.setStyle(twBodyCss());
         bodyArea.textProperty().addListener((o, a, b) -> {
             if (fillingEditor || currentNote == null) return;
             currentNote.body = b == null ? "" : b;
@@ -958,8 +1016,60 @@ public class TypewriterPane extends BorderPane {
             ImageView iv = new ImageView(new Image(file.toURI().toString(), 72, 72, true, true));
             iv.setFitWidth(72);
             iv.setFitHeight(72);
+            iv.setPreserveRatio(true);
+            iv.setCursor(Cursor.HAND);
+            iv.setOnMouseClicked(e -> showPhotoFull(file));
             photoStrip.getChildren().add(iv);
         }
+    }
+
+    private void showPhotoFull(File file) {
+        if (file == null || !file.isFile()) return;
+        Image full = new Image(file.toURI().toString(), false);
+        ImageView iv = new ImageView(full);
+        iv.setPreserveRatio(true);
+        iv.setSmooth(true);
+        iv.setCursor(Cursor.HAND);
+        ScrollPane scroll = new ScrollPane(iv);
+        scroll.setPannable(true);
+        scroll.setFitToWidth(false);
+        scroll.setFitToHeight(false);
+        scroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        scroll.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        final boolean[] actualPixels = {false};
+        Runnable applySize = () -> {
+            if (overlay == null) return;
+            if (actualPixels[0]) {
+                iv.setFitWidth(0);
+                iv.setFitHeight(0);
+                if (full.getWidth() > 0) {
+                    iv.setFitWidth(full.getWidth());
+                    iv.setFitHeight(full.getHeight());
+                }
+            } else {
+                double w = Math.max(200, overlay.getWidth() * 0.92);
+                double h = Math.max(200, overlay.getHeight() * 0.88);
+                iv.setFitWidth(w);
+                iv.setFitHeight(h);
+            }
+        };
+        iv.setOnMouseClicked(e -> {
+            actualPixels[0] = !actualPixels[0];
+            applySize.run();
+        });
+        Label hint = new Label("Click photo: full pixels  ·  Esc or dim area: close");
+        hint.setStyle("-fx-text-fill: #f3eee4; -fx-font-size: 12px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        VBox box = new VBox(8, hint, scroll);
+        box.setAlignment(Pos.CENTER);
+        box.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+        showOverlayBox(box);
+        overlay.setOnMouseClicked(e -> {
+            if (e.getTarget() == overlay) dismissOverlay();
+        });
+        overlay.widthProperty().addListener((o, a, b) -> applySize.run());
+        overlay.heightProperty().addListener((o, a, b) -> applySize.run());
+        Platform.runLater(applySize);
     }
 
     private TreeItem<Object> findFirstNote(TreeItem<Object> item) {

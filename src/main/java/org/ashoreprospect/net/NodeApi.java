@@ -15,6 +15,7 @@ public class NodeApi {
 
     private static final int CONNECT_MS = 1500;
     private static final int READ_MS = 2500;
+    private static final int AUTH_READ_MS = 12000;
     private static final int IMAGE_READ_MS = 60000;
 
     private String token;
@@ -22,7 +23,7 @@ public class NodeApi {
     private String username;
 
     public void register(String user, String password) throws Exception {
-        applySession(authenticate(true, user, password));
+        throw new IllegalStateException("register needs email and a security question");
     }
 
     public void login(String user, String password) throws Exception {
@@ -30,7 +31,15 @@ public class NodeApi {
     }
 
     public AuthResult authenticate(boolean register, String user, String password) throws Exception {
-        return postAuth(register ? "/register" : "/login", user, password);
+        if (register) {
+            throw new IllegalStateException("register needs email and a security question");
+        }
+        return postAuth("/login", user, password, null, null, null);
+    }
+
+    public AuthResult registerAccount(String user, String password, String email,
+                                      String question, String answer) throws Exception {
+        return postAuth("/register", user, password, email, question, answer);
     }
 
     public void applySession(AuthResult r) {
@@ -150,15 +159,96 @@ public class NodeApi {
         return firstObject(json);
     }
 
+    public Map<String, String> getMe() throws Exception {
+        return firstObject(request("GET", "/me", null, true, READ_MS));
+    }
+
+    public Map<String, String> saveEmail(String email) throws Exception {
+        String body = "{\"email\":\"" + escape(email == null ? "" : email) + "\"}";
+        return firstObject(request("POST", "/me/email", body, true, READ_MS));
+    }
+
+    public Map<String, String> saveUsername(String username) throws Exception {
+        String body = "{\"username\":\"" + escape(username == null ? "" : username) + "\"}";
+        Map<String, String> out = firstObject(request("POST", "/me/username", body, true, READ_MS));
+        String next = out.get("username");
+        if (next != null && !next.isBlank()) {
+            this.username = next;
+            if (LocalSession.wantRemember() && token != null) {
+                LocalSession.save(userId, next, token);
+            }
+        }
+        return out;
+    }
+
+    public List<Map<String, String>> getSessions() throws Exception {
+        String json = request("GET", "/sessions", null, true, READ_MS);
+        return objectsIn(json, "sessions");
+    }
+
+    public Map<String, String> revokeOtherSessions() throws Exception {
+        return firstObject(request("POST", "/sessions/revoke-others", "{}", true, READ_MS));
+    }
+
+    public Map<String, String> revokeSession(String sessionId) throws Exception {
+        return firstObject(request("DELETE", "/sessions/" + sessionId, null, true, READ_MS));
+    }
+
+    public Map<String, String> saveSecurity(String question, String answer) throws Exception {
+        String body = "{\"question\":\"" + escape(question) + "\",\"answer\":\"" + escape(answer) + "\"}";
+        return firstObject(request("POST", "/me/security", body, true, READ_MS));
+    }
+
+    public Map<String, String> changePassword(String oldPassword, String newPassword) throws Exception {
+        String body = "{\"oldPassword\":\"" + escape(oldPassword)
+                + "\",\"newPassword\":\"" + escape(newPassword) + "\"}";
+        return firstObject(request("POST", "/change-password", body, true, READ_MS));
+    }
+
+    public Map<String, String> challengeQuestion() throws Exception {
+        return firstObject(request("GET", "/challenge-question", null, true, READ_MS));
+    }
+
+    public Map<String, String> challengeAnswer(String answer) throws Exception {
+        String body = "{\"answer\":\"" + escape(answer) + "\"}";
+        return firstObject(request("POST", "/challenge-answer", body, true, READ_MS));
+    }
+
+    public Map<String, String> forgotPassword(String username, String email) throws Exception {
+        String body = "{\"username\":\"" + escape(username) + "\",\"email\":\"" + escape(email) + "\"}";
+        return firstObject(request("POST", "/forgot", body, false, AUTH_READ_MS));
+    }
+
+    public Map<String, String> resetPassword(String token, String answer, String newPassword) throws Exception {
+        String body = "{\"token\":\"" + escape(token)
+                + "\",\"answer\":\"" + escape(answer)
+                + "\",\"newPassword\":\"" + escape(newPassword) + "\"}";
+        return firstObject(request("POST", "/reset", body, false, AUTH_READ_MS));
+    }
+
     private void apply(AuthResult r) {
         this.token = r.token;
         this.userId = r.userId;
         this.username = r.username;
     }
 
-    private AuthResult postAuth(String path, String user, String password) throws Exception {
-        String body = "{\"username\":\"" + escape(user) + "\",\"password\":\"" + escape(password) + "\"}";
-        String json = request("POST", path, body, false, READ_MS);
+    private AuthResult postAuth(String path, String user, String password,
+                                String email, String question, String answer) throws Exception {
+        StringBuilder body = new StringBuilder();
+        body.append("{\"username\":\"").append(escape(user))
+                .append("\",\"password\":\"").append(escape(password))
+                .append("\",\"device\":\"").append(escape(deviceLabel())).append('"');
+        if (email != null) {
+            body.append(",\"email\":\"").append(escape(email)).append('"');
+        }
+        if (question != null) {
+            body.append(",\"question\":\"").append(escape(question)).append('"');
+        }
+        if (answer != null) {
+            body.append(",\"answer\":\"").append(escape(answer)).append('"');
+        }
+        body.append('}');
+        String json = request("POST", path, body.toString(), false, READ_MS);
 
         AuthResult r = new AuthResult();
         r.token = first(extract(json, "token"), extract(json, "accessToken"));
@@ -180,6 +270,7 @@ public class NodeApi {
         c.setConnectTimeout(CONNECT_MS);
         c.setReadTimeout(readMs);
         c.setRequestProperty("Accept", "application/json");
+        c.setRequestProperty("User-Agent", deviceLabel());
         if (auth) {
             c.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -191,15 +282,23 @@ public class NodeApi {
             }
         }
 
-        int code = c.getResponseCode();
-        String json = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
+        try {
+            int code = c.getResponseCode();
+            String json = read(code >= 400 ? c.getErrorStream() : c.getInputStream());
 
-        if (code < 200 || code >= 300) {
-            String msg = extract(json, "message");
-            if (msg == null) msg = extract(json, "error");
-            throw new IllegalStateException(msg != null ? msg : ("HTTP " + code));
+            if (code < 200 || code >= 300) {
+                String msg = extract(json, "message");
+                if (msg == null) msg = extract(json, "error");
+                throw new IllegalStateException(friendlyError(path, code, msg));
+            }
+            return json;
+        } catch (java.net.SocketTimeoutException e) {
+            if (path != null && path.contains("forgot")) {
+                throw new IllegalStateException(
+                        "Timed out waiting for mail. The token and question are on the host Node terminal.");
+            }
+            throw e;
         }
-        return json;
     }
 
     private static String read(InputStream in) throws Exception {
@@ -218,6 +317,30 @@ public class NodeApi {
                 .replace("\r", "\\r")
                 .replace("\n", "\\n")
                 .replace("\t", "\\t");
+    }
+
+    static String friendlyError(String path, int code, String msg) {
+        String m = msg == null ? "" : msg.trim();
+        String low = m.toLowerCase();
+        boolean pw = path != null && path.contains("password");
+        if (pw && (code == 404 || low.contains("not found") || low.contains("no route"))) {
+            return "Change password is not on this Node yet. Restart Node on the host PC "
+                    + "(the process listening on port 3456), then try again.";
+        }
+        if (pw && (low.contains("current password") || (code == 401 && low.contains("wrong")))) {
+            return "Current password is wrong.";
+        }
+        if (pw && (low.contains("min 8") || low.contains("too short"))) {
+            return "New password must be at least 8 characters.";
+        }
+        if (code == 401 && (low.contains("login") || low.isBlank())) {
+            return "Your login expired. Sign in again, then retry.";
+        }
+        if (code == 404 || "not found".equalsIgnoreCase(m)) {
+            return "The server does not have " + path
+                    + ". Restart Node on the host PC after updating, then try again.";
+        }
+        return m.isBlank() ? ("Server error " + code) : m;
     }
 
     private static String first(String... xs) {
@@ -386,6 +509,16 @@ public class NodeApi {
             }
         }
         return -1;
+    }
+
+    public static String deviceLabel() {
+        String os = System.getProperty("os.name", "Java");
+        String host = "pc";
+        try {
+            host = java.net.InetAddress.getLocalHost().getHostName();
+        } catch (Exception ignored) {
+        }
+        return "JavaFX · " + os + " · " + host;
     }
 
     public static final class AuthResult {

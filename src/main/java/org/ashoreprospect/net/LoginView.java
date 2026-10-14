@@ -3,7 +3,6 @@ package org.ashoreprospect.net;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -16,110 +15,198 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import org.ashoreprospect.db.TaskRepository;
 
+import java.util.Map;
+
 import static org.ashoreprospect.SchedulerApp.showServerPick;
 
 public class LoginView {
 
     public void show(Stage stage, Runnable onOk) {
-        Label kicker = new Label("ACCOUNT");
-        kicker.setStyle("-fx-text-fill: #6b6358; -fx-font-size: 11px; -fx-font-family: Georgia;");
+        VBox[] loginHold = new VBox[1];
+        VBox[] resetHold = new VBox[1];
+        VBox[] registerHold = new VBox[1];
+        loginHold[0] = buildLoginCard(onOk, () -> {
+            loginHold[0].setVisible(false);
+            registerHold[0].setVisible(true);
+        }, () -> {
+            loginHold[0].setVisible(false);
+            resetHold[0].setVisible(true);
+        });
+        registerHold[0] = buildRegisterCard(onOk, () -> {
+            registerHold[0].setVisible(false);
+            loginHold[0].setVisible(true);
+        });
+        resetHold[0] = buildResetCard(() -> {
+            resetHold[0].setVisible(false);
+            loginHold[0].setVisible(true);
+        });
+        registerHold[0].setVisible(false);
+        resetHold[0].setVisible(false);
 
-        Label title = new Label("Sign in");
-        title.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #1c2430; -fx-font-family: Georgia;");
+        StackPane root = new StackPane(loginHold[0], registerHold[0], resetHold[0]);
+        root.setStyle("-fx-background-color: #1c2430;");
+        root.setPadding(new Insets(40));
+        StackPane.setAlignment(loginHold[0], Pos.CENTER);
+        StackPane.setAlignment(registerHold[0], Pos.CENTER);
+        StackPane.setAlignment(resetHold[0], Pos.CENTER);
 
-        Label where = new Label(org.ashoreprospect.net.Endpoints.nodeBase());
-        where.setWrapText(true);
-        where.setStyle("-fx-text-fill: #5c564c; -fx-font-size: 12px; -fx-font-family: Georgia;");
+        org.ashoreprospect.SchedulerApp.setStageRoot(root);
+        stage.setTitle("Ashore Prospect");
+        org.ashoreprospect.GUI.WindowFrame.snapWorkArea();
+        stage.show();
+    }
 
-        TextField user = new TextField();
-        user.setPromptText("username");
-        user.setStyle(fieldStyle());
+    private VBox buildLoginCard(Runnable onOk, Runnable showRegister, Runnable showReset) {
+        Label kicker = muted("ACCOUNT");
+        Label title = heading("Sign in");
+        Label where = muted(Endpoints.nodeBase());
 
-        PasswordField pass = new PasswordField();
-        pass.setPromptText("password");
-        pass.setStyle(fieldStyle());
+        TextField user = field("username");
+        PasswordField pass = secret("password");
         String last = LocalSession.lastUsername();
         if (!last.isBlank()) user.setText(last);
 
         CheckBox remember = new CheckBox("Remember login");
         remember.setSelected(LocalSession.wantRemember());
-        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: Georgia;");
-        Label rememberHint = new Label(
-                "Checked: next launch skips this screen and opens the local cache, even offline."
-        );
-        rememberHint.setWrapText(true);
-        rememberHint.setStyle("-fx-text-fill: #5c564c; -fx-font-size: 12px; -fx-font-family: Georgia;");
+        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        Label rememberHint = muted("Checked: next launch skips this screen and opens the local cache, even offline.");
 
-        Label err = new Label();
-        err.setWrapText(true);
-        err.setStyle("-fx-text-fill: #8b1e1e; -fx-font-size: 13px;");
-
+        Label err = error();
         Button login = new Button("Login");
         Button register = new Button("Register");
         Button changeServer = new Button("Change server");
+        Button forgot = new Button("Forgot password");
         stylePrimary(login);
         styleGhost(register);
         styleGhost(changeServer);
-        login.setMaxWidth(Double.MAX_VALUE);
-        register.setMaxWidth(Double.MAX_VALUE);
-        changeServer.setMaxWidth(Double.MAX_VALUE);
+        styleGhost(forgot);
+        stretch(login, register, changeServer, forgot);
 
-        login.setOnAction(e -> go(
-                false, user.getText(), pass.getText(), remember.isSelected(), err, login, register, onOk
-        ));
-        register.setOnAction(e -> go(
-                true, user.getText(), pass.getText(), remember.isSelected(), err, login, register, onOk
-        ));
+        login.setOnAction(e -> goLogin(user.getText(), pass.getText(), remember.isSelected(),
+                err, login, register, onOk));
         changeServer.setOnAction(e -> showServerPick());
 
-        VBox card = new VBox(
-                12, kicker, title, where, user, pass, remember, rememberHint, login, register, changeServer, err
-        );
-        card.setPadding(new Insets(36, 40, 36, 40));
-        card.setMaxWidth(420);
-        card.setPrefWidth(420);
-        card.setStyle(
-                "-fx-background-color: #f3eee4;"
-                        + "-fx-background-radius: 16;"
-                        + "-fx-border-color: #d9d0c0;"
-                        + "-fx-border-radius: 16;"
-                        + "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 24, 0.2, 0, 8);"
+        VBox card = card(
+                kicker, title, where, user, pass, remember, rememberHint,
+                login, register, forgot, changeServer, err
         );
 
-        StackPane root = new StackPane(card);
-        root.setStyle("-fx-background-color: #1c2430;");
-        root.setPadding(new Insets(40));
-        StackPane.setAlignment(card, Pos.CENTER);
-
-        if (stage.getScene() == null) {
-            stage.setScene(new Scene(root, 900, 640));
-        } else {
-            stage.getScene().setRoot(root);
-        }
-        stage.setTitle("login");
-        stage.setMaximized(true);
-        stage.show();
+        register.setOnAction(e -> showRegister.run());
+        forgot.setOnAction(e -> showReset.run());
+        return card;
     }
 
-    private void go(boolean register, String user, String password, boolean remember,
-                    Label err, Button login, Button registerBtn, Runnable onOk) {
+    private VBox buildRegisterCard(Runnable onOk, Runnable back) {
+        Label title = heading("Create account");
+        Label hint = muted(
+                "Email and a security question are required. Without both, "
+                        + "Forgot password cannot recover the account."
+        );
+        TextField user = field("username");
+        PasswordField pass = secret("password (min 8)");
+        TextField email = field("email");
+        TextField question = field("security question (your own words, min 8)");
+        PasswordField answer = secret("security answer (min 4)");
+        CheckBox remember = new CheckBox("Remember login");
+        remember.setSelected(LocalSession.wantRemember());
+        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        Label err = error();
+        Button create = new Button("Create account");
+        Button cancel = new Button("Back to login");
+        stylePrimary(create);
+        styleGhost(cancel);
+        stretch(create, cancel);
+        create.setOnAction(e -> goRegister(
+                user.getText(), pass.getText(), email.getText(),
+                question.getText(), answer.getText(), remember.isSelected(),
+                err, create, cancel, onOk
+        ));
+        cancel.setOnAction(e -> back.run());
+        return card(title, hint, user, pass, email, question, answer, remember, create, cancel, err);
+    }
+
+    private static VBox buildResetCard(Runnable back) {
+        Label title = heading("Reset password");
+        Label hint = muted(
+                "Email + security question. Email alone is not enough.\n"
+                        + "Token and question always print on the host Node terminal, "
+                        + "even if mail is on. Sender and receiver may be the same Gmail. "
+                        + "Token lasts 8 minutes."
+        );
+        TextField user = field("username");
+        TextField email = field("email on the account");
+        Label question = muted("Security question arrives with the token.");
+        question.setWrapText(true);
+        TextField token = field("reset token from email / host console");
+        PasswordField answer = secret("security answer");
+        PasswordField np = secret("new password (min 8)");
+        Label err = error();
+        Button send = new Button("Email me a token");
+        Button apply = new Button("Reset with token + answer");
+        Button cancel = new Button("Back to login");
+        stylePrimary(send);
+        stylePrimary(apply);
+        styleGhost(cancel);
+        stretch(send, apply, cancel);
+        send.setOnAction(e -> {
+            err.setText("");
+            send.setDisable(true);
+            send.setText("Working…");
+            Thread t = new Thread(() -> {
+                try {
+                    Api.INSTANCE.forgotPassword(user.getText(), email.getText());
+                    Platform.runLater(() -> {
+                        err.setText("If that account exists, the token and security question are on the host Node terminal (and email if SMTP worked). Nothing is filled in here.");
+                        send.setDisable(false);
+                        send.setText("Email me a token");
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        err.setText(ex.getMessage());
+                        send.setDisable(false);
+                        send.setText("Email me a token");
+                    });
+                }
+            }, "forgot-http");
+            t.setDaemon(true);
+            t.start();
+        });
+        apply.setOnAction(e -> {
+            err.setText("");
+            apply.setDisable(true);
+            apply.setText("Working…");
+            Thread t = new Thread(() -> {
+                try {
+                    Api.INSTANCE.resetPassword(token.getText(), answer.getText(), np.getText());
+                    Platform.runLater(() -> {
+                        err.setText("Password reset. All sessions were signed out. Log in.");
+                        apply.setDisable(false);
+                        apply.setText("Reset with token + answer");
+                    });
+                } catch (Exception ex) {
+                    Platform.runLater(() -> {
+                        err.setText(ex.getMessage());
+                        apply.setDisable(false);
+                        apply.setText("Reset with token + answer");
+                    });
+                }
+            }, "reset-http");
+            t.setDaemon(true);
+            t.start();
+        });
+        cancel.setOnAction(e -> back.run());
+        return card(title, hint, user, email, send, question, token, answer, np, apply, cancel, err);
+    }
+
+    private void goLogin(String user, String password, boolean remember,
+                         Label err, Button login, Button registerBtn, Runnable onOk) {
         err.setText("");
         login.setDisable(true);
         registerBtn.setDisable(true);
-
         Thread t = new Thread(() -> {
             try {
-                NodeApi.AuthResult incoming = Api.INSTANCE.authenticate(register, user, password);
-                String cached = TaskRepository.peekCachedUserId();
-                Platform.runLater(() -> {
-                    if (cached != null && !cached.equals(incoming.userId) && !confirmReplaceCache()) {
-                        login.setDisable(false);
-                        registerBtn.setDisable(false);
-                        return;
-                    }
-                    Api.INSTANCE.applySession(incoming, remember);
-                    onOk.run();
-                });
+                NodeApi.AuthResult incoming = Api.INSTANCE.authenticate(false, user, password);
+                finishAuth(incoming, remember, err, login, registerBtn, onOk);
             } catch (Exception ex) {
                 Platform.runLater(() -> {
                     err.setText(ex.getMessage());
@@ -130,6 +217,46 @@ public class LoginView {
         }, "login-http");
         t.setDaemon(true);
         t.start();
+    }
+
+    private void goRegister(String user, String password, String email, String question, String answer,
+                            boolean remember, Label err, Button create, Button cancel, Runnable onOk) {
+        err.setText("");
+        if (blank(user) || blank(password) || blank(email) || blank(question) || blank(answer)) {
+            err.setText("Username, password, email, security question, and answer are all required.");
+            return;
+        }
+        create.setDisable(true);
+        cancel.setDisable(true);
+        Thread t = new Thread(() -> {
+            try {
+                NodeApi.AuthResult incoming = Api.INSTANCE.registerAccount(
+                        user, password, email, question, answer);
+                finishAuth(incoming, remember, err, create, cancel, onOk);
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    err.setText(ex.getMessage());
+                    create.setDisable(false);
+                    cancel.setDisable(false);
+                });
+            }
+        }, "register-http");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void finishAuth(NodeApi.AuthResult incoming, boolean remember,
+                            Label err, Button a, Button b, Runnable onOk) {
+        String cached = TaskRepository.peekCachedUserId();
+        Platform.runLater(() -> {
+            if (cached != null && !cached.equals(incoming.userId) && !confirmReplaceCache()) {
+                a.setDisable(false);
+                b.setDisable(false);
+                return;
+            }
+            Api.INSTANCE.applySession(incoming, remember);
+            onOk.run();
+        });
     }
 
     private static boolean confirmReplaceCache() {
@@ -143,6 +270,53 @@ public class LoginView {
         return a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK;
     }
 
+    private static VBox card(javafx.scene.Node... kids) {
+        VBox box = new VBox(12, kids);
+        box.getStyleClass().add("login-card");
+        box.setPadding(new Insets(36, 40, 36, 40));
+        box.setMaxWidth(420);
+        box.setPrefWidth(420);
+        return box;
+    }
+
+    private static Label heading(String t) {
+        Label l = new Label(t);
+        l.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #1c2430; "
+                + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        return l;
+    }
+
+    private static Label muted(String t) {
+        Label l = new Label(t);
+        l.getStyleClass().add("login-muted");
+        l.setWrapText(true);
+        l.setStyle("-fx-font-size: 12px; -fx-text-fill: #5c564c; "
+                + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        return l;
+    }
+
+    private static Label error() {
+        Label l = new Label();
+        l.getStyleClass().add("login-err");
+        l.setWrapText(true);
+        l.setStyle("-fx-text-fill: #8b1e1e; -fx-font-size: 13px;");
+        return l;
+    }
+
+    private static TextField field(String prompt) {
+        TextField f = new TextField();
+        f.setPromptText(prompt);
+        f.setStyle(fieldStyle());
+        return f;
+    }
+
+    private static PasswordField secret(String prompt) {
+        PasswordField f = new PasswordField();
+        f.setPromptText(prompt);
+        f.setStyle(fieldStyle());
+        return f;
+    }
+
     private static String fieldStyle() {
         return "-fx-background-color: #ffffff;"
                 + "-fx-text-fill: #1c2430;"
@@ -152,10 +326,15 @@ public class LoginView {
                 + "-fx-background-radius: 6;";
     }
 
+    private static void stretch(Button... buttons) {
+        for (Button b : buttons) b.setMaxWidth(Double.MAX_VALUE);
+    }
+
     private static void stylePrimary(Button b) {
         b.setStyle(
                 "-fx-background-color: #1c2430; -fx-text-fill: #f3eee4;"
-                        + "-fx-font-size: 14px; -fx-padding: 10 18; -fx-background-radius: 8; -fx-font-family: Georgia;"
+                        + "-fx-font-size: 14px; -fx-padding: 10 18; -fx-background-radius: 8; "
+                        + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;"
         );
     }
 
@@ -163,7 +342,12 @@ public class LoginView {
         b.setStyle(
                 "-fx-background-color: transparent; -fx-text-fill: #1c2430;"
                         + "-fx-border-color: #1c2430; -fx-border-radius: 8;"
-                        + "-fx-font-size: 14px; -fx-padding: 8 18; -fx-font-family: Georgia;"
+                        + "-fx-font-size: 14px; -fx-padding: 8 18; "
+                        + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;"
         );
+    }
+
+    private static boolean blank(String s) {
+        return s == null || s.isBlank();
     }
 }

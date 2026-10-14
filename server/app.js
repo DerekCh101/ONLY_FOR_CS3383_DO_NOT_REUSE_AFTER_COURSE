@@ -941,7 +941,18 @@ async function doLogin(register) {
     }
     setLoginBusy(true);
     try {
-        const data = await send("POST", register ? "/register" : "/login", { username, password });
+        const payload = { username, password };
+        if (register) {
+            payload.email = ((document.getElementById("email") || {}).value || "").trim();
+            payload.question = ((document.getElementById("question") || {}).value || "").trim();
+            payload.answer = ((document.getElementById("answer") || {}).value || "").trim();
+            if (!payload.email || !payload.question || !payload.answer) {
+                showErr("register needs email, security question, and answer");
+                toast("register needs email, security question, and answer", true);
+                return;
+            }
+        }
+        const data = await send("POST", register ? "/register" : "/login", payload);
         await afterLogin(data);
     } catch (ex) {
         showErr(ex.message);

@@ -82,6 +82,18 @@ public class TaskRepository {
         return postgresAvailable;
     }
 
+    /** Local SQLite + typewriter cache only. Does not change Node or Postgres. */
+    public void wipeLocalCacheOnly() {
+        try {
+            sqlite.wipeAllLocalData();
+            sqlite.setMeta("user_id", "");
+            sqlite.setMeta("last_node_sync_at", "");
+        } catch (Exception e) {
+            System.err.println("wipe local tasks failed: " + e.getMessage());
+        }
+        org.ashoreprospect.GUI.TypewriterStore.wipeCurrentUser();
+    }
+
     public String getDeviceId() {
         return deviceId;
     }
@@ -184,6 +196,7 @@ public class TaskRepository {
         if (task == null || task.getID() == null) return;
         ensureTimestamps(task);
 
+        task.touchLastUpdated();
         sqlite.unrecordDelete(task.getID());
         sqlite.upsert(task);
 

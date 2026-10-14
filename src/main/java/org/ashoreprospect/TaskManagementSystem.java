@@ -269,6 +269,14 @@ public class TaskManagementSystem {
                     refreshGUI();
                     return true;
 
+                case "clearPastTasks":
+                    Command clearPast = new ClearPastTasks(this);
+                    if (!clearPast.execute()) {
+                        return false;
+                    }
+                    refreshGUI();
+                    return true;
+
                 case "undo":
                     RecordedCommand undo = new Undo(this);
                     if (!undo.execute()) {

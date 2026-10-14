@@ -6,6 +6,7 @@ import { handleAuth } from "./routes/authRoutes.js";
 import { handleTasks } from "./routes/taskRoutes.js";
 import { handleBlocked } from "./routes/blockedRoutes.js";
 import { handleTypewriter } from "./routes/typewriterRoutes.js";
+import { logSmtpStatus } from "./lib/mail.js";
 
 const HostNodeServerListenToWhereIP = process.env.HOST_LISTEN_IP || "0.0.0.0";
 const HostNodeServerListenToWherePort = Number(process.env.HostNodeServerListenToWherePort || 3456);
@@ -16,7 +17,12 @@ http.createServer(async (req, res) => {
     if (await handleTasks(req, res)) return;
     if (await handleBlocked(req, res)) return;
     if (await handleTypewriter(req, res)) return;
-    send(res, 404, { error: "not found" });
+    const path = (req.url || "/").split("?")[0];
+    send(res, 404, {
+        error: "This Node has no " + req.method + " " + path
+            + ". Restart the Node server after updating the server folder."
+    });
 }).listen(HostNodeServerListenToWherePort, HostNodeServerListenToWhereIP, () => {
     console.log("listening on http://" + HostNodeServerListenToWhereIP + ":" + HostNodeServerListenToWherePort);
+    logSmtpStatus();
 });

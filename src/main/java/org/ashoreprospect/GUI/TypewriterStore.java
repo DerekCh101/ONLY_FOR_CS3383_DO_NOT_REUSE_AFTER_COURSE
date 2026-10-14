@@ -65,6 +65,24 @@ public final class TypewriterStore {
         postgresAvailable = false;
     }
 
+    public static void wipeCurrentUser() {
+        String uid = currentUserId();
+        try {
+            if (uid != null && !uid.isBlank()) sqlite.wipeUser(uid);
+        } catch (Exception e) {
+            System.err.println("wipe typewriter cache failed: " + e.getMessage());
+        }
+        try {
+            File[] files = IMAGE_DIR.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.isFile()) f.delete();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private static PostgresTypewriterRepository pg() {
         if (!NetworkWatch.isOnline() || Endpoints.isCreatorHost()) {
             postgresAvailable = false;

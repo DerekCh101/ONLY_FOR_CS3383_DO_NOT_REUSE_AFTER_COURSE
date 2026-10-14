@@ -57,7 +57,9 @@ public class WeekGridBuilder {
             LocalDate date = weekStart.plusDays(weekOffset * 7L + col);
             String text = date.getDayOfWeek().toString().substring(0, 3) + " "
                     + date.getMonthValue() + "/" + date.getDayOfMonth();
-            grid.add(new Label(text), col + 1, 0);
+            Label hdr = new Label(text);
+            hdr.setStyle("-fx-text-fill: " + AppTheme.ink() + ";");
+            grid.add(hdr, col + 1, 0);
         }
 
         for (int row = 1; row <= AppTimeReference.SLOTS_PER_DAY; row++) {
@@ -66,6 +68,8 @@ public class WeekGridBuilder {
             Label timeLabel = new Label(AppTimeReference.formatSlotLabel(slotIndex));
             if (slotIndex == nowSlot) {
                 timeLabel.setStyle("-fx-text-fill: red; -fx-font-weight: bold;");
+            } else {
+                timeLabel.setStyle("-fx-text-fill: " + AppTheme.ink() + ";");
             }
             grid.add(timeLabel, 0, row);
 
@@ -95,7 +99,8 @@ public class WeekGridBuilder {
                     String title = block.getTitle() == null || block.getTitle().isBlank()
                             ? "blocked" : block.getTitle();
                     Label why = new Label(title + "  " + block.getStartTime() + "–" + block.getEndTime());
-                    why.setStyle("-fx-font-size: 10px; -fx-font-style: italic; -fx-text-fill: #333333;");
+                    why.setStyle("-fx-font-size: 10px; -fx-font-style: italic; -fx-text-fill: "
+                            + AppTheme.muted() + ";");
                     why.setMouseTransparent(true);
                     cell.getChildren().add(why);
                 }
@@ -126,7 +131,8 @@ public class WeekGridBuilder {
                 cell.setOnMouseEntered(e -> {
                     if (finalTaskInCell == null && finalBlock == null
                             && !isPast(finalColumn, finalSlotIndex)) {
-                        cell.setStyle("-fx-background-color: #ffccdd; -fx-border-color: #999999;");
+                        cell.setStyle("-fx-background-color: " + AppTheme.hover()
+                                + "; -fx-border-color: #999999;");
                     }
                 });
                 cell.setOnMouseExited(e -> applyDayStyle(
@@ -174,6 +180,8 @@ public class WeekGridBuilder {
             sb.append("(failed to load)\n");
         }
         sidePanel.setText(sb.toString());
+        sidePanel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + AppTheme.ink()
+                + "; " + AppTheme.font() + "-fx-font-size: 12px;");
     }
 
     private static Task taskAt(java.util.Map<LocalDate, Day> gridData,
@@ -205,12 +213,13 @@ public class WeekGridBuilder {
         if (done) {
             label.setStyle(
                     "-fx-font-size: 10px;"
-                            + "-fx-font-family: Georgia;"
+                            + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;"
                             + "-fx-font-style: italic;"
-                            + "-fx-text-fill: #3f5348;"
+                            + "-fx-text-fill: " + AppTheme.muted() + ";"
                             + "-fx-padding: 3 6 0 8;");
         } else {
-            label.setStyle("-fx-font-size: 10px; -fx-padding: 3 4 0 4;");
+            label.setStyle("-fx-font-size: 10px; -fx-padding: 3 4 0 4; -fx-text-fill: "
+                    + AppTheme.ink() + ";");
         }
         return label;
     }
@@ -294,7 +303,7 @@ public class WeekGridBuilder {
             return;
         }
         if (isPast(columnDate, slotIndex)) {
-            cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
+            cell.setStyle("-fx-background-color: " + AppTheme.past() + "; -fx-border-color: #999999;");
             return;
         }
         if (block != null) {
@@ -302,9 +311,9 @@ public class WeekGridBuilder {
             return;
         }
         if (columnDate.equals(AppTimeReference.currentColumnDate())) {
-            cell.setStyle("-fx-background-color: #70d9f1; -fx-border-color: #999999;");
+            cell.setStyle("-fx-background-color: " + AppTheme.today() + "; -fx-border-color: #999999;");
         } else {
-            cell.setStyle("-fx-border-color: #999999;");
+            cell.setStyle("-fx-background-color: " + AppTheme.paper() + "; -fx-border-color: #999999;");
         }
     }
 

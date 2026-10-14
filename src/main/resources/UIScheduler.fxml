@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.scene.control.Button?>
+<?import javafx.scene.control.ContextMenu?>
 <?import javafx.scene.control.Label?>
-<?import javafx.scene.control.Menu?>
-<?import javafx.scene.control.MenuBar?>
 <?import javafx.scene.control.MenuButton?>
 <?import javafx.scene.control.MenuItem?>
 <?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.SeparatorMenuItem?>
 <?import javafx.scene.control.SplitPane?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.GridPane?>
@@ -15,8 +15,9 @@
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.Pane?>
 <?import javafx.scene.layout.Region?>
+<?import javafx.geometry.Insets?>
 
-<StackPane fx:id="root"
+<StackPane fx:id="root" styleClass="ashore-root"
            prefHeight="700.0" prefWidth="1200.0"
            xmlns="http://javafx.com/javafx/23"
            xmlns:fx="http://javafx.com/fxml/1"
@@ -26,53 +27,46 @@
 
         <top>
             <VBox>
-                <MenuBar>
-                    <menus>
-                        <Menu text="File">
-                            <items>
-                                <MenuItem text="Close" />
-                                <MenuItem fx:id="resetAll" text="Reset My Tasks"/>
-                            </items>
-                        </Menu>
-                        <Menu text="Edit">
-                            <items>
-                                <MenuItem text="Delete" />
-                            </items>
-                        </Menu>
-                        <Menu text="Help">
-                            <items>
-                                <MenuItem text="About" />
-                            </items>
-                        </Menu>
-                    </menus>
-                </MenuBar>
+                <HBox spacing="10" alignment="CENTER_LEFT" styleClass="chrome-bar">
+                    <HBox spacing="2" alignment="CENTER_LEFT" styleClass="tab-pills">
+                        <Button fx:id="tabScheduler" text="Scheduler" mnemonicParsing="false" />
+                        <Button fx:id="tabTypewriter" text="Typewriter" mnemonicParsing="false" />
+                    </HBox>
 
-                <HBox spacing="0" alignment="CENTER_LEFT" style="-fx-padding: 0 8 0 8; -fx-background-color: #1c2430;">
-                    <Button fx:id="tabScheduler" text="Scheduler" mnemonicParsing="false" />
-                    <Button fx:id="tabTypewriter" text="Typewriter" mnemonicParsing="false" />
-                </HBox>
-
-                <HBox alignment="CENTER_LEFT" spacing="5" style="-fx-padding: 8;">
-                    <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
-                    <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
-                    <Region HBox.hgrow="ALWAYS" />
-                    <Button fx:id="btnMonthView" mnemonicParsing="false" text="Monthly View" />
-                    <Button fx:id="btnPrev" text="Prev Week" />
-                    <Button fx:id="btnNext" text="Next Week" />
-                    <Button fx:id="btnAdd" text="Add Task" />
-                    <Button fx:id="btnBlocked" text="Blocked times" />
-
-                    <MenuButton text="Action">
+                    <MenuButton fx:id="menuView" text="View" styleClass="ghost-menu" mnemonicParsing="false">
                         <items>
-                            <MenuItem fx:id="btnImport" text="Import From Files" />
-                            <MenuItem fx:id="btnRun" text="Run Scheduler" />
+                            <MenuItem fx:id="menuWeek" text="Weekly View" />
+                            <MenuItem fx:id="menuMonth" text="Monthly View" />
+                            <MenuItem fx:id="menuThisWeek" text="Jump to current week" />
+                            <MenuItem fx:id="menuThisMonth" text="Jump to current month" />
+                        </items>
+                    </MenuButton>
+                    <MenuButton text="Edit" styleClass="ghost-menu" mnemonicParsing="false">
+                        <items>
+                            <MenuItem fx:id="menuUndo" text="Undo" />
+                            <MenuItem fx:id="menuRedo" text="Redo" />
+                        </items>
+                    </MenuButton>
+                    <MenuButton text="Account" styleClass="ghost-menu" mnemonicParsing="false">
+                        <items>
+                            <MenuItem fx:id="menuAccount" text="Account" />
+                            <MenuItem fx:id="menuUsername" text="Change Username" />
+                            <MenuItem fx:id="menuEmail" text="Change Email" />
+                            <MenuItem fx:id="menuPassword" text="Change Password" />
+                            <MenuItem fx:id="menuSessions" text="Sessions" />
+                            <MenuItem fx:id="menuLogout" text="Logout" />
+                        </items>
+                    </MenuButton>
+                    <MenuButton text="Help" styleClass="ghost-menu" mnemonicParsing="false">
+                        <items>
+                            <MenuItem fx:id="menuAbout" text="About" />
                         </items>
                     </MenuButton>
 
                     <Region HBox.hgrow="ALWAYS" />
 
-                    <Label fx:id="lblUser" style="-fx-font-weight: bold; -fx-padding: 0 8 0 12;" />
-                    <Button fx:id="btnLogout" text="Logout" />
+                    <Label fx:id="lblNet" styleClass="net-chip" />
+                    <Label fx:id="lblUser" style="-fx-font-weight: bold; -fx-padding: 0 4 0 8; -fx-cursor: hand;" />
                 </HBox>
             </VBox>
         </top>
@@ -80,22 +74,68 @@
         <center>
             <StackPane fx:id="mainStack">
                 <SplitPane fx:id="mainSplit" dividerPositions="0.82" orientation="HORIZONTAL">
+                    <VBox fx:id="gridColumn">
+                    <HBox alignment="CENTER_LEFT" spacing="6" styleClass="tool-bar">
+                        <Button fx:id="btnUndo" mnemonicParsing="false" text="Undo" />
+                        <Button fx:id="btnRedo" mnemonicParsing="false" text="Redo" />
+                        <Button fx:id="btnPrev" text="Prev Week" />
+                        <Button fx:id="btnNext" text="Next Week" />
+                        <Button fx:id="btnJumpNow" mnemonicParsing="false" text="Jump to this week" />
+                        <Region HBox.hgrow="ALWAYS" />
+                        <Button fx:id="btnMonthView" mnemonicParsing="false" text="Monthly View" />
+                        <Button fx:id="btnAction" text="Action" mnemonicParsing="false">
+                            <contextMenu>
+                                <ContextMenu>
+                                    <items>
+                                        <MenuItem fx:id="menuAddTask" text="Add Task" />
+                                        <MenuItem fx:id="menuBlocked" text="Blocked times" />
+                                        <MenuItem fx:id="btnImport" text="Import From Files" />
+                                        <MenuItem fx:id="btnRun" text="Run Scheduler" />
+                                        <SeparatorMenuItem />
+                                        <MenuItem fx:id="clearPast" text="Clear Past Tasks" />
+                                        <MenuItem fx:id="resetAll" text="Clear All Tasks" />
+                                    </items>
+                                </ContextMenu>
+                            </contextMenu>
+                        </Button>
+                    </HBox>
+                    <StackPane fx:id="gridStack" VBox.vgrow="ALWAYS">
                     <BorderPane>
                         <left>
-                            <Pane fx:id="prevPane" style="-fx-background-color: #e8e8e8;" />
+                            <Pane fx:id="prevPane" styleClass="grid-edge" />
                         </left>
                         <center>
                             <ScrollPane fx:id="gridScroll" fitToHeight="true" fitToWidth="true">
-                                <GridPane fx:id="grid" hgap="1" vgap="1" style="-fx-border-color: black;" />
+                                <GridPane fx:id="grid" hgap="1" vgap="1" />
                             </ScrollPane>
                         </center>
                         <right>
-                            <Pane fx:id="nextPane" style="-fx-background-color: #e8e8e8;" />
+                            <Pane fx:id="nextPane" styleClass="grid-edge" />
                         </right>
                     </BorderPane>
+                    <Button fx:id="btnFabPrev" text="‹" mnemonicParsing="false" styleClass="fab"
+                            StackPane.alignment="BOTTOM_LEFT">
+                        <StackPane.margin>
+                            <Insets bottom="20" left="70" />
+                        </StackPane.margin>
+                    </Button>
+                    <Button fx:id="btnFabNext" text="›" mnemonicParsing="false" styleClass="fab"
+                            StackPane.alignment="BOTTOM_LEFT">
+                        <StackPane.margin>
+                            <Insets bottom="20" left="132" />
+                        </StackPane.margin>
+                    </Button>
+                    <Button fx:id="btnFab" text="+" mnemonicParsing="false" styleClass="fab"
+                            StackPane.alignment="BOTTOM_RIGHT">
+                        <StackPane.margin>
+                            <Insets bottom="20" right="72" />
+                        </StackPane.margin>
+                    </Button>
+                    </StackPane>
+                    </VBox>
                     <VBox fx:id="sidePanelContainer" spacing="10" prefWidth="280"
                           minWidth="200" maxWidth="360"
-                          style="-fx-padding: 10;">
+                          styleClass="side-panel">
                         <Label fx:id="sidePanel" wrapText="true" style="-fx-font-weight: bold;"
                                text="Unscheduled Tasks: (Tasks that were once placed on grid but cannot refit after using the scheduling algorithm)" />
                     </VBox>

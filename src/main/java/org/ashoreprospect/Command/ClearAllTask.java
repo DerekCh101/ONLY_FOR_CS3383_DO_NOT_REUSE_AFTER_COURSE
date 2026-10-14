@@ -56,7 +56,7 @@ public class ClearAllTask implements Command {
                 theSystem.getPendingTasks().add(t);
             }
             org.ashoreprospect.RefreshLifeCycle.refreshLifeCycle(t);
-            theSystem.getTaskRepo().dbAddTask(t);
+            theSystem.getTaskRepo().dbRestoreTask(t);
         }
 
         RecordedCommand.getRedoList().add(this);

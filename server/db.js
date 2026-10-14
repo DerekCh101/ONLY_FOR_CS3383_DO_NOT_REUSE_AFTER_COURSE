@@ -1,5 +1,5 @@
 import pg from "pg";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 
 const { Pool } = pg;
 
@@ -95,12 +95,36 @@ export async function ensureSchema() {
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     `);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS email TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS security_question TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS security_answer_hash TEXT`);
+    await query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.reset_tokens (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ
+        )
+    `);
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.sessions (
             token TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
+    `);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS session_id TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS device TEXT`);
+    await query(`
+        UPDATE ${SCHEMA}.sessions
+        SET session_id = token
+        WHERE session_id IS NULL OR session_id = ''
+    `);
+    await query(`
+        UPDATE ${SCHEMA}.sessions
+        SET last_seen_at = COALESCE(last_seen_at, created_at, NOW())
+        WHERE last_seen_at IS NULL
     `);
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.tasks (
@@ -200,31 +224,133 @@ export async function ensureSchema() {
 
 await ensureSchema();
 
+const USER_COLS = `id::text AS id, username, password_hash, email, security_question, security_answer_hash`;
+
 export async function findUserByUsername(username) {
     const name = str(username);
     if (!name) return null;
     const r = await query(
-        `SELECT id::text AS id, username, password_hash FROM ${SCHEMA}.users WHERE username = $1`,
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users WHERE username = $1`,
         [name]
     );
     return r.rows[0] || null;
 }
 
-export async function createUser(id, username, passwordHash) {
+export async function findUserById(id) {
+    if (!id) return null;
     const r = await query(
-        `INSERT INTO ${SCHEMA}.users(id, username, password_hash)
-         VALUES ($1,$2,$3)
-             RETURNING id::text AS id, username, password_hash`,
-        [id, str(username), passwordHash]
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users WHERE id::text = $1`,
+        [String(id)]
+    );
+    return r.rows[0] || null;
+}
+
+export async function findUserByUsernameAndEmail(username, email) {
+    const name = str(username);
+    const mail = str(email) ? String(email).trim().toLowerCase() : null;
+    if (!name || !mail) return null;
+    const r = await query(
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users
+         WHERE username = $1 AND lower(email) = $2`,
+        [name, mail]
+    );
+    return r.rows[0] || null;
+}
+
+export async function updateUsername(userId, username) {
+    const name = str(username);
+    if (!name) throw new Error("username required");
+    if (name.length > 40) throw new Error("username max 40 characters");
+    const clash = await findUserByUsername(name);
+    if (clash && String(clash.id) !== String(userId)) {
+        throw new Error("username already taken");
+    }
+    await query(
+        `UPDATE ${SCHEMA}.users SET username = $2 WHERE id::text = $1`,
+        [String(userId), name]
+    );
+}
+
+export async function updateUserEmail(userId, email) {
+    const mail = str(email) ? String(email).trim().toLowerCase() : null;
+    await query(
+        `UPDATE ${SCHEMA}.users SET email = $2 WHERE id::text = $1`,
+        [String(userId), mail]
+    );
+}
+
+export async function updateUserPassword(userId, passwordHash) {
+    await query(
+        `UPDATE ${SCHEMA}.users SET password_hash = $2 WHERE id::text = $1`,
+        [String(userId), passwordHash]
+    );
+}
+
+export async function updateUserSecurity(userId, question, answerHash) {
+    await query(
+        `UPDATE ${SCHEMA}.users SET security_question = $2, security_answer_hash = $3
+         WHERE id::text = $1`,
+        [String(userId), str(question), answerHash]
+    );
+}
+
+export async function deleteSessionsForUser(userId, keepToken) {
+    if (keepToken) {
+        await query(
+            `DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1 AND token::text <> $2`,
+            [String(userId), String(keepToken)]
+        );
+        return;
+    }
+    await query(
+        `DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1`,
+        [String(userId)]
+    );
+}
+
+export async function createResetToken(userId) {
+    const token = randomBytes(24).toString("hex");
+    await query(
+        `INSERT INTO ${SCHEMA}.reset_tokens(token, user_id, expires_at)
+         VALUES ($1,$2, NOW() + INTERVAL '8 minutes')`,
+        [token, String(userId)]
+    );
+    return token;
+}
+
+export async function takeResetToken(token) {
+    const t = str(token);
+    if (!t) return null;
+    const r = await query(
+        `SELECT token, user_id::text AS user_id FROM ${SCHEMA}.reset_tokens
+         WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()`,
+        [t]
+    );
+    if (!r.rows[0]) return null;
+    await query(
+        `UPDATE ${SCHEMA}.reset_tokens SET used_at = NOW() WHERE token = $1`,
+        [t]
     );
     return r.rows[0];
 }
 
-export async function createSession(userId) {
+export async function createUser(id, username, passwordHash, email, question, answerHash) {
+    const r = await query(
+        `INSERT INTO ${SCHEMA}.users(id, username, password_hash, email, security_question, security_answer_hash)
+         VALUES ($1,$2,$3,$4,$5,$6)
+             RETURNING id::text AS id, username, email`,
+        [id, str(username), passwordHash, str(email).toLowerCase(), str(question), answerHash]
+    );
+    return r.rows[0];
+}
+
+export async function createSession(userId, device) {
     const token = randomUUID();
+    const sessionId = randomUUID();
     await query(
-        `INSERT INTO ${SCHEMA}.sessions(token, user_id) VALUES ($1,$2)`,
-        [token, String(userId)]
+        `INSERT INTO ${SCHEMA}.sessions(token, user_id, session_id, last_seen_at, device)
+         VALUES ($1,$2,$3, NOW(), $4)`,
+        [token, String(userId), sessionId, str(device)]
     );
     return token;
 }
@@ -233,11 +359,46 @@ export async function userFromToken(req) {
     const token = bearerToken(req);
     if (!token) return null;
     const r = await query(
-        `SELECT u.id::text AS id, u.username
+        `SELECT u.id::text AS id, u.username, u.email, u.security_question,
+                (u.security_answer_hash IS NOT NULL AND u.security_answer_hash <> '') AS has_security,
+                s.session_id, s.token
          FROM ${SCHEMA}.sessions s
          JOIN ${SCHEMA}.users u ON u.id::text = s.user_id::text
          WHERE s.token::text = $1`,
         [token]
+    );
+    if (!r.rows[0]) return null;
+    await query(
+        `UPDATE ${SCHEMA}.sessions SET last_seen_at = NOW() WHERE token::text = $1`,
+        [token]
+    );
+    return r.rows[0];
+}
+
+export async function listSessions(userId, currentToken) {
+    const r = await query(
+        `SELECT session_id, device, created_at, last_seen_at,
+                (token::text = $2) AS current
+         FROM ${SCHEMA}.sessions
+         WHERE user_id::text = $1
+         ORDER BY last_seen_at DESC NULLS LAST, created_at DESC`,
+        [String(userId), String(currentToken || "")]
+    );
+    return r.rows.map((row) => ({
+        id: row.session_id,
+        device: row.device || "Unknown device",
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at,
+        current: row.current === true
+    }));
+}
+
+export async function deleteSessionById(userId, sessionId) {
+    const r = await query(
+        `DELETE FROM ${SCHEMA}.sessions
+         WHERE user_id::text = $1 AND session_id = $2
+         RETURNING token`,
+        [String(userId), String(sessionId)]
     );
     return r.rows[0] || null;
 }

@@ -55,14 +55,16 @@ public class MonthGridBuilder {
 
         // Title row (spans)
         Label title = new Label(ym.getMonth() + " " + ym.getYear());
-        title.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+        title.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: "
+                + AppTheme.ink() + ";");
         grid.add(title, 0, 0, 7, 1);
 
         // Weekday headers
         String[] headers = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
         for (int c = 0; c < 7; c++) {
             Label h = new Label(headers[c]);
-            h.setStyle("-fx-font-weight: bold; -fx-padding: 4;");
+            h.setStyle("-fx-font-weight: bold; -fx-padding: 4; -fx-text-fill: "
+                    + AppTheme.ink() + ";");
             h.setMaxWidth(Double.MAX_VALUE);
             h.setAlignment(Pos.CENTER);
             grid.add(h, c, 1);
@@ -83,6 +85,8 @@ public class MonthGridBuilder {
 
         if (sidePanel != null) {
             sidePanel.setText("Unscheduled:\n" + system.getEngine().printUnscheduledTask());
+            sidePanel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + AppTheme.ink()
+                    + "; " + AppTheme.font() + "-fx-font-size: 12px;");
         }
     }
 
@@ -101,15 +105,15 @@ public class MonthGridBuilder {
 
         String bg;
         if (isToday) {
-            bg = "#70d9f1";
+            bg = AppTheme.today();
         } else if (holidayName != null) {
-            bg = "#ffe0b2";
+            bg = AppTheme.isDark() ? "#5a4320" : "#ffe0b2";
         } else if (!inMonth) {
-            bg = "#e8e8e8";
+            bg = AppTheme.isDark() ? "#161c24" : "#e8e8e8";
         } else if (date.isBefore(today)) {
-            bg = "#bdc8c8";
+            bg = AppTheme.past();
         } else {
-            bg = "#ffffff";
+            bg = AppTheme.paper();
         }
         cell.setStyle(
                 "-fx-background-color: " + bg + ";"
@@ -118,8 +122,8 @@ public class MonthGridBuilder {
         );
 
         Label dayNum = new Label(String.valueOf(date.getDayOfMonth()));
-        dayNum.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;"
-                + (inMonth ? "" : " -fx-text-fill: #888888;"));
+        dayNum.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: "
+                + (inMonth ? AppTheme.ink() : AppTheme.muted()) + ";");
         cell.getChildren().add(dayNum);
 
         if (holidayName != null) {
@@ -134,13 +138,13 @@ public class MonthGridBuilder {
         for (Task t : tasks) {
             if (shown >= 4) {
                 Label more = new Label("+" + (tasks.size() - 4) + " more");
-                more.setStyle("-fx-font-size: 9px; -fx-text-fill: #555555;");
+                more.setStyle("-fx-font-size: 9px; -fx-text-fill: " + AppTheme.muted() + ";");
                 cell.getChildren().add(more);
                 break;
             }
             Label line = new Label("• " + t.getTaskName());
             line.setWrapText(true);
-            line.setStyle("-fx-font-size: 9px;");
+            line.setStyle("-fx-font-size: 9px; -fx-text-fill: " + AppTheme.ink() + ";");
             cell.getChildren().add(line);
             shown++;
         }
