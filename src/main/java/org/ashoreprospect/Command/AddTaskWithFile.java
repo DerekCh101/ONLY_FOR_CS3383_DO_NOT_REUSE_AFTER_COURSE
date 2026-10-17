@@ -1,3 +1,4 @@
+/** Bulk-add tasks from a text file (undoable). */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -138,16 +139,25 @@ public class AddTaskWithFile implements Command {
         int slotIndex = AppTimeReference.localTimeToSlot(time);
         int slotCount = task.getDurationSlots();
 
-        theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
-        Day day = theSystem.getGrid().get(date);
+        LocalDate column = AppTimeReference.columnDateFor(date, time);
+        theSystem.getGrid().putIfAbsent(column, new Day(theSystem.getBlockedTime()));
+        Day day = theSystem.getGrid().get(column);
 
         boolean canPlace = slotIndex >= 0
                 && slotIndex + slotCount <= AppTimeReference.SLOTS_PER_DAY;
         if (canPlace) {
+            BlockedTimePeriod blocks = theSystem.getBlockedTime();
             for (int i = 0; i < slotCount; i++) {
                 if (day.returnDayGrid()[slotIndex + i] != null) {
                     canPlace = false;
                     break;
+                }
+                if (blocks != null) {
+                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, slotIndex + i);
+                    if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
+                        canPlace = false;
+                        break;
+                    }
                 }
             }
         }

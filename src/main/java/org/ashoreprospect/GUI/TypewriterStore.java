@@ -1,5 +1,7 @@
+/** Load/save Typewriter notes to SQLite, then Postgres/Node. */
 package org.ashoreprospect.GUI;
 
+import org.ashoreprospect.crypto.Vault;
 import org.ashoreprospect.db.PostgresTypewriterRepository;
 import org.ashoreprospect.db.SqliteTypewriterRepository;
 import org.ashoreprospect.db.TaskRepository;
@@ -43,6 +45,7 @@ public final class TypewriterStore {
     });
 
     private static final File IMAGE_DIR = new File("typewriter-images");
+    private static boolean skipNewImagePush;
 
     private static final SqliteTypewriterRepository sqlite =
             new SqliteTypewriterRepository("jdbc:sqlite:scheduler-cache.db");
@@ -180,7 +183,12 @@ public final class TypewriterStore {
                 Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
                 Instant remoteTs = TaskRepository.normalizeInstant(
                         first(remoteRow, "last_updated_at", "lastUpdatedAt"));
-                Data remoteData = parseBundle(first(remoteRow, "content"));
+                String remoteContent = first(remoteRow, "content");
+                if (Vault.sealed(remoteContent) && !Vault.unlocked()) {
+                    System.out.println("Typewriter remote is encrypted; vault locked, skip pull");
+                    return null;
+                }
+                Data remoteData = parseBundle(remoteContent);
                 pruneEmptyDiary(remoteData.diary);
                 if (remoteTs != null && TaskRepository.preferRemote(local, remoteTs)) {
                     persistLocalAndServer(uid, remoteData);
@@ -190,7 +198,7 @@ public final class TypewriterStore {
                 if (!isEmpty(localData)
                         && (remoteTs == null || !TaskRepository.preferRemote(local, remoteTs))) {
                     Api.INSTANCE.postTypewriter(
-                            toBundle(localData),
+                            Vault.seal(toBundle(localData)),
                             local != null ? local.toString() : Instant.now().toString()
                     );
                 }
@@ -242,22 +250,40 @@ public final class TypewriterStore {
             return;
         }
         pruneEmptyDiary(diary);
-        try {
-            sqlite.replaceAll(uid, diary, lists, pagesRoot);
-        } catch (Exception ex) {
-            System.out.println("Typewriter SQLite save failed: " + ex.getMessage());
-            ex.printStackTrace();
-            return;
-        }
-        if (!NetworkWatch.isOnline()) return;
         Data snap = new Data();
         snap.diary.putAll(diary);
         snap.lists.addAll(lists);
         copyFolder(pagesRoot, snap.pagesRoot);
-        remoteIo.execute(() -> pushRemote(uid, snap));
+        final String uidCopy = uid;
+        remoteIo.execute(() -> {
+            try {
+                sqlite.replaceAll(uidCopy, snap.diary, snap.lists, snap.pagesRoot);
+            } catch (Exception ex) {
+                System.out.println("Typewriter SQLite save failed: " + ex.getMessage());
+                ex.printStackTrace();
+                return;
+            }
+            if (!NetworkWatch.isOnline()) return;
+            pushRemote(uidCopy, snap);
+        });
+    }
+
+    public static String snapshotJson(Map<LocalDate, TypewriterPane.TwNote> diary,
+                                      List<TypewriterPane.TwList> lists,
+                                      TypewriterPane.TwFolder pagesRoot) {
+        Data snap = new Data();
+        snap.diary.putAll(diary);
+        snap.lists.addAll(lists);
+        copyFolder(pagesRoot, snap.pagesRoot);
+        return toBundle(snap);
+    }
+
+    public static Data fromSnapshotJson(String json) {
+        return parseBundle(json);
     }
 
     private static void pushRemote(String uid, Data data) {
+        skipNewImagePush = false;
         PostgresTypewriterRepository pg = pg();
         if (pg != null) {
             try {
@@ -272,7 +298,7 @@ public final class TypewriterStore {
             try {
                 Instant local = sqlite.lastUpdated(uid);
                 Api.INSTANCE.postTypewriter(
-                        toBundle(data),
+                        Vault.seal(toBundle(data)),
                         local != null ? local.toString() : Instant.now().toString()
                 );
             } catch (Exception ex) {
@@ -375,7 +401,7 @@ public final class TypewriterStore {
             ps.setString(2, uid);
             ps.setString(3, parentId);
             ps.setString(4, "folder");
-            ps.setString(5, child.title);
+            ps.setString(5, Vault.seal(child.title));
             ps.setString(6, "");
             ps.setString(7, "");
             ps.setInt(8, pos[0]++);
@@ -387,12 +413,51 @@ public final class TypewriterStore {
             ps.setString(2, uid);
             ps.setString(3, parentId);
             ps.setString(4, "note");
-            ps.setString(5, note.title);
-            ps.setString(6, note.body);
+            ps.setString(5, Vault.seal(note.title));
+            ps.setString(6, Vault.seal(note.body));
             ps.setString(7, joinImages(note));
             ps.setInt(8, pos[0]++);
             ps.executeUpdate();
         }
+    }
+
+    public static void copyTree(TypewriterPane.TwFolder from, TypewriterPane.TwFolder to) {
+        copyFolder(from, to);
+    }
+
+    public static void openLoaded(Data data) {
+        if (data == null) return;
+        for (TypewriterPane.TwNote n : data.diary.values()) {
+            if (n == null) continue;
+            n.title = Vault.open(n.title);
+            n.body = Vault.open(n.body);
+        }
+        for (TypewriterPane.TwList list : data.lists) {
+            if (list == null) continue;
+            list.title = Vault.open(list.title);
+            for (TypewriterPane.TwItem item : list.items) {
+                if (item != null) item.text = Vault.open(item.text);
+            }
+        }
+        openFolder(data.pagesRoot);
+    }
+
+    private static void openFolder(TypewriterPane.TwFolder folder) {
+        if (folder == null) return;
+        folder.title = Vault.open(folder.title);
+        for (TypewriterPane.TwFolder child : folder.children) openFolder(child);
+        for (TypewriterPane.TwNote note : folder.notes) {
+            note.title = Vault.open(note.title);
+            note.body = Vault.open(note.body);
+        }
+    }
+
+    public static void saveImmediate(Data data) throws Exception {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank() || data == null) return;
+        pruneEmptyDiary(data.diary);
+        sqlite.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+        pushRemote(uid, data);
     }
 
     private static void copyFolder(TypewriterPane.TwFolder from, TypewriterPane.TwFolder to) {
@@ -451,7 +516,7 @@ public final class TypewriterStore {
         field(sb, "id", n.id, false);
         field(sb, "title", n.title, false);
         field(sb, "body", n.body, false);
-        sb.append(",\"images\":").append(imagesToJson(n));
+        sb.append(",\"images\":").append(imagesToJson(n, "diary"));
         sb.append('}');
     }
 
@@ -481,27 +546,34 @@ public final class TypewriterStore {
             field(sb, "kind", "note", false);
             field(sb, "title", note.title, false);
             field(sb, "body", note.body, false);
-            sb.append(",\"images\":").append(imagesToJson(note));
+            sb.append(",\"images\":").append(imagesToJson(note, "pages"));
             sb.append(",\"pos\":").append(pos[0]++);
             sb.append('}');
         }
     }
 
-    private static String imagesToJson(TypewriterPane.TwNote note) {
+    private static String imagesToJson(TypewriterPane.TwNote note, String kind) {
         StringBuilder sb = new StringBuilder("[");
         boolean first = true;
         if (note != null) {
+            int n = 0;
             for (File f : note.images) {
+                if (n >= 20) break;
                 byte[] bytes = readBytes(f);
                 if (bytes == null) continue;
                 String sha = sha256Hex(bytes);
-                pushImage(sha, f.getName(), bytes);
+                String imgName = clipImageName(f.getName());
+                if (!skipNewImagePush && !pushImage(sha, imgName, bytes, kind)) {
+                    skipNewImagePush = true;
+                }
                 if (!first) sb.append(',');
                 first = false;
                 sb.append("{");
                 field(sb, "id", sha, true);
-                field(sb, "name", f.getName(), false);
+                field(sb, "name", imgName, false);
+                field(sb, "added_at", java.time.Instant.ofEpochMilli(f.lastModified()).toString(), false);
                 sb.append('}');
+                n++;
             }
         }
         sb.append(']');
@@ -518,59 +590,94 @@ public final class TypewriterStore {
                 String sha = firstNonBlank(extract(obj, "id"), extract(obj, "sha256"));
                 File file = null;
                 if (embedded != null && !embedded.isBlank()) {
-                    file = writeCachedImage(sha != null ? sha : note.id, embedded);
+                    file = writeCachedImage(sha != null ? sha : note.id, embedded, name);
                 } else if (sha != null && !sha.isBlank()) {
                     file = fileFromSha(sha, name);
                 }
-                if (file != null) note.images.add(file);
+                if (file != null) {
+                    String addedAt = extract(obj, "added_at");
+                    if (addedAt != null && !addedAt.isBlank()) {
+                        try {
+                            file.setLastModified(java.time.Instant.parse(addedAt.trim()).toEpochMilli());
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    if (note.images.size() >= 20) break;
+                    note.images.add(file);
+                }
             }
             return;
         }
         for (String p : raw.split("\\|")) {
             if (p.isBlank()) continue;
+            if (note.images.size() >= 20) break;
             File f = new File(p);
             if (f.isFile()) note.images.add(f);
         }
     }
 
     private static File fileFromSha(String sha, String name) {
-        File cached = new File(IMAGE_DIR, sha + ".png");
+        File cached = cacheFile(sha, name);
         if (cached.isFile()) return cached;
         if (!nodeReady()) return null;
         try {
             Map<String, String> row = Api.INSTANCE.getTypewriterImage(sha);
             String b64 = first(row, "data");
-            return writeCachedImage(sha, b64);
+            String remoteName = first(row, "name");
+            return writeCachedImage(sha, b64, remoteName != null ? remoteName : name);
         } catch (Exception e) {
             System.out.println("Typewriter image pull failed: " + sha + " " + e.getMessage());
             return null;
         }
     }
 
-    private static void pushImage(String sha, String name, byte[] bytes) {
-        if (!nodeReady() || sha == null || bytes == null) return;
+    /** @return false if Node asked us to stop new uploads for a minute */
+    private static boolean pushImage(String sha, String name, byte[] bytes, String kind) {
+        if (!nodeReady() || sha == null || bytes == null) return true;
         try {
             IMAGE_DIR.mkdirs();
-            File cached = new File(IMAGE_DIR, sha + ".png");
+            File cached = cacheFile(sha, name);
             if (!cached.isFile()) {
                 Files.write(cached.toPath(), bytes);
             }
             if (Api.INSTANCE.typewriterImageExists(sha)) {
                 System.out.println("Typewriter image already on Node: " + sha);
-                return;
+                return true;
             }
-            Api.INSTANCE.postTypewriterImage(sha, name, Base64.getEncoder().encodeToString(bytes));
+            Api.INSTANCE.postTypewriterImage(sha, name, Base64.getEncoder().encodeToString(bytes),
+                    kind, null);
             System.out.println("Typewriter image uploaded: " + sha);
+            return true;
         } catch (Exception e) {
-            System.out.println("Typewriter image push failed: " + e.getMessage());
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            System.out.println("Typewriter image push failed: " + msg);
+            return msg.toLowerCase().contains("too many") || msg.contains("Wait a minute");
         }
     }
 
-    private static File writeCachedImage(String id, String b64) {
+    private static File cacheFile(String sha, String name) {
+        File named = new File(IMAGE_DIR, sha + cacheExt(name));
+        if (named.isFile()) return named;
+        File png = new File(IMAGE_DIR, sha + ".png");
+        if (png.isFile()) return png;
+        return named;
+    }
+
+    private static String cacheExt(String name) {
+        String n = name == null ? "" : name.toLowerCase();
+        int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+        if (slash >= 0) n = n.substring(slash + 1);
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return ".jpg";
+        if (n.endsWith(".gif")) return ".gif";
+        if (n.endsWith(".webp")) return ".webp";
+        return ".png";
+    }
+
+    private static File writeCachedImage(String id, String b64, String name) {
         if (id == null || id.isBlank() || b64 == null || b64.isBlank()) return null;
         try {
             IMAGE_DIR.mkdirs();
-            File out = new File(IMAGE_DIR, id + ".png");
+            File out = new File(IMAGE_DIR, id + cacheExt(name));
             Files.write(out.toPath(), Base64.getDecoder().decode(b64));
             return out;
         } catch (Exception e) {
@@ -611,6 +718,7 @@ public final class TypewriterStore {
 
     private static Data parseBundle(String json) {
         Data data = new Data();
+        json = Vault.open(json);
         if (json == null || json.isBlank()) return data;
         for (String obj : objectsIn(json, "diary")) {
             LocalDate day = parseDate(extract(obj, "date"));
@@ -820,5 +928,14 @@ public final class TypewriterStore {
 
     private static String nz(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String clipImageName(String name) {
+        String raw = name == null || name.isBlank() ? "image.png" : name;
+        if (raw.length() <= 120) return raw;
+        int dot = raw.lastIndexOf('.');
+        String ext = dot >= 0 ? raw.substring(dot) : "";
+        int keep = Math.max(1, 120 - ext.length());
+        return raw.substring(0, keep) + ext;
     }
 }

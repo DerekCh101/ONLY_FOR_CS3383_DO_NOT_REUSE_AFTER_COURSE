@@ -1,3 +1,4 @@
+/** Undo and redo stacks shared by all recorded commands. */
 package org.ashoreprospect.Command;
 
 

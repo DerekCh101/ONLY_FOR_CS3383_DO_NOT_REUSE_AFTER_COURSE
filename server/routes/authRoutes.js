@@ -1,3 +1,4 @@
+/** Login, register, sessions, account edits, password reset. */
 import { randomUUID, createHash } from "node:crypto";
 import bcrypt from "bcrypt";
 import {

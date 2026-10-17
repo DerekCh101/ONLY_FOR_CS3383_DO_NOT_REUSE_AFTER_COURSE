@@ -1,3 +1,4 @@
+/** Serves the web app (index.html and static files). */
 import fs from "node:fs";
 import { pathname } from "../lib/httpUtil.js";
 

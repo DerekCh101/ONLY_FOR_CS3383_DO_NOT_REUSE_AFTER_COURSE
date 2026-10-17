@@ -1,3 +1,4 @@
+/** Move a placed task to another day/slot; records undo. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -71,9 +72,14 @@ public class MoveTask implements Command {
         theSystem.getGrid().putIfAbsent(newColumn, new Day(theSystem.getBlockedTime()));
         Day newDay = theSystem.getGrid().get(newColumn);
         Task[] slots = newDay.returnDayGrid();
+        BlockedTimePeriod blocks = theSystem.getBlockedTime();
         for (int i = 0; i < slotCount; i++) {
             Task existing = slots[newStartSlot + i];
             if (existing != null && existing != task) return false;
+            if (blocks != null) {
+                LocalDateTime dt = AppTimeReference.dateTimeForSlot(newColumn, newStartSlot + i);
+                if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) return false;
+            }
         }
         return true;
     }

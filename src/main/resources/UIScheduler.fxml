@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Calendar layout: toolbar, week/month grid, side description, CLI bar. -->
 
 <?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
 <?import javafx.scene.control.ContextMenu?>
 <?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
 <?import javafx.scene.control.MenuButton?>
 <?import javafx.scene.control.MenuItem?>
 <?import javafx.scene.control.ScrollPane?>
@@ -88,6 +92,7 @@
                                 <ContextMenu>
                                     <items>
                                         <MenuItem fx:id="menuAddTask" text="Add Task" />
+                                        <MenuItem fx:id="menuUnscheduled" text="View unscheduled tasks" />
                                         <MenuItem fx:id="menuBlocked" text="Blocked times" />
                                         <MenuItem fx:id="btnImport" text="Import From Files" />
                                         <MenuItem fx:id="btnRun" text="Run Scheduler" />
@@ -132,12 +137,32 @@
                         </StackPane.margin>
                     </Button>
                     </StackPane>
+                    <HBox alignment="CENTER_LEFT" spacing="6" styleClass="tool-bar">
+                        <Button fx:id="cliShow" text="CLI" mnemonicParsing="false" />
+                    </HBox>
+                    <HBox fx:id="cliBar" spacing="6" alignment="CENTER_LEFT" visible="false" managed="false"
+                          styleClass="tool-bar">
+                        <TextField fx:id="cliInput" promptText="movetask &lt;id&gt; &lt;yyyy-MM-dd&gt; &lt;HH:mm&gt; [hours]  |  finish/unfinish/clear &lt;id&gt;"
+                                   HBox.hgrow="ALWAYS" />
+                        <Button fx:id="cliRun" text="Run" mnemonicParsing="false" />
+                        <Label fx:id="cliOut" />
+                    </HBox>
                     </VBox>
-                    <VBox fx:id="sidePanelContainer" spacing="10" prefWidth="280"
+                    <VBox fx:id="sidePanelContainer" spacing="8" prefWidth="280"
                           minWidth="200" maxWidth="360"
                           styleClass="side-panel">
                         <Label fx:id="sidePanel" wrapText="true" style="-fx-font-weight: bold;"
-                               text="Unscheduled Tasks: (Tasks that were once placed on grid but cannot refit after using the scheduling algorithm)" />
+                               text="Task description" />
+                        <Label fx:id="descMeta" wrapText="true" text="Left-click a task to see it here." />
+                        <ScrollPane fitToWidth="true" prefHeight="220" hbarPolicy="NEVER">
+                            <VBox fx:id="descList" spacing="6" />
+                        </ScrollPane>
+                        <HBox spacing="6" alignment="CENTER_LEFT">
+                            <TextField fx:id="descAddField" promptText="Add checklist item…" HBox.hgrow="ALWAYS"
+                                       disable="true" />
+                            <Button fx:id="descAddBtn" text="Add" disable="true" mnemonicParsing="false" />
+                        </HBox>
+                        <Button fx:id="descSave" text="Save description" disable="true" mnemonicParsing="false" />
                     </VBox>
                 </SplitPane>
             </StackPane>

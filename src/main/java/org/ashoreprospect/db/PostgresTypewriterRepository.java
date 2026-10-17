@@ -1,3 +1,4 @@
+/** Postgres copy of Typewriter diary, lists, and pages. */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.GUI.TypewriterPane;
@@ -144,6 +145,7 @@ public class PostgresTypewriterRepository {
             }
             TypewriterStore.rebuildPages(conn, uid, data.pagesRoot, true);
         }
+        TypewriterStore.openLoaded(data);
         return data;
     }
 
@@ -161,8 +163,8 @@ public class PostgresTypewriterRepository {
                     if (!TypewriterStore.hasContent(note)) continue;
                     ps.setString(1, uid);
                     ps.setDate(2, Date.valueOf(note.date));
-                    ps.setString(3, note.title);
-                    ps.setString(4, note.body);
+                    ps.setString(3, org.ashoreprospect.crypto.Vault.seal(note.title));
+                    ps.setString(4, org.ashoreprospect.crypto.Vault.seal(note.body));
                     ps.setString(5, TypewriterStore.joinImages(note));
                     ps.addBatch();
                 }
@@ -176,7 +178,7 @@ public class PostgresTypewriterRepository {
                 for (TypewriterPane.TwList list : lists) {
                     lp.setString(1, list.id);
                     lp.setString(2, uid);
-                    lp.setString(3, list.title);
+                    lp.setString(3, org.ashoreprospect.crypto.Vault.seal(list.title));
                     lp.setInt(4, li++);
                     lp.addBatch();
                     int ii = 0;
@@ -184,7 +186,7 @@ public class PostgresTypewriterRepository {
                         ip.setString(1, list.id);
                         ip.setString(2, uid);
                         ip.setInt(3, ii++);
-                        ip.setString(4, item.text);
+                        ip.setString(4, org.ashoreprospect.crypto.Vault.seal(item.text));
                         ip.setBoolean(5, item.done);
                         ip.addBatch();
                     }

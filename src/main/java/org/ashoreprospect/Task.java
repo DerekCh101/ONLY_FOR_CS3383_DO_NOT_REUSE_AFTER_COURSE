@@ -1,3 +1,4 @@
+/** One calendar task: name, duration, placement, category, description, timestamps. */
 package org.ashoreprospect;
 
 import java.time.Instant;
@@ -21,6 +22,10 @@ public class Task {
     private TaskLifeCycle taskLifeCycle;
     private Instant placementUpdatedAt;
     private Instant lastUpdatedAt;
+    private String category = "";
+    private String subcategory = "";
+    private String description = "";
+    private boolean descriptionDone;
 
     /**
      * New task created by the user (GUI / CLI).
@@ -35,7 +40,7 @@ public class Task {
                 LocalTime deadLineTime) {
 
         this.id = allocateIdSafely();
-        this.taskName = taskName;
+        this.taskName = clip(taskName, 100);
         this.durationMinutes = AppTimeReference.hoursToMinutes(durationHours);
         this.state = state;
         this.startingDate = startingDate;
@@ -172,7 +177,7 @@ public class Task {
     }
 
     public void setTaskName(String taskName) {
-        this.taskName = taskName;
+        this.taskName = clip(taskName, 100);
     }
 
     public void setDurationHours(double durationHours) {
@@ -196,6 +201,62 @@ public class Task {
 
     public boolean isFlexible() {
         return state == 3;
+    }
+
+    /** Only Deadline and Flexible may sit in the unscheduled list. */
+    public boolean canGoUnscheduled() {
+        return hasDeadline() || isFlexible();
+    }
+
+    public String getCategory() {
+        return category == null ? "" : category;
+    }
+
+    public void setCategory(String category) {
+        this.category = clip(category, 80);
+    }
+
+    public String getSubcategory() {
+        return subcategory == null ? "" : subcategory;
+    }
+
+    public void setSubcategory(String subcategory) {
+        this.subcategory = clip(subcategory, 80);
+    }
+
+    public String getDescription() {
+        return description == null ? "" : description;
+    }
+
+    public void setDescription(String description) {
+        String n = description == null ? "" : description;
+        if (n.startsWith("AP1.")) {
+            this.description = n;
+            return;
+        }
+        this.description = n.length() > 8000 ? n.substring(0, 8000) : n;
+    }
+
+    private static String clip(String s, int max) {
+        if (s != null && s.startsWith("AP1.")) return s;
+        String n = s == null ? "" : s.trim();
+        return n.length() > max ? n.substring(0, max) : n;
+    }
+
+    public boolean isDescriptionDone() {
+        return descriptionDone;
+    }
+
+    public void setDescriptionDone(boolean descriptionDone) {
+        this.descriptionDone = descriptionDone;
+    }
+
+    public void copyExtrasFrom(Task src) {
+        if (src == null) return;
+        setCategory(src.getCategory());
+        setSubcategory(src.getSubcategory());
+        setDescription(src.getDescription());
+        setDescriptionDone(src.isDescriptionDone());
     }
 
     public void setStartingDate(LocalDate startingDate) {

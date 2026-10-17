@@ -1,3 +1,4 @@
+/** Draws the month calendar cells and task chips. */
 package org.ashoreprospect.GUI;
 
 import javafx.geometry.Insets;
@@ -31,10 +32,15 @@ public class MonthGridBuilder {
 
     private final TaskManagementSystem system;
     private final TaskDialogs dialogs;
+    private java.util.function.Consumer<Task> onSelectTask;
 
     public MonthGridBuilder(TaskManagementSystem system, TaskDialogs dialogs) {
         this.system = system;
         this.dialogs = dialogs;
+    }
+
+    public void setOnSelectTask(java.util.function.Consumer<Task> onSelectTask) {
+        this.onSelectTask = onSelectTask;
     }
 
     /**
@@ -48,7 +54,7 @@ public class MonthGridBuilder {
         grid.setVgap(2);
         grid.setPadding(new Insets(4));
 
-        LocalDate today = AppTimeReference.getCurrentDate();
+        LocalDate today = AppTimeReference.currentColumnDate();
         YearMonth ym = YearMonth.from(today).plusMonths(monthOffset);
         LocalDate firstOfMonth = ym.atDay(1);
         LocalDate gridStart = AppTimeReference.getStartOfWeek(firstOfMonth); // Monday
@@ -84,7 +90,6 @@ public class MonthGridBuilder {
         }
 
         if (sidePanel != null) {
-            sidePanel.setText("Unscheduled:\n" + system.getEngine().printUnscheduledTask());
             sidePanel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + AppTheme.ink()
                     + "; " + AppTheme.font() + "-fx-font-size: 12px;");
         }
@@ -150,11 +155,18 @@ public class MonthGridBuilder {
         }
 
         final LocalDate clicked = date;
+        final List<Task> dayTasks = new ArrayList<>(tasks);
         cell.setOnMouseClicked(e -> {
-            // Open add popup for that day (slot 0); week drag stays week-only
-            if (dialogs != null) {
-                dialogs.showTaskPopup(false,clicked,-1);
+            boolean pastDay = clicked.isBefore(AppTimeReference.currentColumnDate());
+            if (e.getButton() == javafx.scene.input.MouseButton.SECONDARY) {
+                if (!pastDay && dialogs != null) dialogs.showTaskPopup(false, clicked, -1);
+                return;
             }
+            if (!dayTasks.isEmpty() && onSelectTask != null) {
+                onSelectTask.accept(dayTasks.get(0));
+                return;
+            }
+            if (!pastDay && dialogs != null) dialogs.showTaskPopup(false, clicked, -1);
         });
 
         return cell;
@@ -171,7 +183,7 @@ public class MonthGridBuilder {
         }
         // Fallback: placed list (in case grid not built for that day)
         for (Task t : system.getPlacedTasks()) {
-            if (date.equals(t.getPlacedDate())) {
+            if (date.equals(AppTimeReference.columnDateFor(t.getPlacedDate(), t.getPlacedTime()))) {
                 set.add(t);
             }
         }

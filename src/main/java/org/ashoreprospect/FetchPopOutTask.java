@@ -1,3 +1,4 @@
+/** Fields collected from the add/edit task dialog, passed into AddTask. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -18,6 +19,10 @@ public class FetchPopOutTask {
     private LocalDate placedDate;
     private LocalTime placedTime;
 
+    private String category = "";
+    private String subcategory = "";
+    private String description = "";
+    private boolean descriptionDone;
     private Task task; //used when wanted to clear a task
 
     public FetchPopOutTask(String taskName,
@@ -30,7 +35,7 @@ public class FetchPopOutTask {
                            LocalDate placedDate,
                            LocalTime placedTime) {
 
-        this.taskName = taskName;
+        this.taskName = clip(taskName, 100);
         this.duration = duration;
         this.state = state;
         this.startDate = startDate;
@@ -94,6 +99,44 @@ public class FetchPopOutTask {
 
     public LocalTime getPlacedTime() {
         return placedTime;
+    }
+
+    public String getCategory() {
+        return category == null ? "" : category;
+    }
+
+    public void setCategory(String category) {
+        this.category = clip(category, 80);
+    }
+
+    public String getSubcategory() {
+        return subcategory == null ? "" : subcategory;
+    }
+
+    public void setSubcategory(String subcategory) {
+        this.subcategory = clip(subcategory, 80);
+    }
+
+    public String getDescription() {
+        return description == null ? "" : description;
+    }
+
+    public void setDescription(String description) {
+        String n = description == null ? "" : description;
+        this.description = n.length() > 8000 ? n.substring(0, 8000) : n;
+    }
+
+    private static String clip(String s, int max) {
+        String n = s == null ? "" : s.trim();
+        return n.length() > max ? n.substring(0, max) : n;
+    }
+
+    public boolean isDescriptionDone() {
+        return descriptionDone;
+    }
+
+    public void setDescriptionDone(boolean descriptionDone) {
+        this.descriptionDone = descriptionDone;
     }
 
     public boolean isFixed() {

@@ -1,3 +1,4 @@
+/** JavaFX entry: pick server, log in, then show the calendar window. */
 package org.ashoreprospect;
 
 import javafx.animation.PauseTransition;
@@ -33,6 +34,7 @@ public class SchedulerApp extends Application {
         WindowFrame.install(stage);
         NetworkWatch.start();
         if (Api.INSTANCE.restoreSession()) {
+            org.ashoreprospect.crypto.Vault.unlockRemembered(Api.INSTANCE.getUserId());
             showMain();
             return;
         }
@@ -51,6 +53,7 @@ public class SchedulerApp extends Application {
 
     public static void returnToLogin() {
         Api.INSTANCE.logout();
+        org.ashoreprospect.crypto.Vault.lock();
         resetPostgres();
         TaskManagementSystem.resetInstance();
         org.ashoreprospect.GUI.AppTheme.clearListeners();

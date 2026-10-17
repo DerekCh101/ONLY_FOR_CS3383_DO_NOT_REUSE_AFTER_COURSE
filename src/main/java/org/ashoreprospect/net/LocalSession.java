@@ -1,3 +1,4 @@
+/** Remember-me token and prefs stored on this PC. */
 package org.ashoreprospect.net;
 
 import java.io.IOException;

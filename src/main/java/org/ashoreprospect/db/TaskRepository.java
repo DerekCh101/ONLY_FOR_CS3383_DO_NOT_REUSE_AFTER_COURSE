@@ -1,6 +1,8 @@
+/** One door for task/blocked save: SQLite first, then Postgres, then Node HTTP. */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.*;
+import org.ashoreprospect.crypto.Vault;
 import org.ashoreprospect.net.Api;
 import org.ashoreprospect.net.Endpoints;
 
@@ -395,7 +397,7 @@ public class TaskRepository {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         field(sb, "id", task.getID(), true);
-        field(sb, "title", task.getTaskName(), false);
+        field(sb, "title", Vault.seal(task.getTaskName()), false);
         sb.append(",\"duration\":").append(task.getDurationHours());
         field(sb, "state", state, false);
         field(sb, "placed_date", dateStr(task.getPlacedDate()), false);
@@ -406,6 +408,10 @@ public class TaskRepository {
         field(sb, "workflow", flow, false);
         field(sb, "placement_updated_at", instantStr(task.getPlacementUpdatedAt()), false);
         field(sb, "last_updated_at", instantStr(task.getLastUpdatedAt()), false);
+        field(sb, "category", Vault.seal(task.getCategory()), false);
+        field(sb, "subcategory", Vault.seal(task.getSubcategory()), false);
+        field(sb, "description", Vault.seal(task.getDescription()), false);
+        sb.append(",\"description_done\":").append(task.isDescriptionDone() ? "true" : "false");
         sb.append("}");
         return sb.toString();
     }
@@ -414,7 +420,7 @@ public class TaskRepository {
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         field(sb, "id", b.getId(), true);
-        field(sb, "title", b.getTitle(), false);
+        field(sb, "title", Vault.seal(b.getTitle()), false);
         if (b.getWeekday() != null) {
             sb.append(",\"weekday\":").append(toWeekdayInt(b.getWeekday()));
         } else {
@@ -580,6 +586,12 @@ public class TaskRepository {
         if (placeAt != null) task.setPlacementUpdatedAt(placeAt);
         if (lastAt != null) task.setLastUpdatedAt(lastAt);
         else if (placeAt != null) task.setLastUpdatedAt(placeAt);
+        task.setCategory(first(row, "category"));
+        task.setSubcategory(first(row, "subcategory"));
+        task.setDescription(first(row, "description"));
+        String done = first(row, "description_done", "descriptionDone");
+        task.setDescriptionDone("true".equalsIgnoreCase(done) || "t".equalsIgnoreCase(done) || "1".equals(done));
+        Vault.openTask(task);
         return task;
     }
 
@@ -612,6 +624,7 @@ public class TaskRepository {
         );
         String ex = first(row, "is_exception", "isException");
         b.setException("true".equalsIgnoreCase(ex) || "t".equalsIgnoreCase(ex) || "1".equals(ex));
+        Vault.openBlocked(b);
         return b;
     }
 
@@ -940,6 +953,7 @@ public class TaskRepository {
         out.setStartingTime(src.getStartingTime());
         out.setLifeCycle(src.getLifeCycle());
         out.setWorkflow(src.getWorkflow());
+        out.copyExtrasFrom(src);
         out.setLastUpdatedAt(src.getLastUpdatedAt() != null ? src.getLastUpdatedAt() : Instant.now());
         return out;
     }
@@ -1017,7 +1031,24 @@ public class TaskRepository {
 
     private void loadBlockedIntoMemory(TaskManagementSystem theSystem) throws SQLException {
         if (theSystem == null || theSystem.getBlockedTime() == null) return;
+        expirePastBlocked();
         theSystem.getBlockedTime().replaceBlockedPeriods(sqlite.fetchAllBlocked());
+    }
+
+    /** Dated blocks whose end is already past are deleted from SQLite / Postgres / Node. */
+    private void expirePastBlocked() throws SQLException {
+        java.time.LocalDateTime now = AppTimeReference.getCurrentDateTime();
+        for (BlockedTime b : new java.util.ArrayList<>(sqlite.fetchAllBlocked())) {
+            if (b == null || b.getSpecificDate() == null) continue;
+            java.time.LocalTime end = b.getEndTime() == null ? java.time.LocalTime.MAX : b.getEndTime();
+            java.time.LocalDateTime until = java.time.LocalDateTime.of(b.getSpecificDate(), end);
+            if (until.isAfter(now)) continue;
+            if (b.getLastUpdatedAt() != null
+                    && b.getLastUpdatedAt().isAfter(java.time.Instant.now().minusSeconds(300))) {
+                continue;
+            }
+            dbClearBlocked(b);
+        }
     }
 
     private void loadSqliteIntoMemory(TaskManagementSystem theSystem) throws SQLException {
@@ -1042,7 +1073,7 @@ public class TaskRepository {
                 if (before != task.getLifeCycle()) {
                     dbAddTask(task);
                 }
-            } else if (lifeFromDb == TaskLifeCycle.UNSCHEDULED) {
+            } else if (lifeFromDb == TaskLifeCycle.UNSCHEDULED && task.canGoUnscheduled()) {
                 theSystem.getUnscheduledTasks().add(task);
             } else {
                 theSystem.getPendingTasks().add(task);

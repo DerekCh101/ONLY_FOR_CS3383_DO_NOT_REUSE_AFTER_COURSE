@@ -1,3 +1,4 @@
+/** Places Flexible tasks into free 30-minute slots around blocked time. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -239,6 +240,7 @@ public class SchedulerEngine {
     }
 
     private void markUnscheduled(Task task) {
+        if (task == null || task.isFixedTime() || !task.canGoUnscheduled()) return;
         if (isPast(task)) return;
         removeFromGrid(task);
         system.getPlacedTasks().remove(task);

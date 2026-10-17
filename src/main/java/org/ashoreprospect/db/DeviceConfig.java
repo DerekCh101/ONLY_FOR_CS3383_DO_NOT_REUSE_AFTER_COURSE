@@ -1,3 +1,4 @@
+/** Stable device_id for this install (scheduler-device-id.txt). */
 package org.ashoreprospect.db;
 
 import java.io.IOException;

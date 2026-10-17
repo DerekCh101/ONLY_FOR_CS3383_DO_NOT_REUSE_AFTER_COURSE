@@ -1,3 +1,4 @@
+/** Mark a placed task finished. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -20,7 +21,7 @@ public class FinishTask implements Command {
         if (thisTask.getWorkflow() == Workflow.FINISHED) return false;
         if(thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return false;
         //note that only past and scheduled task can be marked finished
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return false;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
@@ -40,7 +41,7 @@ public class FinishTask implements Command {
     public void undo() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return;
         if(thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return; //note that only past and scheduled task can be marked finished
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
@@ -62,7 +63,7 @@ public class FinishTask implements Command {
 
         if (thisTask == null || thisTask.getID() == null) return;
         if(thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return; //note that only past and scheduled task can be marked finished
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());

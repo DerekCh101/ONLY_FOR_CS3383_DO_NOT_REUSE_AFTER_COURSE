@@ -1,3 +1,4 @@
+/** Host-only SMTP settings for password-reset mail. */
 package org.ashoreprospect.net;
 
 import java.io.IOException;
@@ -9,8 +10,8 @@ import java.util.Map;
 
 /**
  * Host-only SMTP. Host/user/from live in {@code .scheduler/smtp.txt}.
- * The App password is written as user env {@code SMTP_PASS} (Windows setx)
- * plus {@code .scheduler/smtp.env} so the running Node can read it.
+ * The App password is written to {@code .scheduler/smtp.env} so Node can read it.
+ * No Windows {@code setx} / registry write (Kaspersky flags that).
  */
 public final class SmtpSettings {
 
@@ -74,16 +75,12 @@ public final class SmtpSettings {
                 StandardCharsets.UTF_8);
         if (!pw.isBlank()) {
             Files.writeString(envFile(), "SMTP_PASS=" + pw + "\n", StandardCharsets.UTF_8);
-            persistUserEnv("SMTP_PASS", pw);
-            persistUserEnv("SMTP_USER", u);
-            persistUserEnv("SMTP_HOST", h);
         }
     }
 
     public static void clear() throws IOException {
         Files.deleteIfExists(file());
         Files.deleteIfExists(envFile());
-        persistUserEnv("SMTP_PASS", "");
     }
 
     private static String readEnvKey(String key) {
@@ -98,19 +95,6 @@ public final class SmtpSettings {
         } catch (IOException ignored) {
         }
         return "";
-    }
-
-    /** Windows user env so SMTP_PASS survives a new terminal. Harmless on other OS. */
-    private static void persistUserEnv(String key, String value) {
-        if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
-        try {
-            new ProcessBuilder("cmd", "/c", "setx", key, value == null ? "" : value)
-                    .redirectErrorStream(true)
-                    .start()
-                    .waitFor();
-        } catch (Exception e) {
-            System.err.println("setx " + key + " failed: " + e.getMessage());
-        }
     }
 
     private static String nz(String s) {

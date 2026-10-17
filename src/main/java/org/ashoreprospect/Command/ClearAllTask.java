@@ -1,3 +1,4 @@
+/** Delete every task for this user (undoable). */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.Day;
@@ -43,10 +44,10 @@ public class ClearAllTask implements Command {
     public void undo() throws SQLException {
         for (Task t : savedTasks) {
             if (t.getPlacedDate() != null && t.getPlacedTime() != null) {
-                theSystem.getGrid().putIfAbsent(
-                        t.getPlacedDate(),
-                        new Day(theSystem.getBlockedTime()));
-                Day day = theSystem.getGrid().get(t.getPlacedDate());
+                java.time.LocalDate col = org.ashoreprospect.AppTimeReference.columnDateFor(
+                        t.getPlacedDate(), t.getPlacedTime());
+                theSystem.getGrid().putIfAbsent(col, new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(col);
                 int slot = org.ashoreprospect.AppTimeReference.localTimeToSlot(t.getPlacedTime());
                 day.placeTask(slot, t);
                 theSystem.getPlacedTasks().add(t);

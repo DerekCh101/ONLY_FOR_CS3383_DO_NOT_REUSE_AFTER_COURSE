@@ -1,3 +1,4 @@
+/** Rejects invalid add-task form values before a Command is built. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -15,10 +16,11 @@ public class ValidateAddTaskInput {
             LocalTime deadlineTime
     ) {
 
-        TaskManagementSystem theSystem = TaskManagementSystem.getInstance();
-
         // Task name
         if (tName == null || tName.trim().isEmpty()) {
+            return false;
+        }
+        if (tName.trim().length() > 100) {
             return false;
         }
 
@@ -27,7 +29,7 @@ public class ValidateAddTaskInput {
             return false;
         }
 
-        if (duration >= theSystem.getEngine().getTotalHours()) {
+        if (AppTimeReference.hoursToSlots(duration) > AppTimeReference.SLOTS_PER_DAY) {
             return false;
         }
 
@@ -36,8 +38,7 @@ public class ValidateAddTaskInput {
             return false;
         }
 
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now();
+        java.time.LocalDateTime now = AppTimeReference.getCurrentDateTime();
 
         switch (state) {
 
@@ -49,11 +50,7 @@ public class ValidateAddTaskInput {
                     return false;
                 }
 
-                // Cannot be in the past
-                if (startDate.isBefore(today)) {
-                    return false;
-                }
-                if (startDate.equals(today) && startTime.isBefore(now)) {
+                if (!java.time.LocalDateTime.of(startDate, startTime).isAfter(now)) {
                     return false;
                 }
                 break;
@@ -66,11 +63,7 @@ public class ValidateAddTaskInput {
                     return false;
                 }
 
-                // Cannot be in the past
-                if (deadlineDate.isBefore(today)) {
-                    return false;
-                }
-                if (deadlineDate.equals(today) && deadlineTime.isBefore(now)) {
+                if (!java.time.LocalDateTime.of(deadlineDate, deadlineTime).isAfter(now)) {
                     return false;
                 }
                 break;

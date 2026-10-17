@@ -1,7 +1,8 @@
+/** Live task lists, blocked time, and GUI refresh. Named actions live in SystemCommands. */
 package org.ashoreprospect;
 
-import java.io.FileNotFoundException;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,13 +31,15 @@ public class TaskManagementSystem {
     private FetchPopOutTask popupTask;
     private TaskRepository repo;
     private volatile boolean pollRunning;
+    private final List<Task> pendingCarryOrphans = new ArrayList<>();
+    private final java.util.Set<String> carryPrompted = new java.util.HashSet<>();
 
     private TaskManagementSystem() {
         System.out.println("System Created - with RunSchedulerCommand");
         pendingTasks = new ArrayList<>();
         placedTasks = new ArrayList<>();
         unscheduledTasks = new ArrayList<>();
-        baseDate = LocalDate.now();
+        baseDate = AppTimeReference.currentColumnDate();
         blockedTime = new BlockedTimePeriod();
         daysGrid = new TreeMap<>();
         engine = new SchedulerEngine(this, baseDate, daysGrid);
@@ -85,6 +88,18 @@ public class TaskManagementSystem {
         return unscheduledTasks;
     }
 
+    public void offerCarryOrphan(Task past) {
+        if (past == null || past.getID() == null) return;
+        if (!carryPrompted.add(past.getID())) return;
+        pendingCarryOrphans.add(past);
+    }
+
+    public List<Task> takeCarryOrphans() {
+        List<Task> out = new ArrayList<>(pendingCarryOrphans);
+        pendingCarryOrphans.clear();
+        return out;
+    }
+
     public BlockedTimePeriod getBlockedTime() {
         return blockedTime;
     }
@@ -99,6 +114,29 @@ public class TaskManagementSystem {
 
     public TaskRepository getTaskRepo() {
         return repo;
+    }
+
+    /** Rewrite live tasks/blocked through the store so enable/disable encryption covers data already saved. */
+    public void rewriteEncryptedStores() throws SQLException {
+        Instant now = Instant.now();
+        List<Task> all = new ArrayList<>();
+        all.addAll(placedTasks);
+        all.addAll(unscheduledTasks);
+        all.addAll(pendingTasks);
+        for (Task t : all) {
+            if (t == null) continue;
+            org.ashoreprospect.crypto.Vault.openTask(t);
+            t.setLastUpdatedAt(now);
+            repo.dbAddTask(t);
+        }
+        if (blockedTime != null && blockedTime.blockedPeriod != null) {
+            for (BlockedTime b : blockedTime.blockedPeriod) {
+                if (b == null) continue;
+                org.ashoreprospect.crypto.Vault.openBlocked(b);
+                b.setLastUpdatedAt(now);
+                repo.dbAddBlocked(b);
+            }
+        }
     }
 
     private void startNodePoll() {
@@ -189,135 +227,7 @@ public class TaskManagementSystem {
 
     public boolean command(String cmdString) {
         try {
-            switch (cmdString) {
-
-                case "addTask":
-                    if (!ValidateAddTaskInput.validateAddTaskInput(
-                            popupTask.getTaskName(),
-                            popupTask.getDuration(),
-                            popupTask.getState(),
-                            popupTask.getStartDate(),
-                            popupTask.getStartTime(),
-                            popupTask.getDeadlineDate(),
-                            popupTask.getDeadlineTime())) {
-                        return false;
-                    }
-
-                    Command addTaskFromGUI = new AddTask(
-                            popupTask.getTaskName(),
-                            popupTask.getDuration(),
-                            popupTask.getState(),
-                            popupTask.getStartDate(),
-                            popupTask.getStartTime(),
-                            popupTask.getDeadlineDate(),
-                            popupTask.getDeadlineTime(),
-                            popupTask.getPlacedDate(),
-                            popupTask.getPlacedTime()
-                    );
-
-                    if (!addTaskFromGUI.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "addTaskFromFile":
-                    try {
-                        Command addTaskWithFile = new AddTaskWithFile(this);
-                        if (!addTaskWithFile.execute()) {
-                            return false;
-                        }
-                        refreshGUI();
-                        return true;
-                    } catch (FileNotFoundException e) {
-                        System.out.println("File Not Found!");
-                        return false;
-                    }
-                case "finishTask":
-                    Command finishTask = new FinishTask(getPopupTask().getTask());
-                    if (!finishTask.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "unfinishTask":
-                    Command unfinishTask = new UnfinishTask(getPopupTask().getTask());
-                    if (!unfinishTask.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "clearTask":
-                    Command clearTask = new ClearTask(getPopupTask().getTask());
-                    if (!clearTask.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "printAllTask":
-                    Command printAll = new PrintAllTask(this);
-                    return printAll.execute();
-
-                case "clearAllTask":
-                    Command clearAllTask = new ClearAllTask(this);
-                    if (!clearAllTask.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "clearPastTasks":
-                    Command clearPast = new ClearPastTasks(this);
-                    if (!clearPast.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "undo":
-                    RecordedCommand undo = new Undo(this);
-                    if (!undo.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "redo":
-                    RecordedCommand redo = new Redo(this);
-                    if (!redo.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    return true;
-
-                case "updateGUI":
-                    refreshGUI();
-                    return true;
-
-                case "runScheduler":
-                    Command runScheduler = new RunSchedulerCommand(this);
-                    if (!runScheduler.execute()) {
-                        return false;
-                    }
-                    refreshGUI();
-                    System.out.println("Scheduler ran (undoable).");
-                    return true;
-
-                case "exit":
-                    System.exit(0);
-                    return true;
-
-                case "addTaskFromCli":
-                    System.out.println("CLI addTask is currently disabled. Please use the GUI.");
-                    return false;
-
-                default:
-                    System.out.println("Invalid Command.");
-                    return false;
-            }
+            return SystemCommands.run(cmdString, this);
         } catch (SQLException e) {
             System.out.println("Database error: " + e.getMessage());
             e.printStackTrace();

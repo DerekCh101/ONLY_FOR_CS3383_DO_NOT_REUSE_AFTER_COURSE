@@ -1,3 +1,4 @@
+/** Optional security-question pause on Remember-me login. */
 package org.ashoreprospect.GUI;
 
 import javafx.application.Platform;

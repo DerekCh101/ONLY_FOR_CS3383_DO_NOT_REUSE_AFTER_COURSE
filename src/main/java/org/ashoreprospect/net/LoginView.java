@@ -1,3 +1,4 @@
+/** Login, register, and password-reset screens. */
 package org.ashoreprospect.net;
 
 import javafx.application.Platform;
@@ -13,6 +14,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import org.ashoreprospect.crypto.Vault;
 import org.ashoreprospect.db.TaskRepository;
 
 import java.util.Map;
@@ -206,7 +208,7 @@ public class LoginView {
         Thread t = new Thread(() -> {
             try {
                 NodeApi.AuthResult incoming = Api.INSTANCE.authenticate(false, user, password);
-                finishAuth(incoming, remember, err, login, registerBtn, onOk);
+                finishAuth(incoming, remember, password, err, login, registerBtn, onOk);
             } catch (Exception ex) {
                 Platform.runLater(() -> {
                     err.setText(ex.getMessage());
@@ -232,7 +234,7 @@ public class LoginView {
             try {
                 NodeApi.AuthResult incoming = Api.INSTANCE.registerAccount(
                         user, password, email, question, answer);
-                finishAuth(incoming, remember, err, create, cancel, onOk);
+                finishAuth(incoming, remember, password, err, create, cancel, onOk);
             } catch (Exception ex) {
                 Platform.runLater(() -> {
                     err.setText(ex.getMessage());
@@ -245,8 +247,9 @@ public class LoginView {
         t.start();
     }
 
-    private void finishAuth(NodeApi.AuthResult incoming, boolean remember,
+    private void finishAuth(NodeApi.AuthResult incoming, boolean remember, String password,
                             Label err, Button a, Button b, Runnable onOk) {
+        Vault.unlockWithPassword(incoming.userId, password);
         String cached = TaskRepository.peekCachedUserId();
         Platform.runLater(() -> {
             if (cached != null && !cached.equals(incoming.userId) && !confirmReplaceCache()) {

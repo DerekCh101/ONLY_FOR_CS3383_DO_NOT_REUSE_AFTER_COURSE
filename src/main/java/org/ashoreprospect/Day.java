@@ -1,3 +1,4 @@
+/** One day's 48 half-hour slots and the tasks sitting in them. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -39,6 +40,12 @@ public class Day {
             if (todayTaskGrid[slot] != null
                     && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
+            }
+            if (!ignoreBlocked && blockedTime != null) {
+                LocalDateTime dt = AppTimeReference.dateTimeForSlot(columnDate, slot);
+                if (blockedTime.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
+                    return false;
+                }
             }
         }
         return true;

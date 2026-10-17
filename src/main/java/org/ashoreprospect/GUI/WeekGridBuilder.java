@@ -1,9 +1,11 @@
+/** Draws the week grid (48 half-hour rows) and placed tasks. */
 package org.ashoreprospect.GUI;
 
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.VPos;
 import javafx.scene.control.Label;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
@@ -25,6 +27,7 @@ public class WeekGridBuilder {
     private final TaskManagementSystem system;
     private final TaskDragDropSupport dragDrop;
     private final TaskDialogs dialogs;
+    private java.util.function.Consumer<Task> onSelectTask;
 
     private Region nowBar;
     private int nowBarRow = -1;
@@ -37,6 +40,10 @@ public class WeekGridBuilder {
         this.dialogs = dialogs;
     }
 
+    public void setOnSelectTask(java.util.function.Consumer<Task> onSelectTask) {
+        this.onSelectTask = onSelectTask;
+    }
+
     public void build(GridPane grid, Label sidePanel, int weekOffset) {
         grid.getChildren().clear();
         grid.setHgap(0);
@@ -45,7 +52,7 @@ public class WeekGridBuilder {
         nowBarRow = -1;
 
         var gridData = system.getGrid();
-        LocalDate weekStart = AppTimeReference.getStartOfWeek(AppTimeReference.getCurrentDate());
+        LocalDate weekStart = AppTimeReference.getStartOfWeek(AppTimeReference.currentColumnDate());
         List<BlockedTime> blocked = loadBlocked();
         List<Task> placed = system.getPlacedTasks() == null
                 ? List.of() : new ArrayList<>(system.getPlacedTasks());
@@ -117,14 +124,22 @@ public class WeekGridBuilder {
                 });
 
                 cell.setOnMouseClicked(e -> {
-                    if (Math.abs(e.getScreenX() - mouseDown[0]) < 5
-                            && Math.abs(e.getScreenY() - mouseDown[1]) < 5) {
-                        LocalDate clickDate = AppTimeReference.calendarDateForSlot(finalColumn, finalSlotIndex);
-                        if (finalTaskInCell == null) {
+                    if (Math.abs(e.getScreenX() - mouseDown[0]) >= 5
+                            || Math.abs(e.getScreenY() - mouseDown[1]) >= 5) {
+                        return;
+                    }
+                    LocalDate clickDate = AppTimeReference.calendarDateForSlot(finalColumn, finalSlotIndex);
+                    if (finalTaskInCell == null) {
+                        if (e.getButton() == MouseButton.PRIMARY
+                                && !isPast(finalColumn, finalSlotIndex)) {
                             dialogs.showTaskPopup(true, clickDate, finalSlotIndex);
-                        } else {
-                            dialogs.showTaskInfoPopup(finalTaskInCell, clickDate, finalSlotIndex);
                         }
+                        return;
+                    }
+                    if (e.getButton() == MouseButton.SECONDARY) {
+                        dialogs.showTaskInfoPopup(finalTaskInCell, clickDate, finalSlotIndex);
+                    } else if (e.getButton() == MouseButton.PRIMARY && onSelectTask != null) {
+                        onSelectTask.accept(finalTaskInCell);
                     }
                 });
 
@@ -143,45 +158,29 @@ public class WeekGridBuilder {
             }
         }
 
-        nowBar = new Region();
-        nowBar.setMinHeight(3);
-        nowBar.setPrefHeight(3);
-        nowBar.setMaxHeight(3);
-        nowBar.setStyle("-fx-background-color: red;");
-        nowBar.setMouseTransparent(true);
-        double barWidth = CELL_WIDTH * 7 + NOW_LINE_RIGHT_BLEED;
-        nowBar.setMinWidth(barWidth);
-        nowBar.setPrefWidth(barWidth);
-        nowBar.setMaxWidth(barWidth);
-        nowBarRow = nowSlot + 1;
-        grid.add(nowBar, 1, nowBarRow, 7, 1);
-        GridPane.setValignment(nowBar, VPos.TOP);
-        GridPane.setHalignment(nowBar, HPos.LEFT);
-        GridPane.setMargin(nowBar, new Insets(0, -NOW_LINE_RIGHT_BLEED, 0, 0));
-        nowBar.setTranslateY(fractionWithinSlot(now) * CELL_HEIGHT);
-
-        StringBuilder sb = new StringBuilder("Unscheduled task:\n");
-        try {
-            java.time.format.DateTimeFormatter fmt =
-                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            for (Task t : system.getTaskRepo().fetchUnscheduledTasks()) {
-                sb.append(t.getTaskName())
-                        .append(t.getState() == 1 ? " Fixed Task"
-                                : t.getState() == 2 ? " Deadline Task" : " Flexible Task");
-                if (t.getPlacementUpdatedAt() != null) {
-                    java.time.LocalDateTime local = java.time.LocalDateTime.ofInstant(
-                            t.getPlacementUpdatedAt(),
-                            java.time.ZoneId.systemDefault());
-                    sb.append("  ( ").append(local.format(fmt)).append(" )");
-                }
-                sb.append('\n');
-            }
-        } catch (SQLException e) {
-            sb.append("(failed to load)\n");
+        if (weekOffset == 0) {
+            nowBar = new Region();
+            nowBar.setMinHeight(3);
+            nowBar.setPrefHeight(3);
+            nowBar.setMaxHeight(3);
+            nowBar.setStyle("-fx-background-color: red;");
+            nowBar.setMouseTransparent(true);
+            double barWidth = CELL_WIDTH * 7 + NOW_LINE_RIGHT_BLEED;
+            nowBar.setMinWidth(barWidth);
+            nowBar.setPrefWidth(barWidth);
+            nowBar.setMaxWidth(barWidth);
+            nowBarRow = nowSlot + 1;
+            grid.add(nowBar, 1, nowBarRow, 7, 1);
+            GridPane.setValignment(nowBar, VPos.TOP);
+            GridPane.setHalignment(nowBar, HPos.LEFT);
+            GridPane.setMargin(nowBar, new Insets(0, -NOW_LINE_RIGHT_BLEED, 0, 0));
+            nowBar.setTranslateY(fractionWithinSlot(now) * CELL_HEIGHT);
         }
-        sidePanel.setText(sb.toString());
-        sidePanel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + AppTheme.ink()
-                + "; " + AppTheme.font() + "-fx-font-size: 12px;");
+
+        if (sidePanel != null) {
+            sidePanel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + AppTheme.ink()
+                    + "; " + AppTheme.font() + "-fx-font-size: 12px;");
+        }
     }
 
     private static Task taskAt(java.util.Map<LocalDate, Day> gridData,
@@ -243,7 +242,7 @@ public class WeekGridBuilder {
     }
 
     public boolean nowLineNeedsRowChange() {
-        if (nowBar == null) return true;
+        if (nowBar == null) return false;
         return AppTimeReference.currentSlotIndex() + 1 != nowBarRow;
     }
 
@@ -271,8 +270,10 @@ public class WeekGridBuilder {
             if (b.getStartTime() == null || b.getEndTime() == null) continue;
             if (!(slotStart.isBefore(b.getEndTime()) && slotEnd.isAfter(b.getStartTime()))) continue;
 
-            if (b.isException()) {
-                if (date.equals(b.getSpecificDate())) exception = true;
+            if (b.freesOn(date)) {
+                exception = true;
+            } else if (b.isException()) {
+                continue;
             } else if (b.isDaily()) {
                 daily = b;
             } else if (b.appliesOn(date)) {
@@ -280,8 +281,8 @@ public class WeekGridBuilder {
             }
         }
 
-        if (specific != null) return specific;
         if (exception) return null;
+        if (specific != null) return specific;
         return daily;
     }
 

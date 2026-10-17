@@ -1,3 +1,4 @@
+/** Shape checks for incoming task JSON (skip length limits on AP1. ciphertext). */
 const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -69,7 +70,14 @@ export function validateTask(body) {
     if (!UUID_RE.test(id)) return "id must be a UUID";
 
     if (!title) return "title required";
-    if (title.length > 100) return "title max 100 characters";
+    const category = String(body.category ?? "");
+    const subcategory = String(body.subcategory ?? "");
+    const description = String(body.description ?? "");
+    const sealed = (s) => String(s ?? "").startsWith("AP1.");
+    if (!sealed(title) && title.length > 100) return "title max 100 characters";
+    if (!sealed(category) && category.length > 80) return "category max 80 characters";
+    if (!sealed(subcategory) && subcategory.length > 80) return "subcategory max 80 characters";
+    if (!sealed(description) && description.length > 8000) return "description max 8000 characters";
 
     if (!Number.isFinite(duration)) return "duration required and must be a number";
     if (duration <= 0) return "duration must be > 0";
@@ -90,6 +98,10 @@ export function validateTask(body) {
     if (!WORKFLOWS.has(workflow)) return "workflow must be UNFINISHED or FINISHED";
 
     const scheduled = lifecycle !== "UNSCHEDULED";
+    if (state === "Fixed") {
+        if (lifecycle === "UNSCHEDULED") return "Fixed task cannot be unscheduled";
+        if (!placedDate || !placedTime) return "Fixed task must have placed_date and placed_time";
+    }
     if (scheduled) {
         if (!placedDate) return "scheduled task must have placed_date";
         if (!placedTime) return "scheduled task must have placed_time";

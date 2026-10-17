@@ -1,3 +1,4 @@
+/** Custom window border, drag, and resize chrome. */
 package org.ashoreprospect.GUI;
 
 import javafx.application.Platform;

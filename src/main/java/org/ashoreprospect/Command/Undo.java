@@ -1,3 +1,4 @@
+/** Pop the last recorded command and call undo(). */
 package org.ashoreprospect.Command;
 
 

@@ -1,3 +1,4 @@
+/** Node HTTP server: auth, tasks, blocked time, typewriter, static files. */
 import http from "node:http";
 import "./db.js";
 import { send } from "./lib/httpUtil.js";

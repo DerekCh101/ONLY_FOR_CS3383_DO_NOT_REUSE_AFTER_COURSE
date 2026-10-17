@@ -1,3 +1,4 @@
+/** Pop the last undone command and call redo(). */
 package org.ashoreprospect.Command;
 
 

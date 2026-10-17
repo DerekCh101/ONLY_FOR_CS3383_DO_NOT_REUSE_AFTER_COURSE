@@ -1,5 +1,7 @@
+/** Delete leftover past tasks that were never finished. */
 package org.ashoreprospect.Command;
 
+import org.ashoreprospect.AppTimeReference;
 import org.ashoreprospect.Day;
 import org.ashoreprospect.RefreshLifeCycle;
 import org.ashoreprospect.Task;
@@ -68,10 +70,10 @@ public class ClearPastTasks implements Command {
     public void undo() throws SQLException {
         for (Task t : savedTasks) {
             if (t.getPlacedDate() != null && t.getPlacedTime() != null) {
-                theSystem.getGrid().putIfAbsent(
-                        t.getPlacedDate(),
-                        new Day(theSystem.getBlockedTime()));
-                Day day = theSystem.getGrid().get(t.getPlacedDate());
+                java.time.LocalDate col = AppTimeReference.columnDateFor(
+                        t.getPlacedDate(), t.getPlacedTime());
+                theSystem.getGrid().putIfAbsent(col, new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(col);
                 int slot = org.ashoreprospect.AppTimeReference.localTimeToSlot(t.getPlacedTime());
                 day.placeTask(slot, t);
                 theSystem.getPlacedTasks().add(t);

@@ -1,3 +1,4 @@
+/** Run the scheduler engine once; undo restores previous placements. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -99,8 +100,9 @@ public class RunSchedulerCommand implements Command {
                 int durationSlots = t.getDurationSlots();
                 if (durationSlots <= 0) durationSlots = 1;
 
-                theSystem.getGrid().putIfAbsent(snap.placedDate, new Day(theSystem.getBlockedTime()));
-                Day day = theSystem.getGrid().get(snap.placedDate);
+                java.time.LocalDate col = AppTimeReference.columnDateFor(snap.placedDate, snap.placedTime);
+                theSystem.getGrid().putIfAbsent(col, new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(col);
 
                 boolean canPlace = true;
                 for (int i = 0; i < durationSlots; i++) {

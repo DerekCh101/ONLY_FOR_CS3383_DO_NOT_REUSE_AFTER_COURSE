@@ -1,14 +1,18 @@
+/** Dark/light toggle control on the Account screen. */
 package org.ashoreprospect.GUI;
 
 import javafx.animation.TranslateTransition;
 import javafx.geometry.Pos;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.scene.shape.Rectangle;
 import javafx.util.Duration;
+import org.ashoreprospect.GUI.theme.Contrast;
+import org.ashoreprospect.GUI.theme.ThemePalette;
 
-/** Pill track; the circle slides left (light) / right (dark). */
+/** Pill track; the circle slides left (light) / right (dark). Colors come from the pack. */
 public final class ThemeSwitch extends StackPane {
 
     private static final double W = 52;
@@ -38,13 +42,11 @@ public final class ThemeSwitch extends StackPane {
     }
 
     private void paint(boolean animate) {
+        ThemePalette p = AppTheme.palette();
         boolean dark = AppTheme.isDark();
-        track.setStyle(dark
-                ? "-fx-fill: #3d8b6e;"
-                : "-fx-fill: #c9bba6;");
-        knob.setStyle(dark
-                ? "-fx-fill: #e8e4dc;"
-                : "-fx-fill: #fbf7ef;");
+        track.setFill(Contrast.parse(dark ? p.today() : p.line()));
+        if (track.getFill() == null) track.setFill(Color.GRAY);
+        knob.setFill(Contrast.parse(p.paper()));
         double to = dark ? DARK_X : LIGHT_X;
         if (!animate) {
             knob.setTranslateX(to);

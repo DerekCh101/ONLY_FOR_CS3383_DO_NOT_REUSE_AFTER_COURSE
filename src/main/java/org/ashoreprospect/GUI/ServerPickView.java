@@ -1,3 +1,4 @@
+/** First-run screen: this PC is host, or point at another server. */
 package org.ashoreprospect.GUI;
 
 import javafx.geometry.Insets;
@@ -92,8 +93,7 @@ public final class ServerPickView extends VBox {
 
         Label pwHint = hint(
                 "Type the password you already use for Postgres user postgres.\n"
-                        + "So it will help you set it as the environment variable postgres_pw\n"
-                        + "That is: (Windows: setx postgres_pw).\n"
+                        + "It is saved only in .scheduler/postgres.pw (not Windows setx).\n"
                         + "Not used if you pick the creator's server."
         );
 

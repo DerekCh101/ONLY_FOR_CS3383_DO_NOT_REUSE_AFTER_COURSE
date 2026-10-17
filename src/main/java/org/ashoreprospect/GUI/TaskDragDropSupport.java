@@ -1,3 +1,4 @@
+/** Drag a placed task to another slot on the week grid. */
 package org.ashoreprospect.GUI;
 
 import javafx.scene.control.Label;
@@ -264,8 +265,10 @@ public class TaskDragDropSupport {
             if (b.getStartTime() == null || b.getEndTime() == null) continue;
             if (!(slotStart.isBefore(b.getEndTime()) && slotEnd.isAfter(b.getStartTime()))) continue;
 
-            if (b.isException()) {
-                if (date.equals(b.getSpecificDate())) exception = true;
+            if (b.freesOn(date)) {
+                exception = true;
+            } else if (b.isException()) {
+                continue;
             } else if (b.isDaily()) {
                 daily = b;
             } else if (b.appliesOn(date)) {
@@ -273,8 +276,8 @@ public class TaskDragDropSupport {
             }
         }
 
-        if (specific != null) return specific;
         if (exception) return null;
+        if (specific != null) return specific;
         return daily;
     }
 

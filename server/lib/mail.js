@@ -1,3 +1,4 @@
+/** Sends password-reset mail using host SMTP settings. */
 /**
  * Password-reset mail.
  * Host/user/from: repo-root `.scheduler/smtp.txt`

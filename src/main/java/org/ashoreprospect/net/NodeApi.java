@@ -1,3 +1,4 @@
+/** HTTP client for login, tasks, typewriter, and account against Node. */
 package org.ashoreprospect.net;
 
 import java.io.ByteArrayOutputStream;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.ashoreprospect.crypto.Vault;
 
 public class NodeApi {
 
@@ -71,6 +73,7 @@ public class NodeApi {
         userId = null;
         username = null;
         LocalSession.clear();
+        Vault.lock();
     }
 
     public String getUserId() {
@@ -129,10 +132,25 @@ public class NodeApi {
     }
 
     public Map<String, String> postTypewriterImage(String sha, String name, String base64) throws Exception {
+        return postTypewriterImage(sha, name, base64, "diary", "image/png");
+    }
+
+    public Map<String, String> postTypewriterImage(String sha, String name, String base64,
+                                                   String kind, String mime) throws Exception {
+        String ext = name == null ? "" : name.toLowerCase();
+        String resolvedMime = mime;
+        if (resolvedMime == null || resolvedMime.isBlank()) {
+            if (ext.endsWith(".jpg") || ext.endsWith(".jpeg")) resolvedMime = "image/jpeg";
+            else if (ext.endsWith(".gif")) resolvedMime = "image/gif";
+            else if (ext.endsWith(".webp")) resolvedMime = "image/webp";
+            else resolvedMime = "image/png";
+        }
+        String folder = "pages".equalsIgnoreCase(kind) ? "pages" : "diary";
         String body = "{"
                 + "\"sha256\":\"" + escape(sha) + "\""
                 + ",\"name\":\"" + escape(name == null || name.isBlank() ? "image.png" : name) + "\""
-                + ",\"mime\":\"image/png\""
+                + ",\"mime\":\"" + escape(resolvedMime) + "\""
+                + ",\"kind\":\"" + escape(folder) + "\""
                 + ",\"data\":\"" + escape(base64) + "\""
                 + "}";
         String json = request("POST", "/typewriter/images", body, true, IMAGE_READ_MS);
@@ -335,6 +353,9 @@ public class NodeApi {
         }
         if (code == 401 && (low.contains("login") || low.isBlank())) {
             return "Your login expired. Sign in again, then retry.";
+        }
+        if (code == 429 || low.contains("too many image")) {
+            return "Too many image uploads just now. Wait a minute, then retry.";
         }
         if (code == 404 || "not found".equalsIgnoreCase(m)) {
             return "The server does not have " + path

@@ -1,3 +1,4 @@
+/** Online/offline flag so saves can skip Node when the network is down. */
 package org.ashoreprospect.net;
 
 import java.net.NetworkInterface;

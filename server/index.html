@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- Web shell that loads app.js against this Node server. -->
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
@@ -59,8 +60,42 @@
         .row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
         label.chk { display: flex; gap: 0.3rem; align-items: center; font-size: 0.9rem; }
         .toolbar { display: flex; gap: 0.4rem; margin: 0.6rem 0 1rem; }
-        #twBody { white-space: pre-wrap; width: 100%; min-height: 8rem; }
-        #twImgs img {
+        .tw-editor {
+            display: flex;
+            align-items: stretch;
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            overflow: hidden;
+            background: #fff;
+        }
+        #twLineNos {
+            margin: 0;
+            padding: 0.4rem 0.4rem 0.4rem 0.3rem;
+            min-width: 2.4rem;
+            text-align: right;
+            color: var(--muted);
+            background: #eef2f6;
+            font: 0.85rem/1.45 Consolas, "Courier New", monospace;
+            overflow: hidden;
+            user-select: none;
+        }
+        #twBody {
+            white-space: pre-wrap;
+            width: 100%;
+            min-height: 8rem;
+            border: 0;
+            resize: vertical;
+            font: 0.9rem/1.45 Consolas, "Courier New", monospace;
+        }
+        #twImgs { align-items: flex-start; }
+        .tw-img {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            max-width: 16rem;
+        }
+        #twImgs img, .tw-img img {
             max-width: 100%;
             max-height: 16rem;
             border: 1px solid var(--line);
@@ -170,6 +205,7 @@
             cursor: pointer;
         }
         .find-link:hover { border-color: var(--blue); background: #f3f7fb; }
+        .find-link.now { border-color: var(--blue); }
         .find-link .k { font-weight: 600; }
         .find-link .n { color: var(--muted); font-size: 0.8rem; }
         #twSaveMsg { min-width: 4.5rem; }
@@ -191,6 +227,10 @@
         }
         .toast.on { opacity: 1; transform: translateY(0); }
         .toast.bad { background: #9b1c2c; }
+        #regExtra { display: none; width: 100%; }
+        #regExtra.on { display: flex; }
+        #regHint { display: none; color: var(--muted); font-size: 0.82rem; }
+        #regHint.on { display: block; }
     </style>
 </head>
 <body>
@@ -200,11 +240,14 @@
     <div class="row">
         <input id="user" placeholder="username" autocomplete="username" />
         <input id="pass" type="password" placeholder="password" autocomplete="current-password" />
-        <input id="email" placeholder="email (required to register)" autocomplete="email" />
-        <input id="question" placeholder="security question (required to register)" />
-        <input id="answer" type="password" placeholder="security answer (required to register)" />
         <button type="button" id="btnLogin">Login</button>
         <button type="button" class="ghost" id="btnReg">Register</button>
+        <p id="regHint">Email and a security question are only needed to create an account.</p>
+        <div class="row" id="regExtra">
+            <input id="email" placeholder="email (required to register)" autocomplete="email" />
+            <input id="question" placeholder="security question (required to register)" />
+            <input id="answer" type="password" placeholder="security answer (required to register)" />
+        </div>
     </div>
 </div>
 <div id="app">
@@ -233,16 +276,26 @@
     <div class="card">
         <ul id="blocked"></ul>
         <div class="row" style="margin-top:0.7rem">
-            <input id="bTitle" placeholder="title (morning)" />
+            <input id="bTitle" placeholder="title (morning)" maxlength="100" />
             <input id="bStart" type="time" step="1800" value="06:00" />
             <input id="bEnd" type="time" step="1800" value="07:00" />
         </div>
         <div class="row" style="margin-top:0.4rem">
             <label class="chk"><input type="checkbox" id="bEvery" checked /> Every day</label>
-            <label class="chk"><input type="checkbox" id="bException" /> Exception (free this date)</label>
+            <label class="chk"><input type="checkbox" id="bException" /> Exception (free this date / weekdays)</label>
             <input id="bFrom" type="date" disabled />
             <input id="bTo" type="date" disabled />
             <button type="button" id="btnAddBlocked">Add</button>
+        </div>
+        <div class="row" style="margin-top:0.4rem">
+            <span class="meta">Weekdays:</span>
+            <label class="chk"><input type="checkbox" class="bDow" value="1" /> Mon</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="2" /> Tue</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="3" /> Wed</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="4" /> Thu</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="5" /> Fri</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="6" /> Sat</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="7" /> Sun</label>
         </div>
         <p class="err" id="errBlocked"></p>
     </div>
@@ -270,33 +323,48 @@
     <h2>Add task</h2>
     <div class="card">
         <div class="row">
-            <input id="tTitle" placeholder="title" />
-            <input id="tDur" type="number" min="0.5" step="0.5" value="1" style="width:5rem" />
+            <input id="tTitle" placeholder="title" maxlength="100" />
+            <input id="tDur" type="number" min="0.5" max="24" step="0.5" value="1" style="width:5rem" />
             <select id="tState">
                 <option>Fixed</option>
+                <option>Deadline</option>
                 <option>Flexible</option>
             </select>
-            <input id="tDate" type="date" />
-            <input id="tTime" type="time" step="1800" />
+            <span id="tDeadlineWrap" style="display:none">
+                <input id="tDeadlineDate" type="date" />
+                <input id="tDeadlineTime" type="time" step="1800" value="18:00" />
+            </span>
+            <input id="tDate" type="date" title="optional for Deadline / Flexible (unscheduled if empty)" />
+            <input id="tTime" type="time" step="1800" title="optional for Deadline / Flexible" />
+            <input id="tCat" placeholder="category (study)" maxlength="80" />
+            <input id="tSub" placeholder="subcategory (revision)" maxlength="80" />
             <button type="button" id="btnAdd">Add</button>
         </div>
+        <div class="row" style="margin-top:0.4rem">
+            <label class="chk"><input type="checkbox" id="tDescDone" /> Done</label>
+            <input id="tDesc" placeholder="what to do exactly (description)" style="flex:1" maxlength="8000" />
+        </div>
+        <p class="hint">Fixed needs a date and time. Deadline / Flexible can omit them and stay unscheduled. Fill add retries the same task (resize / deadline) instead of creating a duplicate.</p>
+        <p class="ok" id="tReuseHint"></p>
+        <button type="button" id="btnNewTask" class="ghost" style="display:none">New instead</button>
         <p class="err" id="errAdd"></p>
     </div>
 
     <h2>Typewriter</h2>
     <div class="card">
         <div class="tabs">
-            <button type="button" id="tabDiary" class="active" data-twtab="diary">Diary</button>
-            <button type="button" id="tabPages" class="ghost" data-twtab="pages">Pages</button>
+            <button type="button" id="tabPages" class="active" data-twtab="pages">Pages</button>
+            <button type="button" id="tabDiary" class="ghost" data-twtab="diary">Diary</button>
             <button type="button" id="tabLists" class="ghost" data-twtab="lists">Lists</button>
         </div>
 
-        <div id="paneDiary" class="tw-pane on">
+        <div id="paneDiary" class="tw-pane">
             <div class="create-box">
                 <h3>Create or open one date</h3>
                 <p class="hint">Pick a calendar date, then press the button. If that day has no writing yet, the site asks before creating it. Empty days are not saved.</p>
                 <div class="row">
                     <input id="twDay" type="date" />
+                    <button type="button" class="ghost" id="btnTwToday">Jump to Today</button>
                     <button type="button" id="btnTwFind">Create / open date</button>
                 </div>
             </div>
@@ -319,9 +387,9 @@
             </div>
         </div>
 
-        <div id="panePages" class="tw-pane">
+        <div id="panePages" class="tw-pane on">
             <div class="row">
-                <input id="twPageTitle" placeholder="page title" />
+                <input id="twPageTitle" placeholder="page title" maxlength="200" />
                 <button type="button" id="btnTwAddPage">Add page</button>
             </div>
             <ul id="twPageList"></ul>
@@ -329,17 +397,25 @@
 
         <div id="paneLists" class="tw-pane">
             <div class="row">
-                <input id="twListTitle" placeholder="list title" />
+                <input id="twListTitle" placeholder="list title" maxlength="200" />
                 <button type="button" id="btnTwAddList">Add list</button>
             </div>
             <ul id="twLists"></ul>
         </div>
 
         <div id="twView">
-            <input id="twTitle" style="width:100%" />
+            <input id="twTitle" style="width:100%" maxlength="200" />
             <div class="meta" id="twMeta"></div>
-            <textarea id="twBody"></textarea>
+            <div class="tw-editor">
+                <pre id="twLineNos" aria-hidden="true">1</pre>
+                <textarea id="twBody"></textarea>
+            </div>
             <div id="twImgs" class="row"></div>
+            <div class="row" id="twAttachRow" style="margin-top:0.4rem;display:none">
+                <input type="file" id="twImgFile" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+                <button type="button" class="ghost" id="btnTwAttach">Attach images</button>
+                <span class="meta" id="twAttachHint">0 / 20 images · png, jpg, gif, webp · 8 MB each</span>
+            </div>
             <div class="row" style="margin-top:0.5rem">
                 <button type="button" id="btnTwSaveNote">Save this</button>
                 <button type="button" class="danger" id="btnTwDelNote">Delete this</button>

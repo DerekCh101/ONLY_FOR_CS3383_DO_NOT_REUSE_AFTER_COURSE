@@ -1,3 +1,4 @@
+/** One blocked interval (daily, weekly, or a specific date) that tasks must not overlap. */
 package org.ashoreprospect;
 
 import java.time.DayOfWeek;
@@ -23,7 +24,7 @@ public class BlockedTime {
     public BlockedTime(String id, String title, DayOfWeek weekday, LocalDate specificDate,
                        LocalTime startTime, LocalTime endTime, Instant lastUpdatedAt, String userId) {
         this.id = id;
-        this.title = title;
+        this.title = clipTitle(title);
         this.weekday = weekday;
         this.specificDate = specificDate;
         this.startTime = startTime;
@@ -62,6 +63,11 @@ public class BlockedTime {
         return true;
     }
 
+    /** Exception rows free a matching date (specific day or weekday). */
+    public boolean freesOn(LocalDate date) {
+        return exception && appliesOn(date);
+    }
+
     public boolean isDaily() {
         return specificDate == null && weekday == null && !exception;
     }
@@ -78,7 +84,13 @@ public class BlockedTime {
     public void setId(String id) { this.id = id; }
 
     public String getTitle() { return title; }
-    public void setTitle(String title) { this.title = title; }
+    public void setTitle(String title) { this.title = clipTitle(title); }
+
+    private static String clipTitle(String title) {
+        if (title != null && title.startsWith("AP1.")) return title;
+        String n = title == null || title.isBlank() ? "blocked" : title.trim();
+        return n.length() > 100 ? n.substring(0, 100) : n;
+    }
 
     public DayOfWeek getWeekday() { return weekday; }
     public void setWeekday(DayOfWeek weekday) { this.weekday = weekday; }

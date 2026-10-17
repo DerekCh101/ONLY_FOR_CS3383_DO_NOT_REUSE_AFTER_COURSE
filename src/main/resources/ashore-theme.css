@@ -1,20 +1,5 @@
-.ashore-root.theme-light {
-    -ashore-bg: #f3eee4;
-    -ashore-chrome: #efe8db;
-    -ashore-panel: #fbf7ef;
-    -ashore-ink: #1c2430;
-    -ashore-muted: #5c564c;
-    -ashore-line: #e0d6c6;
-}
-
-.ashore-root.theme-dark {
-    -ashore-bg: #121820;
-    -ashore-chrome: #161c24;
-    -ashore-panel: #1a222c;
-    -ashore-ink: #e8e4dc;
-    -ashore-muted: #9aa3ad;
-    -ashore-line: #2a3340;
-}
+/* Ashore look: token colors filled by AppTheme from the current ThemePack. */
+/* Tokens (-ashore-*) are painted onto the scene / popup root by AppTheme from the current ThemePack. */
 
 .ashore-root {
     -fx-background-color: -ashore-bg;
@@ -26,21 +11,54 @@
     -fx-text-fill: -ashore-ink;
 }
 
-/* Cream login / register / reset cards stay dark-on-paper in both themes. */
+.ashore-root .dialog-card,
+.ashore-root .dialog-card .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .dialog-card .button {
+    -fx-text-fill: -ashore-card-ink;
+    -fx-background-color: -ashore-card;
+    -fx-border-color: -ashore-card-ink;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+}
+
+.ashore-root .dialog-card .check-box,
+.ashore-root .dialog-card .check-box .label,
+.ashore-root .dialog-card .radio-button,
+.ashore-root .dialog-card .radio-button .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .dialog-card .text-field,
+.ashore-root .dialog-card .password-field,
+.ashore-root .dialog-card .text-area,
+.ashore-root .dialog-card .combo-box,
+.ashore-root .dialog-card .date-picker {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
+}
+
+.ashore-root .dialog-card .text-area {
+    -fx-control-inner-background: -ashore-card;
+}
+
 .ashore-root .login-card {
-    -fx-background-color: #f3eee4;
+    -fx-background-color: -ashore-card;
     -fx-background-radius: 16;
-    -fx-border-color: #d9d0c0;
+    -fx-border-color: -ashore-line;
     -fx-border-radius: 16;
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 24, 0.2, 0, 8);
 }
 
 .ashore-root .login-card .label {
-    -fx-text-fill: #1c2430;
+    -fx-text-fill: -ashore-card-ink;
 }
 
 .ashore-root .login-card .login-muted {
-    -fx-text-fill: #5c564c;
+    -fx-text-fill: -ashore-card-muted;
 }
 
 .ashore-root .login-card .login-err {
@@ -49,14 +67,14 @@
 
 .ashore-root .login-card .check-box,
 .ashore-root .login-card .check-box .label {
-    -fx-text-fill: #1c2430;
+    -fx-text-fill: -ashore-card-ink;
 }
 
 .ashore-root .login-card .text-field,
 .ashore-root .login-card .password-field {
-    -fx-background-color: #ffffff;
-    -fx-text-fill: #1c2430;
-    -fx-prompt-text-fill: #8a8378;
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
 }
 
 .ashore-root .check-box,
@@ -69,6 +87,7 @@
 .ashore-root .text-area {
     -fx-text-fill: -ashore-ink;
     -fx-prompt-text-fill: -ashore-muted;
+    -fx-background-color: -ashore-paper;
 }
 
 .ashore-root .text-area {
@@ -110,7 +129,7 @@
 
 .ashore-root .win-close:hover {
     -fx-background-color: #c42b1c;
-    -fx-text-fill: #f3eee4;
+    -fx-text-fill: -ashore-accent-ink;
 }
 
 .ashore-root .scroll-bar {
@@ -200,7 +219,9 @@
 }
 
 .ashore-root .chrome-bar .ghost-menu:hover,
-.ashore-root .chrome-bar .menu-button:hover {
+.ashore-root .chrome-bar .menu-button:hover,
+.ashore-root .chrome-bar .ghost-menu:showing,
+.ashore-root .chrome-bar .menu-button:showing {
     -fx-background-color: -ashore-panel;
 }
 
@@ -241,7 +262,8 @@
 }
 
 .ashore-root .tool-bar .button:hover {
-    -fx-background-color: derive(-ashore-panel, -6%);
+    -fx-background-color: -ashore-hover;
+    -fx-text-fill: -ashore-ink;
 }
 
 .ashore-root .side-panel {
@@ -264,25 +286,16 @@
 }
 
 .ashore-root .account-page .account-save {
-    -fx-background-color: #1c2430;
-    -fx-text-fill: #f3eee4;
+    -fx-background-color: -ashore-accent;
+    -fx-text-fill: -ashore-accent-ink;
     -fx-background-radius: 8;
     -fx-padding: 8 12;
     -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     -fx-cursor: hand;
 }
 
-.ashore-root.theme-dark .account-page .account-save {
-    -fx-background-color: #e8e4dc;
-    -fx-text-fill: #1c2430;
-}
-
 .ashore-root .account-page .account-save:hover {
-    -fx-background-color: #2a3340;
-}
-
-.ashore-root.theme-dark .account-page .account-save:hover {
-    -fx-background-color: #ffffff;
+    -fx-opacity: 0.92;
 }
 
 .ashore-root .account-page .account-save:pressed {
@@ -318,12 +331,11 @@
     -fx-text-fill: -ashore-ink;
 }
 
-/* Dialog duration spinner: always dark digits on a white field. */
 .ashore-root .spinner .text-field,
 .ashore-root .spinner .text-input {
-    -fx-background-color: #ffffff;
-    -fx-text-fill: #1c2430;
-    -fx-prompt-text-fill: #8a8378;
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
 }
 
 .ashore-root .list-view,
@@ -338,8 +350,8 @@
 }
 
 .ashore-root .fab {
-    -fx-background-color: #1c2430;
-    -fx-text-fill: #f3eee4;
+    -fx-background-color: -ashore-accent;
+    -fx-text-fill: -ashore-accent-ink;
     -fx-background-radius: 26;
     -fx-min-width: 52px;
     -fx-min-height: 52px;
@@ -352,12 +364,9 @@
     -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 12, 0.2, 0, 3);
 }
 
-.ashore-root.theme-dark .fab {
-    -fx-background-color: #e8e4dc;
-    -fx-text-fill: #1c2430;
-}
-
-.ashore-root .net-chip {
+.ashore-root .net-chip,
+.ashore-root .net-chip.online,
+.ashore-root .net-chip.offline {
     -fx-background-color: transparent;
     -fx-padding: 0 4 0 0;
     -fx-font-size: 11px;
@@ -365,14 +374,10 @@
     -fx-opacity: 0.85;
 }
 
-.ashore-root .net-chip.online,
-.ashore-root .net-chip.offline {
-    -fx-background-color: transparent;
-    -fx-text-fill: -ashore-muted;
-}
-
-.context-menu {
-    -fx-background-color: #1a222c;
+/* Popups are a separate scene: AppTheme paints the same tokens on .ashore-popup / .context-menu */
+.context-menu,
+.ashore-popup {
+    -fx-background-color: -ashore-panel;
     -fx-background-radius: 8;
     -fx-padding: 6 0;
     -fx-opacity: 1;
@@ -381,18 +386,25 @@
 .menu-item {
     -fx-opacity: 1;
     -fx-padding: 6 14;
+    -fx-background-color: transparent;
 }
 
 .menu-item .label {
-    -fx-text-fill: #e8e4dc;
+    -fx-text-fill: -ashore-ink;
     -fx-opacity: 1;
     -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
-.menu-item:focused {
-    -fx-background-color: #e8e4dc;
+.menu-item:focused,
+.menu-item:hover {
+    -fx-background-color: -ashore-hover;
 }
 
-.menu-item:focused .label {
-    -fx-text-fill: #1c2430;
+.menu-item:focused .label,
+.menu-item:hover .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.separator:horizontal .line {
+    -fx-border-color: -ashore-line transparent transparent transparent;
 }

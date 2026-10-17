@@ -1,3 +1,4 @@
+/** App clock, column dates, and 30-minute slot math (06:00 start). */
 package org.ashoreprospect;
 
 import java.time.Clock;

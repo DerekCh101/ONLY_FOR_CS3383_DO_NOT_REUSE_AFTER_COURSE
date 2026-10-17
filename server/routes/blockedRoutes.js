@@ -1,3 +1,4 @@
+/** HTTP list/upsert/delete for blocked time. */
 import { randomUUID } from "node:crypto";
 import { userFromToken, listBlocked, upsertBlocked, deleteBlocked } from "../db.js";
 import { readBody, send, parseJson, pathname, toYmd } from "../lib/httpUtil.js";
@@ -55,14 +56,22 @@ export async function handleBlocked(req, res) {
                 send(res, 400, { error: "start_time and end_time required" });
                 return true;
             }
-            if (isException && !specific) {
-                send(res, 400, { error: "exception needs a date" });
+            const weekday = body.weekday == null || body.weekday === "" ? null : Number(body.weekday);
+            const hasWeekday = weekday != null && weekday >= 1 && weekday <= 7;
+            if (isException && !specific && !hasWeekday) {
+                send(res, 400, { error: "exception needs a date or weekday" });
                 return true;
             }
+            if (weekday != null && !hasWeekday) {
+                send(res, 400, { error: "weekday must be 1–7 (Mon–Sun)" });
+                return true;
+            }
+            let title = String(body.title ?? "").trim() || "blocked";
+            if (!title.startsWith("AP1.") && title.length > 100) title = title.slice(0, 100);
             const row = {
                 id: String(body.id ?? randomUUID()).trim(),
-                title: String(body.title ?? "").trim() || "blocked",
-                weekday: body.weekday == null || body.weekday === "" ? null : Number(body.weekday),
+                title,
+                weekday: hasWeekday ? weekday : null,
                 specific_date: specific,
                 start_time: start,
                 end_time: end,
@@ -73,6 +82,17 @@ export async function handleBlocked(req, res) {
                 is_exception: isException,
             };
             const existing = await listBlocked(authUser.id);
+            const already = existing.some((b) => String(b.id) === String(row.id));
+            if (specific && !already) {
+                const p = String(end).split(":");
+                const hh = String(p[0] || "23").padStart(2, "0");
+                const mm = String(p[1] || "59").padStart(2, "0");
+                const until = new Date(specific + "T" + hh + ":" + mm + ":00");
+                if (!Number.isNaN(until.getTime()) && until.getTime() <= Date.now()) {
+                    send(res, 400, { error: "Cannot add a blocked time that has already ended." });
+                    return true;
+                }
+            }
             const clash = blockedConflict(existing, row);
             if (clash) {
                 send(res, 400, { error: clash });

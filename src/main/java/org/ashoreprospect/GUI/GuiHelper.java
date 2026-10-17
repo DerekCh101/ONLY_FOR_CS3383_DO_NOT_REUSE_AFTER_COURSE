@@ -1,3 +1,4 @@
+/** Small JavaFX helpers shared by calendar chrome. */
 package org.ashoreprospect.GUI;
 
 import javafx.scene.Node;
@@ -26,8 +27,9 @@ public class GuiHelper {
 
     public static VBox createWhiteBox() {
         VBox box = new VBox(12);
-        box.setStyle("-fx-background-color: " + AppTheme.paper() + "; -fx-padding: 20; "
-                + "-fx-border-color: " + AppTheme.ink() + "; -fx-border-width: 2; "
+        box.getStyleClass().add("dialog-card");
+        box.setStyle("-fx-background-color: #f3eee4; -fx-padding: 20; "
+                + "-fx-border-color: #1c2430; -fx-border-width: 2; "
                 + "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 10, 0, 0, 0);");
         box.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
         return box;
@@ -64,25 +66,42 @@ public class GuiHelper {
     /** Force ink on labels/fields so dark theme never keeps default black text. */
     public static void paintInk(Node n) {
         if (n == null) return;
+        boolean card = inDialogCard(n);
+        String ink = card ? "#1c2430" : AppTheme.ink();
+        String paper = card ? "#ffffff" : AppTheme.paper();
         if (n instanceof Label l) {
             String s = l.getStyle() == null ? "" : l.getStyle();
             l.setStyle(s.replaceAll("-fx-text-fill:\\s*#[0-9a-fA-F]{3,8}", "")
-                    + "; -fx-text-fill: " + AppTheme.ink() + "; " + AppTheme.font());
+                    + "; -fx-text-fill: " + ink + "; " + AppTheme.font());
         } else if (n instanceof CheckBox || n instanceof RadioButton) {
             Labeled l = (Labeled) n;
-            l.setStyle(AppTheme.font() + "-fx-text-fill: " + AppTheme.ink() + ";");
+            l.setStyle(AppTheme.font() + "-fx-text-fill: " + ink + ";");
         } else if (n instanceof TextInputControl tf) {
-            tf.setStyle(AppTheme.fieldCss());
+            tf.setStyle(card
+                    ? "-fx-background-color: #ffffff; -fx-text-fill: #1c2430; "
+                    + "-fx-prompt-text-fill: #8a8378; " + AppTheme.font()
+                    : AppTheme.fieldCss());
         } else if (n instanceof ComboBox<?> cb) {
-            cb.setStyle("-fx-background-color: " + AppTheme.paper() + "; -fx-text-fill: "
-                    + AppTheme.ink() + ";");
+            cb.setStyle("-fx-background-color: " + paper + "; -fx-text-fill: " + ink + ";");
         } else if (n instanceof DatePicker dp) {
-            dp.setStyle("-fx-background-color: " + AppTheme.paper() + ";");
+            dp.setStyle("-fx-background-color: " + paper + ";");
         } else if (n instanceof Spinner<?> sp) {
             styleSpinner(sp);
         }
         if (n instanceof javafx.scene.Parent p) {
             for (Node child : p.getChildrenUnmodifiable()) paintInk(child);
         }
+    }
+
+    private static boolean inDialogCard(Node n) {
+        Node cur = n;
+        while (cur != null) {
+            if (cur.getStyleClass().contains("dialog-card")
+                    || cur.getStyleClass().contains("login-card")) {
+                return true;
+            }
+            cur = cur.getParent();
+        }
+        return false;
     }
 }

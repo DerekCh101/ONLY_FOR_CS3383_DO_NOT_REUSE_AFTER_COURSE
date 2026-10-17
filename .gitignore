@@ -28,6 +28,7 @@ scheduler-device-id.txt
 
 # Typewriter image cache (this PC)
 typewriter-images/
+server/user-files/
 
 # Node host uploads (if this repo also contains the server)
 data/typewriter/

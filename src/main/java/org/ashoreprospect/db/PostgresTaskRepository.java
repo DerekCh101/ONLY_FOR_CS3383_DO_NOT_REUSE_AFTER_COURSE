@@ -1,6 +1,8 @@
+/** Host Postgres copy of tasks and blocked times. */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.*;
+import org.ashoreprospect.crypto.Vault;
 
 import java.sql.*;
 import java.time.Instant;
@@ -65,6 +67,11 @@ public class PostgresTaskRepository {
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS placement_updated_at TIMESTAMPTZ DEFAULT NOW()");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS last_updated_at TIMESTAMPTZ DEFAULT NOW()");
             st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)");
+            st.executeUpdate("ALTER TABLE TASK.tasks ALTER COLUMN title TYPE TEXT");
+            st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS category TEXT");
+            st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS subcategory TEXT");
+            st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS description TEXT");
+            st.executeUpdate("ALTER TABLE TASK.tasks ADD COLUMN IF NOT EXISTS description_done BOOLEAN NOT NULL DEFAULT FALSE");
             st.executeUpdate("UPDATE TASK.tasks SET lifecycle = 'UNSCHEDULED' WHERE lifecycle IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET workflow = 'UNFINISHED' WHERE workflow IS NULL");
             st.executeUpdate("UPDATE TASK.tasks SET placement_updated_at = NOW() WHERE placement_updated_at IS NULL");
@@ -114,10 +121,17 @@ public class PostgresTaskRepository {
                     )
                 )
                 """);
+            st.executeUpdate("ALTER TABLE TASK.blocked_times ALTER COLUMN title TYPE TEXT");
             st.executeUpdate("""
                 ALTER TABLE TASK.blocked_times
                 ADD COLUMN IF NOT EXISTS is_exception BOOLEAN NOT NULL DEFAULT false
                 """);
+            try {
+                st.executeUpdate("ALTER TABLE TASK.sync_deletes ALTER COLUMN title TYPE TEXT");
+            } catch (SQLException ignored) {}
+            try {
+                st.executeUpdate("ALTER TABLE TASK.sync_deletes_blocked ALTER COLUMN title TYPE TEXT");
+            } catch (SQLException ignored) {}
 
             st.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS TASK.sync_deletes_blocked (
@@ -296,6 +310,24 @@ public class PostgresTaskRepository {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             bind(ps, task);
+            ps.executeUpdate();
+        }
+        upsertExtras(task);
+    }
+
+    private void upsertExtras(Task task) throws SQLException {
+        String sql = """
+            UPDATE TASK.tasks SET
+                category = ?, subcategory = ?, description = ?, description_done = ?
+            WHERE id = ?
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, Vault.seal(task.getCategory()));
+            ps.setString(2, Vault.seal(task.getSubcategory()));
+            ps.setString(3, Vault.seal(task.getDescription()));
+            ps.setBoolean(4, task.isDescriptionDone());
+            ps.setString(5, task.getID());
             ps.executeUpdate();
         }
     }
@@ -563,7 +595,7 @@ public class PostgresTaskRepository {
         String uid = currentUserId();
 
         ps.setString(1, task.getID());
-        ps.setString(2, task.getTaskName());
+        ps.setString(2, Vault.seal(task.getTaskName()));
         ps.setDouble(3, task.getDurationHours());
         ps.setString(4, state);
         if (task.getPlacedDate() != null) ps.setDate(5, Date.valueOf(task.getPlacedDate()));
@@ -623,6 +655,11 @@ public class PostgresTaskRepository {
         Timestamp l = rs.getTimestamp("last_updated_at");
         if (l != null) task.setLastUpdatedAt(l.toInstant());
         else if (p != null) task.setLastUpdatedAt(p.toInstant());
+        try { task.setCategory(rs.getString("category")); } catch (SQLException ignored) {}
+        try { task.setSubcategory(rs.getString("subcategory")); } catch (SQLException ignored) {}
+        try { task.setDescription(rs.getString("description")); } catch (SQLException ignored) {}
+        try { task.setDescriptionDone(rs.getBoolean("description_done")); } catch (SQLException ignored) {}
+        Vault.openTask(task);
         return task;
     }
 
@@ -631,7 +668,7 @@ public class PostgresTaskRepository {
         String uid = b.getUserId();
         if (uid == null || uid.isBlank()) uid = currentUserId();
         ps.setString(1, b.getId());
-        ps.setString(2, b.getTitle());
+        ps.setString(2, Vault.seal(b.getTitle()));
         if (b.getWeekday() != null) ps.setInt(3, toWeekdayInt(b.getWeekday()));
         else ps.setNull(3, Types.SMALLINT);
         if (b.getSpecificDate() != null) ps.setDate(4, Date.valueOf(b.getSpecificDate()));
@@ -664,6 +701,7 @@ public class PostgresTaskRepository {
         } catch (SQLException ignored) {
             b.setException(false);
         }
+        Vault.openBlocked(b);
         return b;
     }
 

@@ -1,3 +1,4 @@
+/** Mark a finished task unfinished again. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -20,7 +21,7 @@ public class UnfinishTask implements Command {
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return false;
         if (thisTask.getWorkflow() != Workflow.FINISHED) return false;
 
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return false;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
@@ -40,7 +41,7 @@ public class UnfinishTask implements Command {
     public void undo() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return;
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return;
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
@@ -59,7 +60,7 @@ public class UnfinishTask implements Command {
     public void redo() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return;
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return;
-        Day thatDay = theSystem.getGrid().get(thisTask.getPlacedDate());
+        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());

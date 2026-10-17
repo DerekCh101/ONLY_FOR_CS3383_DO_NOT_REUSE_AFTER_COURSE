@@ -1,3 +1,4 @@
+/** Saved server URL, host vs client, and Postgres settings. */
 package org.ashoreprospect.net;
 
 import java.io.IOException;
@@ -15,7 +16,7 @@ import java.util.Locale;
  * Postgres password name: postgres_pw
  *   1. {workingDir}/.scheduler/postgres.pw
  *   2. env postgres_pw
- * On first self-host pick the app writes both and on Windows runs setx postgres_pw.
+ * On first self-host pick the app writes {@code postgres.pw}. No {@code setx}.
  *
  * Do not put a Tailscale / LAN IP in this class. Real URLs live in server.txt (gitignored).
  */
@@ -125,7 +126,6 @@ public final class Endpoints {
             else pw = generatePassword();
             write(PG_FILE, pw);
         }
-        persistEnv(pw);
         applyPasswordToLocalPostgres(pw);
         return pw;
     }
@@ -134,21 +134,6 @@ public final class Endpoints {
         if (pw == null || pw.isBlank()) return;
         String trimmed = pw.trim();
         write(PG_FILE, trimmed);
-        persistEnv(trimmed);
-    }
-
-    private static void persistEnv(String pw) {
-        try {
-            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-            if (os.contains("win")) {
-                new ProcessBuilder("setx", PG_ENV, pw)
-                        .redirectErrorStream(true)
-                        .start();
-                System.out.println("setx " + PG_ENV + " written (new terminals / after restart)");
-            }
-        } catch (Exception e) {
-            System.out.println("could not setx " + PG_ENV + ": " + e.getMessage());
-        }
     }
 
     private static String jdbcHost() {

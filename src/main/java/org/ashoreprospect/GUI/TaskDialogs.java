@@ -1,3 +1,4 @@
+/** Add/edit task and blocked-time popups. */
 package org.ashoreprospect.GUI;
 
 import javafx.event.EventHandler;
@@ -57,19 +58,32 @@ public class TaskDialogs {
 
         CheckBox everyDay = new CheckBox("Every day");
         everyDay.setSelected(true);
-        CheckBox exceptionBox = new CheckBox("Exception (free this date)");
+        CheckBox exceptionBox = new CheckBox("Exception (free this date / weekdays)");
         DatePicker fromPicker = new DatePicker(AppTimeReference.getCurrentDate());
         DatePicker toPicker = new DatePicker(AppTimeReference.getCurrentDate());
         fromPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
         toPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
-        everyDay.disableProperty().bind(exceptionBox.selectedProperty());
-        exceptionBox.selectedProperty().addListener((o, was, is) -> {
-            if (is) everyDay.setSelected(false);
-        });
+        everyDay.selectedProperty().addListener((obs, was, now) ->
+                exceptionBox.setText(now
+                        ? "Exception (free this date / weekdays)"
+                        : "Exception (free this range / weekdays)"));
         HBox whenRow = new HBox(8, everyDay, exceptionBox, new Label("From"), fromPicker, new Label("To"), toPicker);
+        HBox weekRow = new HBox(6, new Label("Weekdays:"));
+        CheckBox[] weekBoxes = new CheckBox[7];
+        java.time.DayOfWeek[] dows = {
+                java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.TUESDAY, java.time.DayOfWeek.WEDNESDAY,
+                java.time.DayOfWeek.THURSDAY, java.time.DayOfWeek.FRIDAY, java.time.DayOfWeek.SATURDAY,
+                java.time.DayOfWeek.SUNDAY
+        };
+        String[] dowNames = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        for (int i = 0; i < 7; i++) {
+            weekBoxes[i] = new CheckBox(dowNames[i]);
+            weekRow.getChildren().add(weekBoxes[i]);
+        }
 
         TextField nameField = new TextField();
         nameField.setPromptText("title (morning)");
+        capField(nameField, 100);
 
         ComboBox<String> startBox = createSlotCombo(
                 AppTimeReference.localTimeToSlot(LocalTime.of(6, 0)));
@@ -91,6 +105,7 @@ public class TaskDialogs {
         addBtn.setOnAction(e -> {
             String name = nameField.getText().trim();
             if (name.isEmpty()) name = "blocked";
+            if (name.length() > 100) name = name.substring(0, 100);
             LocalTime start;
             LocalTime end;
             try {
@@ -106,11 +121,28 @@ public class TaskDialogs {
             }
 
             boolean isException = exceptionBox.isSelected();
-            List<BlockedTime> rows;
-            if (!isException && (everyDay.isSelected() || fromPicker.getValue() == null)) {
+            List<java.time.DayOfWeek> chosenDays = new ArrayList<>();
+            for (int i = 0; i < 7; i++) {
+                if (weekBoxes[i].isSelected()) chosenDays.add(dows[i]);
+            }
+            List<BlockedTime> rows = new ArrayList<>();
+            if (isException && everyDay.isSelected() && !chosenDays.isEmpty()) {
+                for (java.time.DayOfWeek d : chosenDays) {
+                    BlockedTime row = BlockedTime.weekly(name, d, start, end);
+                    row.setUserId(Api.INSTANCE.getUserId());
+                    row.setException(true);
+                    rows.add(row);
+                }
+            } else if (!isException && everyDay.isSelected() && chosenDays.isEmpty()) {
                 BlockedTime row = BlockedTime.daily(name, start, end);
                 row.setUserId(Api.INSTANCE.getUserId());
-                rows = List.of(row);
+                rows.add(row);
+            } else if (!isException && chosenDays.size() > 0 && (everyDay.isSelected() || fromPicker.getValue() == null)) {
+                for (java.time.DayOfWeek d : chosenDays) {
+                    BlockedTime row = BlockedTime.weekly(name, d, start, end);
+                    row.setUserId(Api.INSTANCE.getUserId());
+                    rows.add(row);
+                }
             } else {
                 LocalDate from = fromPicker.getValue();
                 LocalDate to = toPicker.getValue() == null ? from : toPicker.getValue();
@@ -122,10 +154,28 @@ public class TaskDialogs {
                     showAlertPopup(scene, "End date is before start date.");
                     return;
                 }
-                rows = BlockedTime.dailyRange(name, from, to, start, end);
-                for (BlockedTime row : rows) {
+                for (BlockedTime row : BlockedTime.dailyRange(name, from, to, start, end)) {
+                    if (!chosenDays.isEmpty() && !chosenDays.contains(row.getSpecificDate().getDayOfWeek())) {
+                        continue;
+                    }
                     row.setUserId(Api.INSTANCE.getUserId());
                     row.setException(isException);
+                    rows.add(row);
+                }
+                if (rows.isEmpty()) {
+                    showAlertPopup(scene, "No dates in that range match the weekdays.");
+                    return;
+                }
+            }
+
+            java.time.LocalDateTime now = AppTimeReference.getCurrentDateTime();
+            for (BlockedTime row : rows) {
+                if (row.getSpecificDate() == null) continue;
+                java.time.LocalTime until = row.getEndTime() == null
+                        ? java.time.LocalTime.MAX : row.getEndTime();
+                if (!java.time.LocalDateTime.of(row.getSpecificDate(), until).isAfter(now)) {
+                    showAlertPopup(scene, "Cannot add a blocked time that has already ended.");
+                    return;
                 }
             }
 
@@ -156,6 +206,7 @@ public class TaskDialogs {
                 new Label("New block:"),
                 nameField,
                 whenRow,
+                weekRow,
                 timeRow,
                 buttons,
                 new Label("Existing:"),
@@ -187,9 +238,11 @@ public class TaskDialogs {
         for (BlockedTime b : items) {
             String when;
             if (b.isException()) {
-                when = "exception " + b.getSpecificDate();
+                when = "exception " + (b.getWeekday() != null ? b.getWeekday() : b.getSpecificDate());
             } else if (b.isDaily()) {
                 when = "every day";
+            } else if (b.getWeekday() != null) {
+                when = String.valueOf(b.getWeekday());
             } else {
                 when = String.valueOf(b.getSpecificDate());
             }
@@ -199,19 +252,150 @@ public class TaskDialogs {
             HBox row = new HBox(8, new Label(label), del);
             row.setAlignment(Pos.CENTER_LEFT);
             del.setOnAction(ev -> {
-                try {
-                    system.getTaskRepo().dbClearBlocked(b);
-                    holder.replaceBlockedPeriods(system.getTaskRepo().fetchAllBlocked());
-                } catch (SQLException ex) {
-                    showAlertPopup(scene, "Could not delete: " + ex.getMessage());
-                    return;
-                }
-                rebuildBlockedList(scene, listBox);
-                if (onChanged != null) onChanged.run();
+                String name = b.getTitle() == null || b.getTitle().isBlank() ? "this blocked time" : b.getTitle();
+                askConfirm(scene, "Delete blocked time “" + name + "”?", "Delete", () -> {
+                    try {
+                        system.getTaskRepo().dbClearBlocked(b);
+                        holder.replaceBlockedPeriods(system.getTaskRepo().fetchAllBlocked());
+                    } catch (SQLException ex) {
+                        showAlertPopup(scene, "Could not delete: " + ex.getMessage());
+                        return;
+                    }
+                    rebuildBlockedList(scene, listBox);
+                    if (onChanged != null) onChanged.run();
+                });
             });
             listBox.getChildren().add(row);
         }
         GuiHelper.paintInk(listBox);
+    }
+
+    public void showUnscheduledPopup() {
+        Scene scene = root.getScene();
+        removeMainEscHandler(scene);
+        currentDimmedOverlay = GuiHelper.createDimmedOverlay(root);
+        root.getChildren().add(currentDimmedOverlay);
+        currentPopup = new Pane();
+        currentPopup.setPrefSize(480, 420);
+        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
+        root.getChildren().add(currentPopup);
+
+        VBox content = GuiHelper.createWhiteBox();
+        Label title = new Label("Unscheduled tasks");
+        title.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
+        List<Task> rows = new ArrayList<>();
+        try {
+            for (Task t : system.getTaskRepo().fetchUnscheduledTasks()) {
+                if (t != null && t.canGoUnscheduled()) rows.add(t);
+            }
+        } catch (SQLException e) {
+            rows.addAll(system.getUnscheduledTasks());
+        }
+        if (rows.isEmpty()) {
+            content.getChildren().addAll(title, new Label("No unscheduled task at the moment."),
+                    closeButton(scene));
+            currentPopup.getChildren().add(content);
+            GuiHelper.paintInk(content);
+            popupIsOpen = true;
+            setupEscHandler(scene);
+            return;
+        }
+        VBox list = new VBox(6);
+        for (Task t : rows) {
+            String kind = t.hasDeadline() ? "Deadline" : "Flexible";
+            Button open = new Button(t.getTaskName() + "  ·  " + kind
+                    + "  ·  " + t.getDurationHours() + "h");
+            open.setMaxWidth(Double.MAX_VALUE);
+            open.setOnAction(e -> {
+                closeEverything(scene);
+                showUnscheduledTaskActions(t);
+            });
+            list.getChildren().add(open);
+        }
+        ScrollPane scroll = new ScrollPane(list);
+        scroll.setFitToWidth(true);
+        scroll.setPrefHeight(260);
+        content.getChildren().addAll(title, scroll, closeButton(scene));
+        currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
+        popupIsOpen = true;
+        setupEscHandler(scene);
+    }
+
+    private void showUnscheduledTaskActions(Task task) {
+        Scene scene = root.getScene();
+        removeMainEscHandler(scene);
+        currentDimmedOverlay = GuiHelper.createDimmedOverlay(root);
+        root.getChildren().add(currentDimmedOverlay);
+        currentPopup = new Pane();
+        currentPopup.setPrefSize(440, 360);
+        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
+        root.getChildren().add(currentPopup);
+        VBox content = GuiHelper.createWhiteBox();
+        content.getChildren().add(new Label(task.getTaskName()));
+        Spinner<Double> dur = new Spinner<>();
+        dur.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                0.5, 24.0, Math.max(0.5, task.getDurationHours()), 0.5));
+        dur.setEditable(true);
+        GuiHelper.styleSpinner(dur);
+        DatePicker deadlinePick = new DatePicker(task.getDeadLineDate());
+        ComboBox<String> deadlineSlot = createSlotCombo(
+                task.getDeadLineTime() == null
+                        ? AppTimeReference.localTimeToSlot(LocalTime.of(18, 0))
+                        : AppTimeReference.localTimeToSlot(task.getDeadLineTime()));
+        Button retry = new Button("Resize / update and try again");
+        Button delete = new Button("Delete completely");
+        Button close = closeButton(scene);
+        retry.setOnAction(e -> {
+            org.ashoreprospect.Command.EditTask.Snapshot next =
+                    org.ashoreprospect.Command.EditTask.Snapshot.of(task);
+            next.durationHours = AppTimeReference.normalizeDurationHours(
+                    dur.getValue() == null ? task.getDurationHours() : dur.getValue());
+            if (task.hasDeadline()) {
+                next.deadlineDate = deadlinePick.getValue();
+                try {
+                    next.deadlineTime = parseSlotCombo(deadlineSlot.getValue());
+                } catch (Exception ex) {
+                    showAlertPopup(scene, "Invalid deadline.");
+                    return;
+                }
+            }
+            try {
+                new org.ashoreprospect.Command.EditTask(task, next, true).execute();
+            } catch (SQLException ex) {
+                showAlertPopup(scene, "Could not update: " + ex.getMessage());
+                return;
+            }
+            closeEverything(scene);
+            if (onChanged != null) onChanged.run();
+        });
+        delete.setOnAction(e -> {
+            String name = task.getTaskName() == null || task.getTaskName().isBlank()
+                    ? "this task" : task.getTaskName();
+            askConfirm(scene, "Delete “" + name + "”?", "Delete", () -> {
+                system.fetchPopupTask(new FetchPopOutTask(task));
+                system.command("clearTask");
+                closeEverything(scene);
+                if (onChanged != null) onChanged.run();
+            });
+        });
+        content.getChildren().addAll(
+                new Label("Duration (hours)"), dur
+        );
+        if (task.hasDeadline()) {
+            content.getChildren().addAll(new Label("Deadline"), new HBox(8, deadlinePick, deadlineSlot));
+        }
+        content.getChildren().addAll(retry, delete, close);
+        currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
+        popupIsOpen = true;
+        setupEscHandler(scene);
+    }
+
+    private Button closeButton(Scene scene) {
+        Button close = new Button("Close");
+        close.setOnAction(e -> closeEverything(scene));
+        return close;
     }
 
     public void showTaskInfoPopup(Task task, LocalDate date, int slotIndex) {
@@ -222,7 +406,7 @@ public class TaskDialogs {
         root.getChildren().add(currentDimmedOverlay);
 
         currentPopup = new Pane();
-        currentPopup.setPrefSize(400, 340);
+        currentPopup.setPrefSize(440, 460);
         GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
         root.getChildren().add(currentPopup);
 
@@ -234,9 +418,15 @@ public class TaskDialogs {
         String typeText = task.isFixedTime() ? "Fixed" :
                 task.hasDeadline() ? "Deadline" : "Flexible";
 
-        Label nameLabel = new Label("Name: " + task.getTaskName());
+        TextField nameField = new TextField(task.getTaskName());
+        capField(nameField, 100);
         Label typeLabel = new Label("Type: " + typeText);
-        Label durationLabel = new Label("Duration: " + task.getDurationHours() + " hour(s)");
+        Spinner<Double> durationSpinner = new Spinner<>();
+        durationSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(
+                0.5, 24.0, Math.max(0.5, task.getDurationHours()), 0.5));
+        durationSpinner.setEditable(true);
+        durationSpinner.setPrefWidth(100);
+        GuiHelper.styleSpinner(durationSpinner);
 
         Label extraLabel;
         if (task.isFixedTime()) {
@@ -253,18 +443,58 @@ public class TaskDialogs {
                 : date + " " + AppTimeReference.slotToLocalTime(slotIndex);
         Label placedLabel = new Label("Currently placed: " + placedText);
 
+        DatePicker deadlinePick = new DatePicker(task.getDeadLineDate());
+        ComboBox<String> deadlineSlot = createSlotCombo(
+                task.getDeadLineTime() == null
+                        ? AppTimeReference.localTimeToSlot(LocalTime.of(18, 0))
+                        : AppTimeReference.localTimeToSlot(task.getDeadLineTime()));
+        VBox deadlineEdit = new VBox(6, new Label("Deadline:"), new HBox(8, deadlinePick, deadlineSlot));
+        deadlineEdit.setVisible(task.hasDeadline());
+        deadlineEdit.setManaged(task.hasDeadline());
+
         CheckBox finishBtn = new CheckBox();
         finishBtn.setSelected(task.getWorkflow() == Workflow.FINISHED);
         finishBtn.setText(finishBtn.isSelected()?"Mark unfinish":"Mark finished");
+        Button saveBtn = new Button("Save changes");
         Button clearBtn = new Button("Clear Task");
         Button closeBtn = new Button("Close");
 
-        HBox buttonBox = new HBox(12,  finishBtn, clearBtn, closeBtn);
+        HBox buttonBox = new HBox(12, finishBtn, saveBtn, clearBtn, closeBtn);
 
-        content.getChildren().addAll(title, nameLabel, typeLabel, durationLabel, extraLabel, placedLabel, buttonBox);
+        content.getChildren().addAll(title, new Label("Name"), nameField, typeLabel,
+                new Label("Duration (hours)"), durationSpinner, extraLabel, placedLabel, deadlineEdit, buttonBox);
         currentPopup.getChildren().add(content);
         GuiHelper.paintInk(content);
         popupIsOpen = true;
+
+        saveBtn.setOnAction(e -> {
+            org.ashoreprospect.Command.EditTask.Snapshot next =
+                    org.ashoreprospect.Command.EditTask.Snapshot.of(task);
+            next.name = nameField.getText() == null ? "" : nameField.getText().trim();
+            if (next.name.isEmpty()) {
+                showAlertPopup(scene, "Task name cannot be empty.");
+                return;
+            }
+            next.durationHours = AppTimeReference.normalizeDurationHours(
+                    durationSpinner.getValue() == null ? task.getDurationHours() : durationSpinner.getValue());
+            if (task.hasDeadline()) {
+                next.deadlineDate = deadlinePick.getValue();
+                try {
+                    next.deadlineTime = parseSlotCombo(deadlineSlot.getValue());
+                } catch (Exception ex) {
+                    showAlertPopup(scene, "Invalid deadline time.");
+                    return;
+                }
+            }
+            try {
+                new org.ashoreprospect.Command.EditTask(task, next, task.canGoUnscheduled()).execute();
+            } catch (SQLException ex) {
+                showAlertPopup(scene, "Could not save: " + ex.getMessage());
+                return;
+            }
+            closeEverything(scene);
+            if (onChanged != null) onChanged.run();
+        });
 
         finishBtn.setOnAction(e -> {
             system.fetchPopupTask(new FetchPopOutTask(task));
@@ -278,11 +508,14 @@ public class TaskDialogs {
         });
 
         clearBtn.setOnAction(e -> {
-            showAlertPopup(scene, "Task is cleared, press undo to restore");
-            system.fetchPopupTask(new FetchPopOutTask(task));
-            system.command("clearTask");
-            closeEverything(scene);
-            if (onChanged != null) onChanged.run();
+            String name = task.getTaskName() == null || task.getTaskName().isBlank()
+                    ? "this task" : task.getTaskName();
+            askConfirm(scene, "Delete “" + name + "”?", "Delete", () -> {
+                system.fetchPopupTask(new FetchPopOutTask(task));
+                system.command("clearTask");
+                closeEverything(scene);
+                if (onChanged != null) onChanged.run();
+            });
         });
 
         closeBtn.setOnAction(e -> closeEverything(scene));
@@ -303,15 +536,34 @@ public class TaskDialogs {
 
         VBox content = GuiHelper.createWhiteBox();
 
-        Label title = new Label(fromGridClick ? "New Task @ " + clickedDate : "Add New Task");
+        LocalTime gridTime = fromGridClick ? AppTimeReference.slotToLocalTime(slotIndex) : null;
+        Label title = new Label(fromGridClick
+                ? "New Task @ " + clickedDate + " " + gridTime
+                : "Add New Task");
         title.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        Label slotHint = fromGridClick
+                ? new Label("Grid slot: " + clickedDate + "  " + gridTime)
+                : null;
 
         TextField nameField = new TextField();
         nameField.setPromptText("Task name");
+        capField(nameField, 100);
+        TextField categoryField = new TextField();
+        categoryField.setPromptText("category (e.g. study)");
+        capField(categoryField, 80);
+        TextField subcatField = new TextField();
+        subcatField.setPromptText("subcategory (e.g. revision)");
+        capField(subcatField, 80);
+        javafx.scene.control.TextArea descField = new javafx.scene.control.TextArea();
+        descField.setPromptText("what to do exactly");
+        descField.setPrefRowCount(3);
+        descField.setWrapText(true);
+        capArea(descField, 8000);
+        javafx.scene.control.CheckBox descDoneBox = new javafx.scene.control.CheckBox("Description done");
 
         Spinner<Double> durationSpinner = new Spinner<>();
         SpinnerValueFactory.DoubleSpinnerValueFactory durationFactory =
-                new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 12.0, 1.0, 0.5);
+                new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 24.0, 1.0, 0.5);
         durationSpinner.setValueFactory(durationFactory);
         durationSpinner.setEditable(true);
         durationSpinner.setPrefWidth(100);
@@ -362,8 +614,14 @@ public class TaskDialogs {
         HBox btnBox = new HBox(10, saveBtn, cancelBtn);
 
         content.getChildren().addAll(
-                title,
+                title
+        );
+        if (slotHint != null) content.getChildren().add(slotHint);
+        content.getChildren().addAll(
                 new Label("Task Name:"), nameField,
+                new Label("Category / subcategory:"),
+                new HBox(8, categoryField, subcatField),
+                new Label("Description:"), descField, descDoneBox,
                 new Label("Duration (hours):"), durationSpinner,
                 new Label("Type:"), typeBox,
                 fixedBox,
@@ -475,6 +733,12 @@ public class TaskDialogs {
                         showAlertPopup(scene, "Time conflict with another task.");
                         return;
                     }
+                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, placeSlot + i);
+                    if (system.getBlockedTime() != null
+                            && system.getBlockedTime().isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
+                        showAlertPopup(scene, "That slot is a blocked time.");
+                        return;
+                    }
                 }
             }
 
@@ -487,6 +751,10 @@ public class TaskDialogs {
                     fromGridClick ? clickedDate : null,
                     fromGridClick ? clickedTime : null
             );
+            pop.setCategory(categoryField.getText());
+            pop.setSubcategory(subcatField.getText());
+            pop.setDescription(descField.getText());
+            pop.setDescriptionDone(descDoneBox.isSelected());
 
             system.fetchPopupTask(pop);
 
@@ -509,6 +777,47 @@ public class TaskDialogs {
 
         cancelBtn.setOnAction(e -> closeEverything(scene));
         setupEscHandler(scene);
+    }
+
+    private void askConfirm(Scene scene, String message, String yesText, Runnable onYes) {
+        if (alertIsOpen) return;
+        if (escHandler != null) scene.removeEventFilter(KeyEvent.KEY_PRESSED, escHandler);
+
+        StackPane overlay = GuiHelper.createDimmedOverlay(root);
+        VBox box = GuiHelper.createWhiteBox();
+        Label msg = new Label(message);
+        msg.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+        msg.setWrapText(true);
+        Button yes = new Button(yesText == null || yesText.isBlank() ? "Delete" : yesText);
+        Button no = new Button("Cancel");
+        HBox buttons = new HBox(10, yes, no);
+        box.getChildren().addAll(msg, buttons);
+        GuiHelper.paintInk(box);
+        overlay.getChildren().add(box);
+        StackPane.setAlignment(box, Pos.CENTER);
+        root.getChildren().add(overlay);
+        alertIsOpen = true;
+
+        final EventHandler<KeyEvent>[] holder = new EventHandler[1];
+        Runnable dismiss = () -> {
+            root.getChildren().remove(overlay);
+            alertIsOpen = false;
+            if (holder[0] != null) scene.removeEventFilter(KeyEvent.KEY_PRESSED, holder[0]);
+            if (escHandler != null) scene.addEventFilter(KeyEvent.KEY_PRESSED, escHandler);
+        };
+
+        no.setOnAction(e -> dismiss.run());
+        yes.setOnAction(e -> {
+            dismiss.run();
+            if (onYes != null) onYes.run();
+        });
+        holder[0] = ev -> {
+            if (ev.getCode() == KeyCode.ESCAPE) {
+                ev.consume();
+                dismiss.run();
+            }
+        };
+        scene.addEventFilter(KeyEvent.KEY_PRESSED, holder[0]);
     }
 
     public void showAlertPopup(Scene scene, String message) {
@@ -652,5 +961,17 @@ public class TaskDialogs {
         String raw = value == null ? "" : value.replace("+", "").trim();
         String[] p = raw.split(":");
         return LocalTime.of(Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()));
+    }
+
+    private static void capField(TextField field, int max) {
+        field.textProperty().addListener((o, a, b) -> {
+            if (b != null && b.length() > max) field.setText(b.substring(0, max));
+        });
+    }
+
+    private static void capArea(TextArea area, int max) {
+        area.textProperty().addListener((o, a, b) -> {
+            if (b != null && b.length() > max) area.setText(b.substring(0, max));
+        });
     }
 }

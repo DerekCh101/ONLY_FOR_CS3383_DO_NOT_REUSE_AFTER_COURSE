@@ -1,3 +1,4 @@
+/** Tests last-write-wins merge of local vs remote tasks. */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.BlockedTime;

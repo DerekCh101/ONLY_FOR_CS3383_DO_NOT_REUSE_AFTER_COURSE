@@ -1,3 +1,4 @@
+/** Account screen: profile, sessions, device id, optional encryption. */
 package org.ashoreprospect.GUI;
 
 import javafx.application.Platform;
@@ -18,6 +19,9 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import org.ashoreprospect.TaskManagementSystem;
+import org.ashoreprospect.crypto.Vault;
+import org.ashoreprospect.db.DeviceConfig;
 import org.ashoreprospect.net.Api;
 import org.ashoreprospect.net.Endpoints;
 import org.ashoreprospect.net.LocalSession;
@@ -28,6 +32,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 
 /** Full-window account settings. Home, then one page per action / session. */
 public final class AccountPane extends BorderPane {
@@ -37,6 +44,7 @@ public final class AccountPane extends BorderPane {
     private final Runnable onLogout;
     private final Runnable onWipeAndLogout;
     private final Consumer<String> onUsernameChanged;
+    private final Supplier<TypewriterStore.Data> typewriterSnap;
     private final Label title = new Label("Account");
     private final Button back = new Button("Back");
     private final ScrollPane scroll = new ScrollPane();
@@ -44,9 +52,15 @@ public final class AccountPane extends BorderPane {
     private List<Map<String, String>> sessions = new ArrayList<>();
 
     public AccountPane(Runnable onLogout, Runnable onWipeAndLogout, Consumer<String> onUsernameChanged) {
+        this(onLogout, onWipeAndLogout, onUsernameChanged, null);
+    }
+
+    public AccountPane(Runnable onLogout, Runnable onWipeAndLogout, Consumer<String> onUsernameChanged,
+                       Supplier<TypewriterStore.Data> typewriterSnap) {
         this.onLogout = onLogout;
         this.onWipeAndLogout = onWipeAndLogout;
         this.onUsernameChanged = onUsernameChanged;
+        this.typewriterSnap = typewriterSnap;
         getStyleClass().add("account-page");
         setPadding(new Insets(28, 36, 32, 36));
 
@@ -101,6 +115,8 @@ public final class AccountPane extends BorderPane {
         if (user == null || user.isBlank()) user = "user";
         VBox box = new VBox(0,
                 muted("Signed in as " + user),
+                deviceRow(),
+                encryptBox(),
                 row("Username", () -> show(Page.USERNAME)),
                 row("Email", () -> show(Page.EMAIL)),
                 row("Password", () -> show(Page.PASSWORD)),
@@ -188,8 +204,15 @@ public final class AccountPane extends BorderPane {
                 status.setText("New passwords do not match.");
                 return;
             }
+            TypewriterStore.Data snap = typewriterSnap == null ? null : typewriterSnap.get();
             runIo(save, status, () -> {
                 Api.INSTANCE.changePassword(oldP.getText(), n1.getText());
+                if (Vault.wanted()) {
+                    Vault.rekey(Api.INSTANCE.getUserId(), oldP.getText(), n1.getText());
+                    TaskManagementSystem.getInstance().rewriteEncryptedStores();
+                    persistVaultStores(snap);
+                    return "Password changed. Encrypted data re-sealed with the new password.";
+                }
                 return "Password changed. Other sessions were signed out.";
             });
         });
@@ -348,6 +371,93 @@ public final class AccountPane extends BorderPane {
         paintChrome();
     }
 
+    private Node deviceRow() {
+        String id = DeviceConfig.getOrCreateDeviceId();
+        Label name = new Label("Device id");
+        name.setStyle("-fx-font-size: 13px; " + AppTheme.font() + "-fx-text-fill: " + AppTheme.ink() + ";");
+        Label value = new Label(id);
+        value.setWrapText(true);
+        value.setStyle("-fx-font-size: 12px; " + AppTheme.font() + "-fx-text-fill: " + AppTheme.muted() + ";");
+        Region grow = new Region();
+        HBox.setHgrow(grow, Priority.ALWAYS);
+        Button copy = new Button("Copy");
+        copy.setOnAction(e -> {
+            ClipboardContent c = new ClipboardContent();
+            c.putString(id);
+            Clipboard.getSystemClipboard().setContent(c);
+            copy.setText("Copied");
+        });
+        VBox left = new VBox(2, name, value);
+        HBox row = new HBox(10, left, grow, copy);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setPadding(new Insets(8, 2, 8, 2));
+        row.setStyle("-fx-border-color: transparent transparent " + line() + " transparent; -fx-border-width: 0 0 1 0;");
+        return row;
+    }
+
+    private Node encryptBox() {
+        CheckBox box = new CheckBox("Encrypt data at rest");
+        box.setWrapText(true);
+        box.setSelected(Vault.wanted());
+        box.setStyle(AppTheme.font() + "-fx-font-size: 13px; -fx-text-fill: " + AppTheme.ink() + ";");
+        Label hint = muted(Vault.wanted()
+                ? (Vault.unlocked()
+                ? "On — titles, descriptions, and Typewriter are stored as AP1. ciphertext. pgAdmin sees ciphertext."
+                : "Locked — enter your account password to read encrypted data on this PC.")
+                : "Off. Turn on to encrypt data already saved, then encrypt new writes. Uses your account password.");
+        PasswordField pw = new PasswordField();
+        pw.setPromptText("Account password");
+        Label status = status();
+        Button apply = primary(Vault.wanted() && !Vault.unlocked() ? "Unlock" : "Apply");
+        apply.setOnAction(e -> {
+            boolean turnOn = box.isSelected();
+            TypewriterStore.Data snap = typewriterSnap == null ? null : typewriterSnap.get();
+            runIo(apply, status, () -> {
+                String uid = Api.INSTANCE.getUserId();
+                if (turnOn) {
+                    if (Vault.wanted() && !Vault.unlocked()) {
+                        Vault.unlockWithPassword(uid, pw.getText());
+                        if (!Vault.unlocked()) {
+                            throw new IllegalArgumentException("Could not unlock. Check the password.");
+                        }
+                        TaskManagementSystem.getInstance().rewriteEncryptedStores();
+                        persistVaultStores(snap);
+                        return "Unlocked. Data is readable on this PC.";
+                    }
+                    Vault.enable(uid, pw.getText());
+                    TaskManagementSystem.getInstance().rewriteEncryptedStores();
+                    persistVaultStores(snap);
+                    return "Encryption on. Existing data rewritten. New writes are encrypted.";
+                }
+                Vault.disable(uid, pw.getText());
+                TaskManagementSystem.getInstance().rewriteEncryptedStores();
+                persistVaultStores(snap);
+                Vault.finishDisable();
+                return "Encryption off. Existing data rewritten as plaintext.";
+            });
+        });
+        VBox wrap = new VBox(8, box, hint, pw, saveRow(apply), status);
+        wrap.setPadding(new Insets(10, 2, 12, 2));
+        wrap.setStyle("-fx-border-color: transparent transparent " + line() + " transparent; -fx-border-width: 0 0 1 0;");
+        return wrap;
+    }
+
+    private void persistVaultStores(TypewriterStore.Data snap) throws Exception {
+        TypewriterStore.Data data = snap;
+        if (data == null) {
+            data = TypewriterStore.load();
+        } else {
+            TypewriterStore.openLoaded(data);
+        }
+        TypewriterStore.saveImmediate(data);
+        Platform.runLater(() -> {
+            try {
+                TaskManagementSystem.getInstance().refreshGUI();
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
     private Node challengeRow() {
         CheckBox box = new CheckBox("Random security check on Remember-me login");
         box.setWrapText(true);
@@ -361,7 +471,7 @@ public final class AccountPane extends BorderPane {
     }
 
     private Node themeRow() {
-        Label name = new Label("Theme");
+        Label name = new Label("Dark theme");
         name.setStyle("-fx-font-size: 13px; " + AppTheme.font() + "-fx-text-fill: " + AppTheme.ink() + ";");
         Region grow = new Region();
         HBox.setHgrow(grow, Priority.ALWAYS);

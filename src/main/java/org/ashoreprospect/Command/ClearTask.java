@@ -1,3 +1,4 @@
+/** Delete one task and tombstone the id so it does not come back on sync. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.AppTimeReference;
@@ -8,6 +9,7 @@ import org.ashoreprospect.TaskManagementSystem;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.LocalTime;
 
 public class ClearTask implements Command {
 
@@ -15,6 +17,7 @@ public class ClearTask implements Command {
     private final Task thisTask;
 
     private LocalDate savedDate;
+    private LocalTime savedTime;
     private int savedStartSlot;
     private boolean wasPlaced;
 
@@ -29,10 +32,11 @@ public class ClearTask implements Command {
 
         wasPlaced = false;
         savedDate = thisTask.getPlacedDate();
+        savedTime = thisTask.getPlacedTime();
         savedStartSlot = 0;
 
-        if (savedDate != null && thisTask.getPlacedTime() != null) {
-            savedStartSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
+        if (savedDate != null && savedTime != null) {
+            savedStartSlot = AppTimeReference.localTimeToSlot(savedTime);
             wasPlaced = true;
         }
 
@@ -64,8 +68,9 @@ public class ClearTask implements Command {
         if (thisTask == null) return;
 
         if (wasPlaced && savedDate != null) {
-            theSystem.getGrid().putIfAbsent(savedDate, new Day(theSystem.getBlockedTime()));
-            Day day = theSystem.getGrid().get(savedDate);
+            LocalDate col = AppTimeReference.columnDateFor(savedDate, savedTime);
+            theSystem.getGrid().putIfAbsent(col, new Day(theSystem.getBlockedTime()));
+            Day day = theSystem.getGrid().get(col);
             day.placeTask(savedStartSlot, thisTask);
             thisTask.setPlacedDate(savedDate);
             thisTask.setPlacedTime(AppTimeReference.slotToLocalTime(savedStartSlot));

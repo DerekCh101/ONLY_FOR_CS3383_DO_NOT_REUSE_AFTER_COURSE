@@ -1,6 +1,8 @@
+/** Local SQLite cache for tasks and blocked times (offline-first). */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.*;
+import org.ashoreprospect.crypto.Vault;
 
 import java.sql.*;
 import java.time.Instant;
@@ -65,6 +67,10 @@ public class SqliteTaskRepository {
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN last_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN placement_updated_at TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN user_id TEXT"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN category TEXT"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN subcategory TEXT"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN description TEXT"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN description_done INTEGER NOT NULL DEFAULT 0"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN title TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN user_id TEXT"); } catch (SQLException ignored) {}
 
@@ -182,6 +188,24 @@ public class SqliteTaskRepository {
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             bind(ps, task);
+            ps.executeUpdate();
+        }
+        upsertExtras(task);
+    }
+
+    private void upsertExtras(Task task) throws SQLException {
+        String sql = """
+            UPDATE tasks SET
+                category = ?, subcategory = ?, description = ?, description_done = ?
+            WHERE id = ?
+            """;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, Vault.seal(task.getCategory()));
+            ps.setString(2, Vault.seal(task.getSubcategory()));
+            ps.setString(3, Vault.seal(task.getDescription()));
+            ps.setInt(4, task.isDescriptionDone() ? 1 : 0);
+            ps.setString(5, task.getID());
             ps.executeUpdate();
         }
     }
@@ -358,7 +382,10 @@ public class SqliteTaskRepository {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, uid);
             try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) list.add(mapRow(rs));
+                while (rs.next()) {
+                    Task t = mapRow(rs);
+                    if (t.canGoUnscheduled()) list.add(t);
+                }
             }
         }
         return list;
@@ -538,7 +565,7 @@ public class SqliteTaskRepository {
         String uid = currentUserId();
 
         ps.setString(1, task.getID());
-        ps.setString(2, task.getTaskName());
+        ps.setString(2, Vault.seal(task.getTaskName()));
         ps.setDouble(3, task.getDurationHours());
         ps.setString(4, state);
         ps.setString(5, task.getPlacedDate() != null ? task.getPlacedDate().toString() : null);
@@ -585,12 +612,21 @@ public class SqliteTaskRepository {
         task.setLifeCycle(life);
         task.setWorkflow(flow);
 
+        applyExtras(task, rs);
         Instant p = parseInstant(rs.getString("placement_updated_at"));
         Instant l = parseInstant(rs.getString("last_updated_at"));
         if (p != null) task.setPlacementUpdatedAt(p);
         if (l != null) task.setLastUpdatedAt(l);
         else if (p != null) task.setLastUpdatedAt(p);
+        Vault.openTask(task);
         return task;
+    }
+
+    private static void applyExtras(Task task, ResultSet rs) {
+        try { task.setCategory(rs.getString("category")); } catch (SQLException ignored) {}
+        try { task.setSubcategory(rs.getString("subcategory")); } catch (SQLException ignored) {}
+        try { task.setDescription(rs.getString("description")); } catch (SQLException ignored) {}
+        try { task.setDescriptionDone(rs.getInt("description_done") != 0); } catch (SQLException ignored) {}
     }
 
     private void bindBlocked(PreparedStatement ps, BlockedTime b) throws SQLException {
@@ -598,7 +634,7 @@ public class SqliteTaskRepository {
         String uid = b.getUserId();
         if (uid == null || uid.isBlank()) uid = currentUserId();
         ps.setString(1, b.getId());
-        ps.setString(2, b.getTitle());
+        ps.setString(2, Vault.seal(b.getTitle()));
         if (b.getWeekday() != null) ps.setInt(3, toWeekdayInt(b.getWeekday()));
         else ps.setNull(3, Types.INTEGER);
         ps.setString(4, b.getSpecificDate() != null ? b.getSpecificDate().toString() : null);
@@ -627,6 +663,7 @@ public class SqliteTaskRepository {
         } catch (SQLException ignored) {
             b.setException(false);
         }
+        Vault.openBlocked(b);
         return b;
     }
 

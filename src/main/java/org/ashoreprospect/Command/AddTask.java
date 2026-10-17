@@ -1,3 +1,4 @@
+/** Create one task from dialog fields and persist it. */
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.*;
@@ -28,6 +29,13 @@ public class AddTask implements Command {
                 startDate, startTime,
                 deadlineDate, deadlineTime
         );
+        FetchPopOutTask pop = this.theSystem.getPopupTask();
+        if (pop != null) {
+            theTask.setCategory(pop.getCategory());
+            theTask.setSubcategory(pop.getSubcategory());
+            theTask.setDescription(pop.getDescription());
+            theTask.setDescriptionDone(pop.isDescriptionDone());
+        }
     }
 
     public AddTask(String taskName, double durationHours, int state,
@@ -65,6 +73,7 @@ public class AddTask implements Command {
         RefreshLifeCycle.refreshLifeCycle(theTask);
         theTask.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(theTask);
+        AddTaskHooks.fireAfterAdd(theTask);
         return true;
     }
 
@@ -74,18 +83,27 @@ public class AddTask implements Command {
     private boolean placeOnGrid(LocalDate date, LocalTime time) throws SQLException {
         int slotIndex = AppTimeReference.localTimeToSlot(time);
         int slotCount = theTask.getDurationSlots();
+        LocalDate column = AppTimeReference.columnDateFor(date, time);
 
-        theSystem.getGrid().putIfAbsent(date, new Day(theSystem.getBlockedTime()));
-        Day day = theSystem.getGrid().get(date);
+        theSystem.getGrid().putIfAbsent(column, new Day(theSystem.getBlockedTime()));
+        Day day = theSystem.getGrid().get(column);
 
         boolean canPlace = true;
         if (slotIndex < 0 || slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
             canPlace = false;
         } else {
+            BlockedTimePeriod blocks = theSystem.getBlockedTime();
             for (int i = 0; i < slotCount; i++) {
                 if (day.returnDayGrid()[slotIndex + i] != null) {
                     canPlace = false;
                     break;
+                }
+                if (blocks != null) {
+                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, slotIndex + i);
+                    if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
+                        canPlace = false;
+                        break;
+                    }
                 }
             }
         }
@@ -101,6 +119,7 @@ public class AddTask implements Command {
         RefreshLifeCycle.refreshLifeCycle(theTask);
         theTask.touchPlacementUpdated();
         theSystem.getTaskRepo().dbAddTask(theTask);
+        AddTaskHooks.fireAfterAdd(theTask);
         return true;
     }
 

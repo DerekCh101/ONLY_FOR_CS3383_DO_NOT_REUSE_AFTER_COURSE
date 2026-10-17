@@ -1,3 +1,4 @@
+/** Holds every blocked interval and answers conflict checks against a proposed slot. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -152,8 +153,10 @@ public class BlockedTimePeriod {
             if (b.getStartTime() == null || b.getEndTime() == null) continue;
             if (time.isBefore(b.getStartTime()) || !time.isBefore(b.getEndTime())) continue;
 
-            if (b.isException()) {
-                if (date.equals(b.getSpecificDate())) exceptionHit = true;
+            if (b.freesOn(date)) {
+                exceptionHit = true;
+            } else if (b.isException()) {
+                continue;
             } else if (b.isDaily()) {
                 dailyHit = true;
             } else if (b.appliesOn(date)) {
@@ -161,8 +164,8 @@ public class BlockedTimePeriod {
             }
         }
 
-        if (specificHit) return true;
         if (exceptionHit) return false;
+        if (specificHit) return true;
         return dailyHit;
     }
 
@@ -234,12 +237,13 @@ public class BlockedTimePeriod {
 
     static boolean sameLayer(BlockedTime a, BlockedTime b) {
         if (a.isException() != b.isException()) return false;
-        if (a.isException()) {
+        if (a.getSpecificDate() != null || b.getSpecificDate() != null) {
             return java.util.Objects.equals(a.getSpecificDate(), b.getSpecificDate());
         }
-        if (a.isDaily() && b.isDaily()) return true;
-        if (a.isDaily() || b.isDaily()) return false;
-        return java.util.Objects.equals(a.getSpecificDate(), b.getSpecificDate());
+        if (a.getWeekday() != null || b.getWeekday() != null) {
+            return java.util.Objects.equals(a.getWeekday(), b.getWeekday());
+        }
+        return a.isDaily() && b.isDaily();
     }
 
     static boolean clockOverlap(BlockedTime a, BlockedTime b) {
@@ -248,9 +252,16 @@ public class BlockedTimePeriod {
     }
 
     static String describe(BlockedTime b) {
-        String when = b.isException()
-                ? "exception " + b.getSpecificDate()
-                : b.isDaily() ? "every day" : String.valueOf(b.getSpecificDate());
+        String when;
+        if (b.isException()) {
+            when = "exception " + (b.getWeekday() != null ? b.getWeekday() : b.getSpecificDate());
+        } else if (b.isDaily()) {
+            when = "every day";
+        } else if (b.getWeekday() != null) {
+            when = String.valueOf(b.getWeekday());
+        } else {
+            when = String.valueOf(b.getSpecificDate());
+        }
         return (b.getTitle() == null ? "blocked" : b.getTitle())
                 + " " + when + " " + b.getStartTime() + "–" + b.getEndTime();
     }

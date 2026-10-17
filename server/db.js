@@ -1,16 +1,40 @@
+/** Postgres access for users, sessions, tasks, blocked time, and typewriter. */
 import pg from "pg";
 import { randomUUID, randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const { Pool } = pg;
 
 pg.types.setTypeParser(1082, (v) => (v == null ? null : String(v).slice(0, 10)));
 pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v)));
 
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function postgresPassword() {
+    const env = process.env.PGPASSWORD || process.env.postgres_pw || "";
+    if (String(env).trim()) return String(env).trim();
+    const files = [
+        join(REPO, ".scheduler", "postgres.pw"),
+        join(process.cwd(), ".scheduler", "postgres.pw"),
+        join(process.cwd(), "..", ".scheduler", "postgres.pw")
+    ];
+    for (const p of files) {
+        if (!existsSync(p)) continue;
+        try {
+            const s = readFileSync(p, "utf8").trim();
+            if (s) return s;
+        } catch { /* ignore */ }
+    }
+    return "";
+}
+
 const pool = new Pool({
     host: process.env.PGHOST || "127.0.0.1",
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER || "postgres",
-    password: process.env.PGPASSWORD || process.env.postgres_pw || "",
+    password: postgresPassword(),
     database: process.env.PGDATABASE || "Scheduler"
 });
 
@@ -34,6 +58,50 @@ function first(obj, keys) {
     return null;
 }
 
+function hasKey(obj, keys) {
+    if (!obj) return false;
+    for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(obj, k)) return true;
+    }
+    return false;
+}
+
+/** null = field omitted (keep existing on update); "" = client cleared it. */
+function extraText(task, keys) {
+    if (!hasKey(task, keys)) return null;
+    return str(first(task, keys)) || "";
+}
+
+function isSealed(s) {
+    return String(s ?? "").startsWith("AP1.");
+}
+
+function clipLen(s, max) {
+    const t = String(s ?? "");
+    if (isSealed(t)) return t;
+    return t.length > max ? t.slice(0, max) : t;
+}
+
+function clipImageName(name) {
+    const raw = String(name || "image.png");
+    if (raw.length <= 120) return raw;
+    const dot = raw.lastIndexOf(".");
+    const ext = dot >= 0 ? raw.slice(dot) : "";
+    return raw.slice(0, Math.max(1, 120 - ext.length)) + ext;
+}
+
+/** null = omitted (keep existing on update). */
+function extraBool(task, keys) {
+    if (!hasKey(task, keys)) return null;
+    for (const k of keys) {
+        if (!Object.prototype.hasOwnProperty.call(task, k)) continue;
+        const v = task[k];
+        if (v === true || v === "true" || v === "1") return true;
+        if (v === false || v === "false" || v === "0") return false;
+    }
+    return false;
+}
+
 function bearerToken(req) {
     const h = req && req.headers ? (req.headers.authorization || req.headers.Authorization || "") : "";
     const s = String(h);
@@ -47,6 +115,12 @@ function toYmd(v) {
     return m ? m[1] + "-" + m[2] + "-" + m[3] : "";
 }
 
+function clipListRow(list) {
+    if (!list || typeof list !== "object") return list;
+    if (!Array.isArray(list.items) || list.items.length <= 500) return list;
+    return Object.assign({}, list, { items: list.items.slice(0, 500) });
+}
+
 function parseBundle(raw) {
     const empty = { diary: [], lists: [], pages: [] };
     try {
@@ -54,7 +128,7 @@ function parseBundle(raw) {
         if (!o || typeof o !== "object") return empty;
         return {
             diary: Array.isArray(o.diary) ? o.diary : [],
-            lists: Array.isArray(o.lists) ? o.lists : [],
+            lists: Array.isArray(o.lists) ? o.lists.map(clipListRow) : [],
             pages: Array.isArray(o.pages) ? o.pages : []
         };
     } catch (_) {
@@ -74,7 +148,7 @@ function imageText(note) {
         const id = String((im && (im.id || im.sha256)) || "").toLowerCase();
         if (/^[a-f0-9]{64}$/.test(id)) out.push(id);
     }
-    return out.join(",");
+    return out.slice(0, 20).join(",");
 }
 
 function imageArr(text) {
@@ -82,6 +156,7 @@ function imageArr(text) {
         .split(",")
         .map((s) => s.trim().toLowerCase())
         .filter((s) => /^[a-f0-9]{64}$/.test(s))
+        .slice(0, 20)
         .map((id) => ({ id, name: "" }));
 }
 
@@ -143,6 +218,10 @@ export async function ensureSchema() {
             placement_updated_at TIMESTAMPTZ
         )
     `);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS category TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS subcategory TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description_done BOOLEAN NOT NULL DEFAULT FALSE`);
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.blocked (
             id TEXT PRIMARY KEY,
@@ -418,7 +497,11 @@ export async function listTasks(userId) {
              lifecycle,
              workflow,
              last_updated_at,
-             placement_updated_at
+             placement_updated_at,
+             category,
+             subcategory,
+             description,
+             description_done
          FROM ${SCHEMA}.tasks
          WHERE user_id::text = $1
          ORDER BY placed_date NULLS LAST, placed_time NULLS LAST, title`,
@@ -434,20 +517,25 @@ export async function upsertTask(task) {
     await query(
         `INSERT INTO ${SCHEMA}.tasks(
             id, user_id, title, duration, state, placed_date, placed_time,
-            deadline_date, deadline_time, lifecycle, workflow, last_updated_at, placement_updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            deadline_date, deadline_time, lifecycle, workflow, last_updated_at, placement_updated_at,
+            category, subcategory, description, description_done
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,''),COALESCE($15,''),COALESCE($16,''),COALESCE($17,FALSE))
              ON CONFLICT (id) DO UPDATE SET
-            title = EXCLUDED.title,
-                                     duration = EXCLUDED.duration,
-                                     state = EXCLUDED.state,
-                                     placed_date = EXCLUDED.placed_date,
-                                     placed_time = EXCLUDED.placed_time,
-                                     deadline_date = EXCLUDED.deadline_date,
-                                     deadline_time = EXCLUDED.deadline_time,
-                                     lifecycle = EXCLUDED.lifecycle,
-                                     workflow = EXCLUDED.workflow,
-                                     last_updated_at = EXCLUDED.last_updated_at,
-                                     placement_updated_at = EXCLUDED.placement_updated_at
+            title = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.title ELSE ${SCHEMA}.tasks.title END,
+            duration = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.duration ELSE ${SCHEMA}.tasks.duration END,
+            state = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.state ELSE ${SCHEMA}.tasks.state END,
+            deadline_date = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.deadline_date ELSE ${SCHEMA}.tasks.deadline_date END,
+            deadline_time = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.deadline_time ELSE ${SCHEMA}.tasks.deadline_time END,
+            lifecycle = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.lifecycle ELSE ${SCHEMA}.tasks.lifecycle END,
+            workflow = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.workflow ELSE ${SCHEMA}.tasks.workflow END,
+            last_updated_at = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.last_updated_at ELSE ${SCHEMA}.tasks.last_updated_at END,
+            placed_date = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_date ELSE ${SCHEMA}.tasks.placed_date END,
+            placed_time = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_time ELSE ${SCHEMA}.tasks.placed_time END,
+            placement_updated_at = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placement_updated_at ELSE ${SCHEMA}.tasks.placement_updated_at END,
+            category = CASE WHEN $14 IS NULL THEN ${SCHEMA}.tasks.category WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $14 ELSE ${SCHEMA}.tasks.category END,
+            subcategory = CASE WHEN $15 IS NULL THEN ${SCHEMA}.tasks.subcategory WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $15 ELSE ${SCHEMA}.tasks.subcategory END,
+            description = CASE WHEN $16 IS NULL THEN ${SCHEMA}.tasks.description WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $16 ELSE ${SCHEMA}.tasks.description END,
+            description_done = CASE WHEN $17 IS NULL THEN ${SCHEMA}.tasks.description_done WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $17 ELSE ${SCHEMA}.tasks.description_done END
                                  WHERE ${SCHEMA}.tasks.user_id::text = $2`,
         [
             id,
@@ -462,7 +550,11 @@ export async function upsertTask(task) {
             str(first(task, ["lifecycle"])) || "ONGOING",
             str(first(task, ["workflow"])) || "UNFINISHED",
             str(first(task, ["last_updated_at", "lastUpdatedAt"])) || new Date().toISOString(),
-            str(first(task, ["placement_updated_at", "placementUpdatedAt"])) || new Date().toISOString()
+            str(first(task, ["placement_updated_at", "placementUpdatedAt"])) || new Date().toISOString(),
+            extraText(task, ["category"]),
+            extraText(task, ["subcategory"]),
+            extraText(task, ["description"]),
+            extraBool(task, ["description_done", "descriptionDone"])
         ]
     );
     return task;
@@ -505,11 +597,14 @@ export async function upsertBlocked(row) {
             end_time = EXCLUDED.end_time,
             last_updated_at = EXCLUDED.last_updated_at,
             is_exception = EXCLUDED.is_exception
-        WHERE ${SCHEMA}.blocked.user_id::text = $2`,
+        WHERE ${SCHEMA}.blocked.user_id::text = $2
+          AND (${SCHEMA}.blocked.last_updated_at IS NULL
+               OR EXCLUDED.last_updated_at::timestamptz
+                    >= ${SCHEMA}.blocked.last_updated_at::timestamptz)`,
         [
             id,
             userId,
-            str(first(row, ["title"])) || "blocked",
+            clipLen(str(first(row, ["title"])) || "blocked", 100),
             weekday == null || weekday === "" ? null : Number(weekday),
             str(first(row, ["specific_date", "specificDate"])),
             str(first(row, ["start_time", "startTime"])),
@@ -665,6 +760,13 @@ async function saveStructured(userId, bundle, at) {
 }
 
 export async function getTypewriter(userId) {
+    const r = await query(
+        `SELECT content, last_updated_at FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`,
+        [String(userId)]
+    );
+    if (r.rowCount && isSealed(r.rows[0].content)) {
+        return { content: String(r.rows[0].content), last_updated_at: r.rows[0].last_updated_at };
+    }
     const structured = await loadStructured(userId);
     const hasStructured =
         structured.diary.length || structured.lists.length || structured.pages.length;
@@ -678,31 +780,54 @@ export async function getTypewriter(userId) {
             last_updated_at: meta.rows[0] ? meta.rows[0].last_updated_at : null
         };
     }
-    const r = await query(
-        `SELECT content, last_updated_at FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`,
-        [String(userId)]
-    );
     if (!r.rowCount) {
         return { content: JSON.stringify({ diary: [], lists: [], pages: [] }), last_updated_at: null };
     }
+    const stored = r.rows[0].content;
     return {
-        content: JSON.stringify(parseBundle(r.rows[0].content)),
+        content: JSON.stringify(parseBundle(stored)),
         last_updated_at: r.rows[0].last_updated_at
     };
 }
 
 export async function upsertTypewriter(userId, content, lastUpdatedAt) {
     const incoming = str(lastUpdatedAt) || new Date().toISOString();
+    if (isSealed(content)) {
+        const r = await query(
+            `INSERT INTO ${SCHEMA}.typewriter(user_id, content, last_updated_at)
+             VALUES ($1,$2,$3)
+             ON CONFLICT (user_id) DO UPDATE SET
+                content = EXCLUDED.content,
+                last_updated_at = EXCLUDED.last_updated_at
+             WHERE ${SCHEMA}.typewriter.last_updated_at IS NULL
+                OR EXCLUDED.last_updated_at::timestamptz
+                    >= ${SCHEMA}.typewriter.last_updated_at::timestamptz
+             RETURNING last_updated_at`,
+            [String(userId), String(content), incoming]
+        );
+        if (!r.rowCount) {
+            return getTypewriter(userId);
+        }
+        await saveStructured(userId, { diary: [], lists: [], pages: [] }, incoming);
+        return { content: String(content), last_updated_at: incoming };
+    }
     const bundle = parseBundle(content);
     const raw = JSON.stringify(bundle);
-    await query(
+    const r = await query(
         `INSERT INTO ${SCHEMA}.typewriter(user_id, content, last_updated_at)
          VALUES ($1,$2,$3)
          ON CONFLICT (user_id) DO UPDATE SET
             content = EXCLUDED.content,
-            last_updated_at = EXCLUDED.last_updated_at`,
+            last_updated_at = EXCLUDED.last_updated_at
+         WHERE ${SCHEMA}.typewriter.last_updated_at IS NULL
+            OR EXCLUDED.last_updated_at::timestamptz
+                >= ${SCHEMA}.typewriter.last_updated_at::timestamptz
+         RETURNING last_updated_at`,
         [String(userId), raw, incoming]
     );
+    if (!r.rowCount) {
+        return getTypewriter(userId);
+    }
     await saveStructured(userId, bundle, incoming);
     return { content: raw, last_updated_at: incoming };
 }
@@ -720,7 +845,7 @@ export async function putTypewriterImage(userId, sha, name, mime, buf) {
         `INSERT INTO ${SCHEMA}.tw_images(user_id, sha256, name, mime, data, last_updated_at)
          VALUES ($1,$2,$3,$4,$5, now())
              ON CONFLICT (user_id, sha256) DO NOTHING`,
-        [String(userId), sha, name || "image.png", mime || "image/png", buf]
+        [String(userId), sha, clipImageName(name || "image.png"), mime || "image/png", buf]
     );
 }
 

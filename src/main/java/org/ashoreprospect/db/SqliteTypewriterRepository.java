@@ -1,3 +1,4 @@
+/** Local SQLite tables for diary, lists, and pages. */
 package org.ashoreprospect.db;
 
 import org.ashoreprospect.GUI.TypewriterPane;
@@ -138,6 +139,7 @@ public class SqliteTypewriterRepository {
             }
             TypewriterStore.rebuildPages(conn, uid, data.pagesRoot, false);
         }
+        TypewriterStore.openLoaded(data);
         return data;
     }
 
@@ -156,8 +158,8 @@ public class SqliteTypewriterRepository {
                     if (!TypewriterStore.hasContent(note)) continue;
                     ps.setString(1, uid);
                     ps.setString(2, note.date.toString());
-                    ps.setString(3, note.title);
-                    ps.setString(4, note.body);
+                    ps.setString(3, org.ashoreprospect.crypto.Vault.seal(note.title));
+                    ps.setString(4, org.ashoreprospect.crypto.Vault.seal(note.body));
                     ps.setString(5, TypewriterStore.joinImages(note));
                     ps.addBatch();
                 }
@@ -171,7 +173,7 @@ public class SqliteTypewriterRepository {
                 for (TypewriterPane.TwList list : lists) {
                     lp.setString(1, list.id);
                     lp.setString(2, uid);
-                    lp.setString(3, list.title);
+                    lp.setString(3, org.ashoreprospect.crypto.Vault.seal(list.title));
                     lp.setInt(4, li++);
                     lp.addBatch();
                     int ii = 0;
@@ -179,7 +181,7 @@ public class SqliteTypewriterRepository {
                         ip.setString(1, list.id);
                         ip.setString(2, uid);
                         ip.setInt(3, ii++);
-                        ip.setString(4, item.text);
+                        ip.setString(4, org.ashoreprospect.crypto.Vault.seal(item.text));
                         ip.setInt(5, item.done ? 1 : 0);
                         ip.addBatch();
                     }
