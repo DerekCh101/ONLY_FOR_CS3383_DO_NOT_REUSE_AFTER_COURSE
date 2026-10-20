@@ -1,4 +1,4 @@
-/** One calendar task: name, duration, placement, category, description, timestamps. */
+/** One calendar task: name, duration, placement, description, timestamps. */
 package org.ashoreprospect;
 
 import java.time.Instant;
@@ -22,10 +22,9 @@ public class Task {
     private TaskLifeCycle taskLifeCycle;
     private Instant placementUpdatedAt;
     private Instant lastUpdatedAt;
-    private String category = "";
-    private String subcategory = "";
     private String description = "";
     private boolean descriptionDone;
+    private String parentId = "";
 
     /**
      * New task created by the user (GUI / CLI).
@@ -121,6 +120,9 @@ public class Task {
     }
 
     public int getDurationSlots() {
+        if (placedTime != null) {
+            return AppTimeReference.occupancySlots(placedTime, (int) Math.round(durationMinutes));
+        }
         return AppTimeReference.minutesToSlots(durationMinutes);
     }
 
@@ -185,10 +187,19 @@ public class Task {
     }
 
     public void setDurationMinutes(int durationMinutes) {
-        int snapped = Math.max(AppTimeReference.MINUTES_PER_SLOT,
-                (durationMinutes / AppTimeReference.MINUTES_PER_SLOT)
-                        * AppTimeReference.MINUTES_PER_SLOT);
-        this.durationMinutes = snapped;
+        this.durationMinutes = AppTimeReference.clampMinutes(durationMinutes);
+    }
+
+    public String getParentId() {
+        return parentId == null ? "" : parentId;
+    }
+
+    public void setParentId(String parentId) {
+        this.parentId = parentId == null ? "" : parentId.trim();
+    }
+
+    public boolean isQuick() {
+        return parentId != null && !parentId.isBlank();
     }
 
     public boolean isFixedTime() {
@@ -206,22 +217,6 @@ public class Task {
     /** Only Deadline and Flexible may sit in the unscheduled list. */
     public boolean canGoUnscheduled() {
         return hasDeadline() || isFlexible();
-    }
-
-    public String getCategory() {
-        return category == null ? "" : category;
-    }
-
-    public void setCategory(String category) {
-        this.category = clip(category, 80);
-    }
-
-    public String getSubcategory() {
-        return subcategory == null ? "" : subcategory;
-    }
-
-    public void setSubcategory(String subcategory) {
-        this.subcategory = clip(subcategory, 80);
     }
 
     public String getDescription() {
@@ -253,10 +248,9 @@ public class Task {
 
     public void copyExtrasFrom(Task src) {
         if (src == null) return;
-        setCategory(src.getCategory());
-        setSubcategory(src.getSubcategory());
         setDescription(src.getDescription());
         setDescriptionDone(src.isDescriptionDone());
+        setParentId(src.getParentId());
     }
 
     public void setStartingDate(LocalDate startingDate) {

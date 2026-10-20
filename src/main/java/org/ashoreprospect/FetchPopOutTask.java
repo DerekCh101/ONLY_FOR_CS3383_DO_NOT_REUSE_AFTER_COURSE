@@ -19,10 +19,9 @@ public class FetchPopOutTask {
     private LocalDate placedDate;
     private LocalTime placedTime;
 
-    private String category = "";
-    private String subcategory = "";
     private String description = "";
     private boolean descriptionDone;
+    private String parentId = "";
     private Task task; //used when wanted to clear a task
 
     public FetchPopOutTask(String taskName,
@@ -101,22 +100,6 @@ public class FetchPopOutTask {
         return placedTime;
     }
 
-    public String getCategory() {
-        return category == null ? "" : category;
-    }
-
-    public void setCategory(String category) {
-        this.category = clip(category, 80);
-    }
-
-    public String getSubcategory() {
-        return subcategory == null ? "" : subcategory;
-    }
-
-    public void setSubcategory(String subcategory) {
-        this.subcategory = clip(subcategory, 80);
-    }
-
     public String getDescription() {
         return description == null ? "" : description;
     }
@@ -137,6 +120,14 @@ public class FetchPopOutTask {
 
     public void setDescriptionDone(boolean descriptionDone) {
         this.descriptionDone = descriptionDone;
+    }
+
+    public String getParentId() {
+        return parentId == null ? "" : parentId;
+    }
+
+    public void setParentId(String parentId) {
+        this.parentId = parentId == null ? "" : parentId.trim();
     }
 
     public boolean isFixed() {

@@ -96,20 +96,21 @@ public final class AppTheme {
     /** Popup menus are a different scene — they must get the same tokens. */
     public static void applyPopup(ContextMenu menu) {
         if (menu == null) return;
-        menu.setStyle(palette().tokenStyle());
+        String tokens = palette().tokenStyle();
+        menu.setStyle(tokens);
         menu.getStyleClass().removeAll("theme-light", "theme-dark", "ashore-root");
         if (!menu.getStyleClass().contains("ashore-popup")) {
             menu.getStyleClass().add("ashore-popup");
         }
-        menu.getStyleClass().removeAll("theme-light", "theme-dark");
         menu.getStyleClass().add(isDark() ? "theme-dark" : "theme-light");
-        Scene scene = menu.getScene();
-        if (scene != null) {
+        Runnable paintScene = () -> {
+            Scene scene = menu.getScene();
+            if (scene == null) return;
             ensureCss(scene);
-            if (scene.getRoot() != null) {
-                scene.getRoot().setStyle(palette().tokenStyle());
-            }
-        }
+            if (scene.getRoot() != null) scene.getRoot().setStyle(tokens);
+        };
+        paintScene.run();
+        javafx.application.Platform.runLater(paintScene);
     }
 
     public static void hookPopups(Parent tree) {
@@ -185,6 +186,48 @@ public final class AppTheme {
                 + "-fx-background-radius: 6; -fx-padding: 8 10;";
     }
 
+    public static String cardPaper() {
+        return palette().cardPaper();
+    }
+
+    public static String cardInk() {
+        return palette().cardInk();
+    }
+
+    public static String cardMuted() {
+        return palette().cardMuted();
+    }
+
+    public static String accent() {
+        return palette().accent();
+    }
+
+    public static String accentInk() {
+        return palette().accentInk();
+    }
+
+    public static String line() {
+        return palette().line();
+    }
+
+    public static String cardBoxCss() {
+        return "-fx-background-color: " + cardPaper() + "; -fx-padding: 20; "
+                + "-fx-border-color: " + line() + "; -fx-border-width: 1; "
+                + "-fx-background-radius: 12; -fx-border-radius: 12; "
+                + "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.45), 16, 0.2, 0, 6);";
+    }
+
+    public static String cardPrimaryBtnCss() {
+        return "-fx-background-color: " + accent() + "; -fx-text-fill: " + accentInk()
+                + "; -fx-background-radius: 8; -fx-padding: 8 14; " + font();
+    }
+
+    public static String cardGhostBtnCss() {
+        return "-fx-background-color: transparent; -fx-text-fill: " + cardInk()
+                + "; -fx-border-color: " + line() + "; -fx-border-radius: 8; "
+                + "-fx-background-radius: 8; -fx-padding: 8 14; " + font();
+    }
+
     private static void paint(Node node) {
         if (node == null) return;
         node.setStyle(palette().tokenStyle());
@@ -219,7 +262,6 @@ public final class AppTheme {
     }
 
     private static void fire() {
-        for (Runnable r : listeners) r.run();
         for (Window w : Window.getWindows()) {
             if (w == null || w.getScene() == null) continue;
             if (w instanceof javafx.stage.PopupWindow) {
@@ -232,6 +274,7 @@ public final class AppTheme {
             }
             apply(w.getScene());
         }
+        for (Runnable r : listeners) r.run();
     }
 
     private static String cssUrl() {

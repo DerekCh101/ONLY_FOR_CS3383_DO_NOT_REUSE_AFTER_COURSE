@@ -7,6 +7,7 @@ import {
     findUserById,
     createUser,
     createSession,
+    setSessionVaultWrap,
     userFromToken,
     updateUsername,
     updateUserEmail,
@@ -16,12 +17,24 @@ import {
     deleteSessionById,
     listSessions,
     createResetToken,
-    takeResetToken
+    takeResetToken,
+    isAccountDeleted,
+    deleteAccountFully
 } from "../db.js";
-import { printReset, sendResetMailLater } from "../lib/mail.js";
-import { readBody, send, parseJson, pathname } from "../lib/httpUtil.js";
+import { printReset, sendResetMailLater, sendPasswordChangedMailLater } from "../lib/mail.js";
+import { removeUserFiles } from "../lib/userFiles.js";
+import { readBody, send, parseJson, pathname, reqUrl } from "../lib/httpUtil.js";
+import { derive, wrapSessionKey } from "../lib/vaultCrypto.js";
+import { rememberVault, forgetVault, forgetVaultUser, vaultToken } from "../lib/vaultSession.js";
 
 const forgotWait = new Map();
+
+async function bindSessionVault(token, uid, password) {
+    if (!token || !uid || !password) return;
+    const key = await derive(uid, password);
+    rememberVault(token, uid, key);
+    await setSessionVaultWrap(token, wrapSessionKey(token, key));
+}
 
 function sha256Hex(s) {
     return createHash("sha256").update(String(s || ""), "utf8").digest("hex");
@@ -122,6 +135,7 @@ export async function handleAuth(req, res) {
                 await bcrypt.hash(answer, 12)
             );
             const token = await createSession(user.id, deviceOf(req, body));
+            await bindSessionVault(token, user.id, password);
             console.log("POST /register ok", username);
             send(res, 201, { id: user.id, username: user.username, token });
         } catch (e) {
@@ -154,10 +168,82 @@ export async function handleAuth(req, res) {
                 return true;
             }
             const token = await createSession(user.id, deviceOf(req, body));
+            await bindSessionVault(token, user.id, password);
             console.log("POST /login ok", username);
             send(res, 200, { id: user.id, username: user.username, token });
         } catch (e) {
             console.error("POST /login", e);
+            send(res, 400, { error: String(e.message || e) });
+        }
+        return true;
+    }
+
+    if (req.method === "POST" && path === "/vault/unlock") {
+        const me = await userFromToken(req);
+        if (!me) {
+            send(res, 401, { error: "login required" });
+            return true;
+        }
+        try {
+            const body = parseJson(await readBody(req));
+            const password = String(body.password ?? "").trim();
+            if (!password) {
+                send(res, 400, { error: "password required" });
+                return true;
+            }
+            const user = await findUserById(me.id);
+            if (!user || !(await passwordMatches(user.password_hash, password))) {
+                send(res, 403, { error: "Could not unlock. Check the account password." });
+                return true;
+            }
+            await bindSessionVault(vaultToken(req) || bearerOf(req), me.id, password);
+            send(res, 200, { ok: true });
+        } catch (e) {
+            send(res, 400, { error: String(e.message || e) });
+        }
+        return true;
+    }
+
+    if (req.method === "GET" && path === "/account-status") {
+        const userId = String(reqUrl(req).searchParams.get("userId") || "").trim();
+        try {
+            send(res, 200, { deleted: await isAccountDeleted(userId) });
+        } catch (e) {
+            send(res, 400, { error: String(e.message || e) });
+        }
+        return true;
+    }
+
+    if (req.method === "POST" && path === "/me/delete") {
+        const me = await userFromToken(req);
+        if (!me) {
+            send(res, 401, { error: "login required" });
+            return true;
+        }
+        try {
+            const body = parseJson(await readBody(req));
+            const password = String(body.password ?? body.oldPassword ?? "").trim();
+            if (!password) {
+                send(res, 400, { error: "password required" });
+                return true;
+            }
+            const user = await findUserById(me.id);
+            if (!user || !(await passwordMatches(user.password_hash, password))) {
+                send(res, 401, { error: "password is wrong" });
+                return true;
+            }
+            forgetVaultUser(me.id);
+            const username = await deleteAccountFully(me.id);
+            if (username) {
+                try {
+                    await removeUserFiles(username);
+                } catch (e) {
+                    console.error("user-files delete", e);
+                }
+            }
+            send(res, 200, { ok: true, deleted: true });
+        } catch (e) {
+            console.error("POST /me/delete", e);
             send(res, 400, { error: String(e.message || e) });
         }
         return true;
@@ -212,6 +298,7 @@ export async function handleAuth(req, res) {
         }
         try {
             await deleteSessionsForUser(me.id, bearerOf(req));
+            forgetVaultUser(me.id, bearerOf(req));
             send(res, 200, { ok: true });
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
@@ -232,6 +319,7 @@ export async function handleAuth(req, res) {
                 send(res, 404, { error: "session not found" });
                 return true;
             }
+            forgetVault(gone.token);
             send(res, 200, { ok: true, current: gone.token === bearerOf(req) });
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
@@ -308,7 +396,14 @@ export async function handleAuth(req, res) {
             await updateUserPassword(me.id, await bcrypt.hash(newPassword, 12));
             const keep = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
             await deleteSessionsForUser(me.id, keep);
-            send(res, 200, { ok: true });
+            forgetVaultUser(me.id, keep);
+            await bindSessionVault(keep, me.id, newPassword);
+            const email = String(user.email || "").trim();
+            const mailed = email.includes("@");
+            if (mailed) {
+                sendPasswordChangedMailLater(email, user.username);
+            }
+            send(res, 200, { ok: true, emailed: mailed });
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
         }

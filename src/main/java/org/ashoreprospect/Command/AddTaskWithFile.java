@@ -146,18 +146,10 @@ public class AddTaskWithFile implements Command {
         boolean canPlace = slotIndex >= 0
                 && slotIndex + slotCount <= AppTimeReference.SLOTS_PER_DAY;
         if (canPlace) {
-            BlockedTimePeriod blocks = theSystem.getBlockedTime();
             for (int i = 0; i < slotCount; i++) {
                 if (day.returnDayGrid()[slotIndex + i] != null) {
                     canPlace = false;
                     break;
-                }
-                if (blocks != null) {
-                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, slotIndex + i);
-                    if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
-                        canPlace = false;
-                        break;
-                    }
                 }
             }
         }

@@ -5,22 +5,30 @@ const errBlocked = document.getElementById("errBlocked");
 const auth = document.getElementById("auth");
 const app = document.getElementById("app");
 
+applyTheme();
+
 let twBundle = emptyBundle();
 let twOpen = null;
 let lastTwSent = "";
 let allTasks = [];
 let allBlocked = [];
 let weekOffset = 0;
+let monthOffset = 0;
 let taskWhen = "all";
 let taskKind = "all";
+let taskPage = 0;
+const TASK_PAGE_SIZE = 12;
 let reuseTaskId = "";
+let pendingQuickParent = "";
+let selectedTaskId = "";
+let fillingDesc = false;
+let secondsClock = null;
 let findLevel = "year";
 let findYear = null;
 let findMonth = null;
 let toastTimer = null;
 let loginBusy = false;
 let carrying = false;
-const carryToasted = new Set();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 function emptyBundle() {
@@ -172,15 +180,22 @@ function setLoginBusy(on) {
 async function send(method, path, body) {
     const headers = { "Content-Type": "application/json" };
     if (token()) headers.Authorization = "Bearer " + token();
+    let payload = body;
+    if (payload != null && window.AshoreVault) {
+        payload = await window.AshoreVault.sealOutgoing(path, method, payload);
+    }
     const res = await fetch(path, {
         method,
         headers,
-        body: body == null ? undefined : JSON.stringify(body)
+        body: payload == null ? undefined : JSON.stringify(payload)
     });
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch (_) {}
     if (!res.ok) {
+        if (res.status === 401 && path && path.indexOf("/account-status") < 0 && path.indexOf("/login") < 0) {
+            wipeIfAccountDeleted();
+        }
         if (res.status === 502 || res.status === 504 || /bad gateway|cloudflare/i.test(text)) {
             throw new Error(res.status + " tunnel/origin down — Node or cloudflared is not answering");
         }
@@ -189,43 +204,75 @@ async function send(method, path, body) {
         }
         throw new Error(res.status + " " + ((json && json.error) || text || "error"));
     }
+    if (json && window.AshoreVault) {
+        json = await window.AshoreVault.openIncoming(path, json);
+    }
     return json;
 }
 
+function secondsOf(t) {
+    if (t == null || t === "") return null;
+    if (t instanceof Date && !Number.isNaN(t.getTime())) {
+        return t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds();
+    }
+    const s = String(t).trim();
+    const iso = s.match(/T(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    const m = iso || s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    const sec = Number(m[3] || 0);
+    if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59 || sec > 59) return null;
+    return h * 3600 + min * 60 + sec;
+}
+
 function minutes(t) {
-    if (!t) return null;
-    const p = String(t).split(":");
-    return Number(p[0]) * 60 + Number(p[1] || 0);
+    const sec = secondsOf(t);
+    return sec == null ? null : Math.floor(sec / 60);
 }
 
 function isExceptionRow(b) {
-    return b.is_exception === true || b.is_exception === "t" || b.is_exception === "true" || b.is_exception === 1;
+    const v = b && (b.is_exception ?? b.isException);
+    return v === true || v === "t" || v === "true" || v === 1 || v === "1";
 }
 
 function weekdayOf(b) {
     if (b == null || b.weekday == null || b.weekday === "") return null;
     const n = Number(b.weekday);
-    return Number.isFinite(n) ? n : null;
+    if (!Number.isFinite(n)) return null;
+    if (n === 0) return 7;
+    if (n >= 1 && n <= 7) return n;
+    return null;
 }
 
 function isDailyRow(b) {
-    return !isExceptionRow(b) && !toYmd(b.specific_date) && weekdayOf(b) == null;
+    return !isExceptionRow(b) && !toYmd(b.specific_date || b.specificDate) && weekdayOf(b) == null;
 }
 
-function sameLayer(a, b) {
+function datesCanMeet(a, b) {
+    if (a == null || b == null) return false;
     if (isExceptionRow(a) !== isExceptionRow(b)) return false;
-    const da = toYmd(a.specific_date);
-    const db = toYmd(b.specific_date);
-    if (da || db) return da === db;
+    const da = toYmd(a.specific_date || a.specificDate);
+    const db = toYmd(b.specific_date || b.specificDate);
     const wa = weekdayOf(a);
     const wb = weekdayOf(b);
-    if (wa != null || wb != null) return wa === wb;
-    return isDailyRow(a) && isDailyRow(b);
+    const openA = !da && wa == null;
+    const openB = !db && wb == null;
+    if (openA || openB) return true;
+    if (da && db) return da === db;
+    if (da) return wb != null && isoDow(da) === wb;
+    if (db) return wa != null && isoDow(db) === wa;
+    return wa != null && wb != null && wa === wb;
 }
 
 function clockOverlap(a, b) {
-    return withSeconds(a.start_time) < withSeconds(b.end_time)
-        && withSeconds(b.start_time) < withSeconds(a.end_time);
+    const a0 = secondsOf(a.start_time || a.startTime);
+    const a1 = secondsOf(a.end_time || a.endTime);
+    const b0 = secondsOf(b.start_time || b.startTime);
+    const b1 = secondsOf(b.end_time || b.endTime);
+    if (a0 == null || a1 == null || b0 == null || b1 == null) return false;
+    if (a0 >= a1 || b0 >= b1) return false;
+    return a0 < b1 && b0 < a1;
 }
 
 function describeBlocked(b) {
@@ -235,24 +282,48 @@ function describeBlocked(b) {
     return (b.title || "blocked") + " " + when + " " + b.start_time + "–" + b.end_time;
 }
 
+function showEl(el, on) {
+    if (!el) return;
+    el.hidden = !on;
+}
+
+function exceptionLabel(every, range) {
+    if (every) return "Exception (from every day)";
+    if (range) return "Exception (from this range)";
+    return "Exception (this date / weekdays)";
+}
+
 function syncBlockedDates() {
     const every = document.getElementById("bEvery");
     const exception = document.getElementById("bException");
+    const range = document.getElementById("bRange");
     const from = document.getElementById("bFrom");
     const to = document.getElementById("bTo");
     if (!every || !exception || !from || !to) return;
-    const needDate = exception.checked || !every.checked;
-    from.disabled = !needDate;
-    to.disabled = !needDate;
-    const lab = exception.closest("label");
-    if (lab) {
-        const box = exception;
-        lab.textContent = "";
-        lab.appendChild(box);
-        lab.appendChild(document.createTextNode(every.checked
-            ? " Exception (free this date / weekdays)"
-            : " Exception (free this range / weekdays)"));
+    const isEvery = every.checked;
+    const isRange = !!(range && range.checked);
+    const isEx = exception.checked;
+    const lab = document.getElementById("bExceptionLab");
+    if (lab) lab.textContent = exceptionLabel(isEvery, isRange);
+    showEl(document.getElementById("bWeekRow"), isEx);
+    showEl(document.getElementById("bExceptionWrap"), true);
+    showEl(document.getElementById("bRangeWrap"), true);
+    const showFrom = !isEvery || isEx;
+    const showTo = isRange || (isEvery && isEx);
+    if (isEvery && !isEx) {
+        from.value = "";
+        to.value = "";
+    } else if (!(isEvery && isEx && !isRange)) {
+        if (!from.value) from.value = todayYmd();
+        if (showTo && !to.value) to.value = from.value || todayYmd();
     }
+    showEl(document.getElementById("bDateRow"), showFrom);
+    showEl(document.getElementById("bFromLab"), showFrom);
+    showEl(from, showFrom);
+    const fromLab = document.getElementById("bFromLab");
+    if (fromLab) fromLab.textContent = showTo ? "From" : "Date";
+    showEl(document.getElementById("bToLab"), showTo);
+    showEl(to, showTo);
 }
 
 function whenLabel(b) {
@@ -330,6 +401,17 @@ function isFinished(t) {
     return w === "FINISHED" || w === "DONE" || w === "COMPLETE" || w === "COMPLETED";
 }
 
+function taskHasEnded(t) {
+    if (!t || isFinished(t)) return true;
+    const day = toYmd(t.placed_date || t.placedDate);
+    const start = minutes(t.placed_time || t.placedTime);
+    if (!day || start == null) return false;
+    const p = day.split("-").map(Number);
+    const end = new Date(p[0], p[1] - 1, p[2], Math.floor(start / 60), start % 60, 0, 0);
+    end.setMinutes(end.getMinutes() + taskMinutes(t));
+    return end.getTime() <= Date.now();
+}
+
 function taskState(t) {
     return String(t.state || t.taskState || "").trim();
 }
@@ -382,38 +464,17 @@ function taskStartKey(t) {
     return d + "T" + String(t.placed_time || t.placedTime || "00:00").slice(0, 5);
 }
 
-function sameSession(a, b) {
-    return String(a.title || "").toLowerCase() === String(b.title || "").toLowerCase()
-        && String(a.category || "").toLowerCase() === String(b.category || "").toLowerCase()
-        && String(a.subcategory || "").toLowerCase() === String(b.subcategory || "").toLowerCase();
+function sealedUi(s) {
+    return String(s || "").startsWith("AP1.");
 }
 
-function stripCarryNotes(text) {
-    if (!text) return "";
-    return String(text).split(/\r?\n/).filter((line) => {
-        const t = line.trim();
-        return !t.startsWith("Leftover from ") && !t.startsWith("Unfinished leftover");
-    }).join("\n").trim();
+function publicTitle(t) {
+    const n = String((t && (t.title || t.taskName)) || "").trim();
+    if (!n || sealedUi(n)) return "";
+    return n;
 }
 
-function findNextSameSession(past) {
-    const pastStart = taskStartKey(past);
-    let next = null;
-    let nextStart = "";
-    for (const t of allTasks) {
-        if (String(t.id) === String(past.id)) continue;
-        if (!sameSession(past, t)) continue;
-        const start = taskStartKey(t);
-        if (!start || (pastStart && start <= pastStart)) continue;
-        if (!next || start < nextStart) {
-            next = t;
-            nextStart = start;
-        }
-    }
-    return next;
-}
-
-async function patchTaskDescription(t, description) {
+async function patchTaskDescription(t, description, descriptionDone) {
     const day = toYmd(t.placed_date);
     await send("POST", "/tasks", {
         id: t.id,
@@ -430,45 +491,11 @@ async function patchTaskDescription(t, description) {
         workflow: isFinished(t) ? "FINISHED" : "UNFINISHED",
         last_updated_at: new Date().toISOString(),
         placement_updated_at: t.placement_updated_at || new Date().toISOString(),
-        category: t.category || "",
-        subcategory: t.subcategory || "",
         description: clipDesc(description),
-        description_done: t.description_done === true || t.description_done === "true"
+        description_done: descriptionDone != null
+            ? !!descriptionDone
+            : (t.description_done === true || t.description_done === "true")
     });
-}
-
-async function carryUnfinishedPast() {
-    const hold = "Unfinished leftover — no later session of this category/sub/name yet.";
-    let wrote = false;
-    for (const past of allTasks) {
-        if (lifeOf(past) !== "PAST" || isFinished(past)) continue;
-        const cat = String(past.category || "").trim();
-        const sub = String(past.subcategory || "").trim();
-        if (!cat && !sub) continue;
-        const next = findNextSameSession(past);
-        if (!next) {
-            const desc = String(past.description || "");
-            if (!desc.includes(hold)) {
-                await patchTaskDescription(past, desc ? desc + "\n" + hold : hold);
-                wrote = true;
-            }
-            const id = String(past.id);
-            if (!carryToasted.has(id)) {
-                carryToasted.add(id);
-                toast("Unfinished leftover: no later session for “"
-                    + (past.title || "") + "”. Use Fill add for a follow-up.", true);
-            }
-            continue;
-        }
-        const note = "Leftover from " + (toYmd(past.placed_date) || "") + " “" + (past.title || "") + "”.";
-        const nextDesc = String(next.description || "");
-        if (nextDesc.includes(note)) continue;
-        const leftover = stripCarryNotes(past.description);
-        const extra = leftover ? note + "\n" + leftover : note;
-        await patchTaskDescription(next, nextDesc ? nextDesc + "\n" + extra : extra);
-        wrote = true;
-    }
-    return wrote;
 }
 
 function matchesWhen(t) {
@@ -485,8 +512,21 @@ function matchesKind(t) {
     return taskState(t).toLowerCase() === String(taskKind).toLowerCase();
 }
 
+function taskWhenKey(t) {
+    const day = toYmd(t && t.placed_date);
+    if (!day) return "9999-12-31T99:99";
+    const time = String(t.placed_time || "00:00").slice(0, 5);
+    return day + "T" + time;
+}
+
 function filteredTasks() {
-    return allTasks.filter((t) => matchesWhen(t) && matchesKind(t));
+    return allTasks
+        .filter((t) => !isQuick(t) && matchesWhen(t) && matchesKind(t))
+        .sort((a, b) => {
+            const c = taskWhenKey(a).localeCompare(taskWhenKey(b));
+            if (c !== 0) return c;
+            return String(a.title || "").localeCompare(String(b.title || ""));
+        });
 }
 
 function markTabs() {
@@ -513,15 +553,32 @@ function mondayOfOffset(offset) {
 
 function fillAddFromTask(t) {
     if (!t) return;
+    t = parentOf(t);
+    if (t && isQuick(t)) return;
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? "" : v; };
     set("tTitle", t.title || "");
     set("tDur", String(t.duration || 1));
+    const mins = taskMinutes(t);
+    set("tDurMin", String(mins));
+    const minOn = document.getElementById("tMinOn");
+    if (minOn) {
+        minOn.checked = mins % 30 !== 0;
+        showMinuteDuration(minOn.checked);
+    }
+        const qbtn = document.getElementById("btnQuick");
+    if (qbtn) {
+        const canQuick = !isQuick(t) && t.placed_date && t.placed_time;
+        qbtn.hidden = !canQuick;
+        qbtn.dataset.parentId = canQuick ? String(t.id || "") : "";
+        qbtn.textContent = canQuick
+            ? "Add as quick event inside “" + (t.title || "task") + "”"
+            : "Add as quick event";
+    }
+    syncDuration("minutes");
     const state = hasDeadline(t) ? "Deadline" : (String(t.state || "") === "Fixed" ? "Fixed" : "Flexible");
     set("tState", state);
     set("tDate", toYmd(t.placed_date) || "");
     set("tTime", (t.placed_time || "").slice(0, 5));
-    set("tCat", t.category || "");
-    set("tSub", t.subcategory || "");
     set("tDesc", t.description || "");
     const done = document.getElementById("tDescDone");
     if (done) done.checked = t.description_done === true || t.description_done === "true";
@@ -532,6 +589,7 @@ function fillAddFromTask(t) {
     showReuseHint();
     const title = document.getElementById("tTitle");
     if (title) title.focus();
+    paintNestedQuicks(t);
 }
 
 function showReuseHint() {
@@ -543,7 +601,14 @@ function showReuseHint() {
 
 function clearReuse() {
     reuseTaskId = "";
+    pendingQuickParent = "";
+    const qbtn = document.getElementById("btnQuick");
+    if (qbtn) {
+        qbtn.hidden = true;
+        qbtn.dataset.parentId = "";
+    }
     showReuseHint();
+    paintNestedQuicks(null);
 }
 
 function fillAddSlot(ymd, hm, asNew) {
@@ -588,62 +653,751 @@ function weekDays() {
     return days;
 }
 
+let calMode = "week";
+
+function taskMinutes(t) {
+    const d = Number(t && t.duration);
+    if (!Number.isFinite(d) || d <= 0) return 30;
+    return Math.max(1, Math.round(d * 60));
+}
+
+function isQuick(t) {
+    return !!(t && (t.parent_id || t.parentId));
+}
+
+function parentOf(t) {
+    if (!t || !isQuick(t)) return t;
+    const pid = String(t.parent_id || t.parentId || "");
+    if (!pid) return t;
+    const found = allTasks.find((x) => String(x.id) === pid);
+    return found || t;
+}
+
+function quicksOf(parent) {
+    if (!parent || isQuick(parent)) return [];
+    const id = String(parent.id || "");
+    return allTasks.filter((t) => String(t.parent_id || t.parentId || "") === id)
+        .sort((a, b) => String(a.placed_time || "").localeCompare(String(b.placed_time || "")));
+}
+
+function paintNestedQuicks(parent) {
+    const box = document.getElementById("tQuicks");
+    if (!box) return;
+    box.innerHTML = "";
+    const nested = quicksOf(parent);
+    if (!nested.length) return;
+    const head = document.createElement("div");
+    head.className = "meta";
+    head.textContent = "During this task";
+    box.appendChild(head);
+    const parentDone = isFinished(parent);
+    nested.forEach((q) => {
+        const line = document.createElement("div");
+        const clock = String(q.placed_time || "").slice(0, 5);
+        const done = parentDone || isFinished(q) ? "done · " : "";
+        line.textContent = done + clock + "  " + (q.title || "") + "  ·  " + taskMinutes(q) + " min";
+        box.appendChild(line);
+    });
+}
+
+function paintQuickCount(parent, host) {
+    const n = quicksOf(parent).length;
+    if (!n || !host) return;
+    host.classList.add("has-quick");
+    const badge = document.createElement("span");
+    badge.className = "tg-quick-count";
+    badge.textContent = String(n);
+    badge.title = n === 1 ? "1 quick event" : n + " quick events";
+    host.appendChild(badge);
+}
+
+function selectedTask() {
+    if (!selectedTaskId) return null;
+    let t = allTasks.find((x) => String(x.id) === String(selectedTaskId));
+    if (!t) return null;
+    t = parentOf(t);
+    if (!t || isQuick(t)) return null;
+    return t;
+}
+
+function markSelectedTask() {
+    document.querySelectorAll("[data-pick-id]").forEach((n) => {
+        n.classList.toggle("picked", selectedTaskId !== "" && n.dataset.pickId === selectedTaskId);
+    });
+}
+
+function ensureDescPanel() {
+    const add = document.getElementById("descAddField");
+    if (add && add.dataset.hooked !== "1") {
+        add.dataset.hooked = "1";
+        add.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                addDescItem();
+            }
+        });
+    }
+}
+
+function parseDescLines(raw) {
+    const out = [];
+    if (raw == null || sealedUi(raw)) return out;
+    const text = String(raw);
+    if (!text.trim()) return out;
+    const lines = text.split(/\r?\n/);
+    const anyMark = lines.some((line) => {
+        const t = String(line || "").trim();
+        return t.startsWith("[x]") || t.startsWith("[X]") || t.startsWith("[ ]");
+    });
+    if (!anyMark) {
+        out.push({ done: false, text: text.trim() });
+        return out;
+    }
+    for (const line of lines) {
+        const t = String(line || "").trim();
+        if (!t) continue;
+        if (t.startsWith("[x]") || t.startsWith("[X]")) out.push({ done: true, text: t.slice(3).trim() });
+        else if (t.startsWith("[ ]")) out.push({ done: false, text: t.slice(3).trim() });
+        else out.push({ done: false, text: t });
+    }
+    return out;
+}
+
+function descRow(done, text) {
+    const row = document.createElement("div");
+    row.className = "desc-row";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!done;
+    box.addEventListener("change", persistDesc);
+    const tf = document.createElement("input");
+    tf.type = "text";
+    tf.maxLength = 500;
+    tf.value = text || "";
+    tf.placeholder = "What to do…";
+    tf.addEventListener("change", persistDesc);
+    tf.addEventListener("blur", persistDesc);
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "ghost";
+    rm.textContent = "×";
+    rm.addEventListener("click", () => {
+        row.remove();
+        persistDesc();
+    });
+    row.appendChild(box);
+    row.appendChild(tf);
+    row.appendChild(rm);
+    return row;
+}
+
+function fillDescList(raw) {
+    const box = document.getElementById("descList");
+    if (!box) return;
+    box.innerHTML = "";
+    if (raw == null) return;
+    for (const line of parseDescLines(raw)) box.appendChild(descRow(line.done, line.text));
+}
+
+function fillDescQuicks(parent) {
+    const box = document.getElementById("descQuicks");
+    const head = document.getElementById("descQuicksHead");
+    if (box) box.innerHTML = "";
+    if (head) head.hidden = !parent;
+    if (!parent || !box) return;
+    const nested = quicksOf(parent);
+    if (!nested.length) {
+        const empty = document.createElement("div");
+        empty.className = "meta";
+        empty.textContent = "None on this task.";
+        box.appendChild(empty);
+        return;
+    }
+    const parentDone = isFinished(parent);
+    nested.forEach((q) => {
+        const line = document.createElement("div");
+        const clock = String(q.placed_time || "").slice(0, 5);
+        const done = parentDone || isFinished(q) ? "done · " : "";
+        line.textContent = done + clock + "  " + (publicTitle(q) || "(untitled)") + "  ·  " + taskMinutes(q) + " min";
+        box.appendChild(line);
+    });
+}
+
+function serializeDescList() {
+    const box = document.getElementById("descList");
+    if (!box) return { text: "", allDone: false };
+    const parts = [];
+    let any = false;
+    let allDone = true;
+    box.querySelectorAll(".desc-row").forEach((row) => {
+        const check = row.querySelector('input[type="checkbox"]');
+        const tf = row.querySelector('input[type="text"]');
+        const t = tf ? tf.value.trim() : "";
+        if (!t) return;
+        any = true;
+        const on = !!(check && check.checked);
+        if (!on) allDone = false;
+        parts.push((on ? "[x] " : "[ ] ") + t);
+    });
+    let text = parts.join("\n");
+    if (text.length > 8000) text = text.slice(0, 8000);
+    return { text, allDone: any && allDone };
+}
+
+function showTaskDescription(t) {
+    if (t) t = parentOf(t);
+    if (t && isQuick(t)) t = null;
+    selectedTaskId = t && t.id ? String(t.id) : "";
+    const on = !!t;
+    const meta = document.getElementById("descMeta");
+    const addField = document.getElementById("descAddField");
+    const addBtn = document.getElementById("descAddBtn");
+    const saveBtn = document.getElementById("descSave");
+    const finishBtn = document.getElementById("descFinish");
+    const listHead = document.getElementById("descListHead");
+    const errEl = document.getElementById("descErr");
+    if (errEl) errEl.textContent = "";
+    if (meta) {
+        if (!on) {
+            meta.textContent = "Left-click a task to see it here.";
+        } else {
+            const kind = hasDeadline(t) ? "Deadline" : (taskState(t) === "Fixed" ? "Fixed" : "Flexible");
+            const placed = (!toYmd(t.placed_date) || !t.placed_time)
+                ? "not placed"
+                : toYmd(t.placed_date) + " " + String(t.placed_time).slice(0, 5);
+            const dlDate = toYmd(t.deadline_date || t.deadlineDate);
+            const dlTime = String(t.deadline_time || t.deadlineTime || "").slice(0, 5);
+            const deadline = hasDeadline(t)
+                ? "\nDeadline " + (dlDate || "") + (dlTime ? " " + dlTime : "")
+                : "";
+            const mins = taskMinutes(t);
+            const hours = Number(t.duration);
+            const dur = mins + " min" + (mins % 30 === 0 && Number.isFinite(hours) ? " · " + hours + "h grid" : "");
+            const wf = isFinished(t) ? "FINISHED" : "UNFINISHED";
+            meta.textContent = (publicTitle(t) || "(untitled)")
+                + "\n" + kind + " · " + dur + " · " + wf
+                + "\nPlaced " + placed
+                + deadline;
+        }
+    }
+    if (addField) {
+        addField.disabled = !on;
+        if (!on) addField.value = "";
+    }
+    if (addBtn) addBtn.disabled = !on;
+    if (saveBtn) saveBtn.disabled = !on;
+    if (listHead) listHead.hidden = !on;
+    const placed = on && toYmd(t.placed_date) && t.placed_time;
+    if (finishBtn) {
+        finishBtn.disabled = !placed;
+        finishBtn.textContent = placed && isFinished(t) ? "Unfinish" : "Finish";
+    }
+    fillingDesc = true;
+    try {
+        fillDescList(on ? t.description : null);
+        fillDescQuicks(on ? t : null);
+    } finally {
+        fillingDesc = false;
+    }
+    markSelectedTask();
+}
+
+function addDescItem() {
+    const t = selectedTask();
+    const field = document.getElementById("descAddField");
+    const box = document.getElementById("descList");
+    if (!t || !field || !box) return;
+    let text = field.value.trim();
+    if (!text) return;
+    if (text.length > 500) text = text.slice(0, 500);
+    box.appendChild(descRow(false, text));
+    field.value = "";
+    persistDesc();
+}
+
+function persistDesc() {
+    if (fillingDesc || !selectedTask()) return;
+    saveTaskDescription();
+}
+
+async function saveTaskDescription() {
+    const t = selectedTask();
+    const errEl = document.getElementById("descErr");
+    if (errEl) errEl.textContent = "";
+    if (!t) return;
+    const packed = serializeDescList();
+    try {
+        await patchTaskDescription(t, packed.text, packed.allDone);
+        t.description = packed.text;
+        t.description_done = packed.allDone;
+    } catch (ex) {
+        if (errEl) errEl.textContent = ex.message || String(ex);
+    }
+}
+
 function paintWeek() {
     const grid = document.getElementById("weekGrid");
+    const month = document.getElementById("monthGrid");
     const label = document.getElementById("weekLabel");
+    const title = document.getElementById("calTitle");
     if (!grid || !label) return;
+    if (calMode === "month") {
+        grid.classList.add("panel-hidden");
+        if (month) {
+            month.classList.remove("panel-hidden");
+            paintMonth();
+        }
+        if (title) title.textContent = "Month";
+        const jump = document.getElementById("btnThisWeek");
+        if (jump) jump.textContent = "Jump to this month";
+        ensureDescPanel();
+        markSelectedTask();
+        return;
+    }
+    grid.classList.remove("panel-hidden");
+    if (month) month.classList.add("panel-hidden");
+    if (title) title.textContent = "Week";
+    const jump = document.getElementById("btnThisWeek");
+    if (jump) jump.textContent = "Jump to this week";
     const days = weekDays();
     const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     label.textContent = ymdFromDate(days[0]) + "  →  " + ymdFromDate(days[6]);
     grid.innerHTML = "";
     const todayCol = columnDateFor(todayYmd(), nowHm());
+    const nowMins = minutes(nowHm());
+    function gridPlace(el, col, row, rowEnd) {
+        el.style.gridColumn = String(col);
+        el.style.gridRow = rowEnd != null ? (row + " / " + rowEnd) : String(row);
+    }
+    const corner = document.createElement("div");
+    corner.className = "tg-head tg-time";
+    gridPlace(corner, 1, 1);
+    grid.appendChild(corner);
     days.forEach((d, i) => {
         const ymd = ymdFromDate(d);
-        const col = document.createElement("div");
-        col.className = "day-col" + (ymd === todayCol ? " today" : "");
         const head = document.createElement("div");
-        head.className = "day-head";
+        head.className = "tg-head";
         head.textContent = names[i] + " " + ymd.slice(5);
-        head.title = "Use this date in Add task";
         head.style.cursor = "pointer";
         head.addEventListener("click", () => fillAddSlot(ymd, ""));
-        col.appendChild(head);
-        const items = allTasks.filter((t) => columnDateFor(t.placed_date, t.placed_time) === ymd)
-            .sort((a, b) => String(a.placed_time || "").localeCompare(String(b.placed_time || "")));
-        if (!items.length) {
-            const empty = document.createElement("div");
-            empty.className = "meta";
-            empty.textContent = "—";
-            if (ymd < todayCol) {
-                empty.title = "Past day — add is closed";
-            } else {
-                empty.title = "Add a task on this date";
-                empty.style.cursor = "pointer";
-                empty.addEventListener("click", () => fillAddSlot(ymd, "06:00", true));
-            }
-            col.appendChild(empty);
-        }
-        items.forEach((t) => {
-            const b = document.createElement("button");
-            b.type = "button";
-            b.className = "chip" + (isFinished(t) ? " done" : "");
-            b.title = "Fill Add task with this item (title, description, category)";
-            b.addEventListener("click", () => fillAddFromTask(t));
-            const tEl = document.createElement("div");
-            tEl.className = "t";
-            tEl.textContent = (t.placed_time || "").slice(0, 5) + " " + (t.title || "(untitled)");
-            const metaEl = document.createElement("div");
-            metaEl.className = "meta";
-            metaEl.textContent = lifeOf(t).toLowerCase()
-                + " · " + (isFinished(t) ? "finished" : "unfinished")
-                + (t.category ? " · " + t.category : "")
-                + (t.subcategory ? " / " + t.subcategory : "");
-            b.appendChild(tEl);
-            b.appendChild(metaEl);
-            col.appendChild(b);
-        });
-        grid.appendChild(col);
+        gridPlace(head, i + 2, 1);
+        grid.appendChild(head);
     });
+    for (let slot = 0; slot < 48; slot++) {
+        const abs = 6 * 60 + slot * 30;
+        const hh = String(Math.floor((abs % (24 * 60)) / 60)).padStart(2, "0");
+        const mm = String(abs % 60).padStart(2, "0");
+        const time = document.createElement("div");
+        time.className = "tg-time";
+        time.textContent = hh + ":" + mm;
+        gridPlace(time, 1, slot + 2);
+        grid.appendChild(time);
+        days.forEach((d, i) => {
+            const ymd = ymdFromDate(d);
+            const cell = document.createElement("div");
+            cell.className = "tg-cell";
+            cell.dataset.abs = String(abs);
+            cell.dataset.ymd = ymd;
+            const past = ymd < todayCol || (ymd === todayCol && nowMins != null && abs + 30 <= nowMins);
+            if (past) cell.classList.add("past");
+            else if (ymd === todayCol) cell.classList.add("today");
+            if (ymd >= todayCol) {
+                cell.style.cursor = "pointer";
+                cell.addEventListener("click", () => fillAddSlot(ymd, hh + ":" + mm, true));
+            }
+            gridPlace(cell, i + 2, slot + 2);
+            grid.appendChild(cell);
+        });
+    }
+    function weekCell(ymd, slot) {
+        const abs = 6 * 60 + slot * 30;
+        return grid.querySelector('.tg-cell[data-ymd="' + ymd + '"][data-abs="' + abs + '"]');
+    }
+    allTasks.forEach((t) => {
+        if (!t || isQuick(t)) return;
+        const ymd = columnDateFor(t.placed_date, t.placed_time);
+        const col = days.findIndex((d) => ymdFromDate(d) === ymd);
+        if (col < 0) return;
+        const start = minutes(t.placed_time);
+        if (start == null) return;
+        let rel = start >= 6 * 60 ? start - 6 * 60 : 18 * 60 + start;
+        const dur = taskMinutes(t);
+        const startSlot = Math.floor(rel / 30);
+        const endRel = rel + dur;
+        let endSlot = Math.ceil(endRel / 30);
+        if (endRel % 30 === 0) endSlot = endRel / 30;
+        if (endSlot <= startSlot) endSlot = startSlot + 1;
+        if (endSlot > 48) endSlot = 48;
+        const ended = taskHasEnded(t);
+        const block = document.createElement("div");
+        block.className = "tg-occ-block" + (ended ? " ended" : "");
+        gridPlace(block, col + 2, startSlot + 2, endSlot + 2);
+        grid.appendChild(block);
+        for (let slot = startSlot; slot < endSlot; slot++) {
+            const cell = weekCell(ymd, slot);
+            if (!cell) continue;
+            cell.classList.add("occ");
+            if (ended) cell.classList.add("ended");
+            else cell.classList.remove("past");
+        }
+    });
+    allTasks.forEach((t) => {
+        if (!t || isQuick(t)) return;
+        const ymd = columnDateFor(t.placed_date, t.placed_time);
+        const col = days.findIndex((d) => ymdFromDate(d) === ymd);
+        if (col < 0) return;
+        const start = minutes(t.placed_time);
+        if (start == null) return;
+        let rel = start >= 6 * 60 ? start - 6 * 60 : 18 * 60 + start;
+        const dur = taskMinutes(t);
+        const slot = Math.floor(rel / 30);
+        const into = rel % 30;
+        const cell = weekCell(ymd, slot);
+        if (!cell) return;
+        const clock = String(t.placed_time || "").slice(0, 5);
+        const title = publicTitle(t) || "(untitled)";
+        if (wantRealtimeOverlay()) {
+            const bar = document.createElement("button");
+            bar.type = "button";
+            bar.className = "tg-bar"
+                + (isFinished(t) ? " done" : "")
+                + (taskHasEnded(t) ? " past" : "");
+            bar.style.top = (into / 30) * 18 + "px";
+            bar.style.height = Math.max(10, (dur / 30) * 18) + "px";
+            bar.textContent = clock + " " + title;
+            bar.title = clock + " · " + dur + " min · " + (t.title || "");
+            bar.dataset.pickId = String(t.id || "");
+            bar.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showTaskDescription(t);
+            });
+            cell.appendChild(bar);
+            paintQuickCount(t, bar);
+        } else {
+            const name = document.createElement("button");
+            name.type = "button";
+            name.className = "tg-name" + (isFinished(t) ? " done" : "");
+            name.textContent = clock + " " + title;
+            name.title = clock + " · " + dur + " min · " + (t.title || "");
+            name.dataset.pickId = String(t.id || "");
+            name.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showTaskDescription(t);
+            });
+            cell.appendChild(name);
+            paintQuickCount(t, name);
+        }
+    });
+    placeNowLine(grid, days);
+    ensureNowClock();
+    ensureDescPanel();
+    markSelectedTask();
+}
+
+function nowLinePlace() {
+    const nowMins = minutes(nowHm());
+    if (nowMins == null) return null;
+    const s = new Date().getSeconds();
+    let rel = nowMins >= 6 * 60 ? nowMins - 6 * 60 : 18 * 60 + nowMins;
+    const slot = Math.floor(rel / 30);
+    const into = rel % 30;
+    if (slot < 0 || slot >= 48) return null;
+    return { slot, y: ((into * 60 + s) / (30 * 60)) * 18 };
+}
+
+function placeNowLine(grid, days) {
+    if (!grid) return;
+    grid.querySelectorAll(".tg-now-line").forEach((n) => n.remove());
+    if (weekOffset !== 0) return;
+    const today = todayYmd();
+    if (days && !days.some((d) => ymdFromDate(d) === today)) return;
+    const at = nowLinePlace();
+    if (!at) return;
+    const abs = 6 * 60 + at.slot * 30;
+    grid.querySelectorAll('.tg-cell[data-abs="' + abs + '"]').forEach((cell) => {
+        const line = document.createElement("div");
+        line.className = "tg-now-line";
+        line.style.top = at.y + "px";
+        cell.appendChild(line);
+    });
+}
+
+function paintMonth() {
+    const grid = document.getElementById("monthGrid");
+    const label = document.getElementById("weekLabel");
+    if (!grid) return;
+    const now = new Date();
+    const monthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+    const y = monthDate.getFullYear();
+    const m = monthDate.getMonth();
+    if (label) label.textContent = monthDate.toLocaleString(undefined, { month: "long", year: "numeric" });
+    grid.innerHTML = "";
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((n) => {
+        const h = document.createElement("div");
+        h.className = "meta";
+        h.textContent = n;
+        grid.appendChild(h);
+    });
+    const first = new Date(y, m, 1);
+    let pad = (first.getDay() + 6) % 7;
+    for (let i = 0; i < pad; i++) grid.appendChild(document.createElement("div"));
+    const last = new Date(y, m + 1, 0).getDate();
+    const today = todayYmd();
+    for (let d = 1; d <= last; d++) {
+        const ymd = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+        const cell = document.createElement("div");
+        cell.className = "month-cell";
+        if (ymd === today) cell.style.outline = "2px solid var(--blue)";
+        const n = document.createElement("div");
+        n.className = "n";
+        n.textContent = String(d);
+        cell.appendChild(n);
+        allTasks.filter((t) => !isQuick(t) && toYmd(t.placed_date) === ymd).forEach((t) => {
+            const line = document.createElement("div");
+            line.className = "t";
+            line.textContent = (t.placed_time || "").slice(0, 5) + " " + (t.title || "");
+            line.title = t.title || "";
+            line.dataset.pickId = String(t.id || "");
+            line.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showTaskDescription(t);
+            });
+            cell.appendChild(line);
+        });
+        cell.addEventListener("click", (e) => {
+            if (e.target === cell || e.target === n) fillAddSlot(ymd, "09:00", true);
+        });
+        grid.appendChild(cell);
+    }
+}
+
+function applyTheme() {
+    document.documentElement.classList.toggle("dark", localStorage.getItem("ashoreTheme") === "dark");
+}
+
+function wantRealtimeOverlay() {
+    const v = localStorage.getItem("ashoreRealtimeOverlay");
+    if (v == null) return true;
+    return v === "true";
+}
+
+function setRealtimeOverlay(on) {
+    localStorage.setItem("ashoreRealtimeOverlay", on ? "true" : "false");
+}
+
+function ensureNowClock() {
+    const box = document.getElementById("realtimeOverlay");
+    if (box && box.dataset.hooked !== "1") {
+        box.dataset.hooked = "1";
+        box.checked = wantRealtimeOverlay();
+        box.addEventListener("change", () => {
+            setRealtimeOverlay(box.checked);
+            paintWeek();
+        });
+    }
+    if (!secondsClock) secondsClock = setInterval(tickNowLines, 1000);
+}
+
+function tickNowLines() {
+    const grid = document.getElementById("weekGrid");
+    if (!grid || grid.classList.contains("panel-hidden")) return;
+    const at = nowLinePlace();
+    const lines = grid.querySelectorAll(".tg-now-line");
+    if (weekOffset !== 0 || !at) {
+        lines.forEach((n) => n.remove());
+        return;
+    }
+    if (!lines.length) {
+        placeNowLine(grid, weekDays());
+        return;
+    }
+    const abs = String(6 * 60 + at.slot * 30);
+    const parent = lines[0].parentElement;
+    if (!parent || parent.dataset.abs !== abs) {
+        placeNowLine(grid, weekDays());
+        return;
+    }
+    lines.forEach((line) => {
+        line.style.top = at.y + "px";
+    });
+}
+
+function wantDark() {
+    return localStorage.getItem("ashoreTheme") === "dark";
+}
+
+function setDark(on) {
+    localStorage.setItem("ashoreTheme", on ? "dark" : "light");
+    applyTheme();
+}
+
+const IDLE_MIN_KEY = "ashoreIdleMinutes";
+const IDLE_AT_KEY = "ashoreIdleAt";
+let idleWatchId = 0;
+let idleBumpBound = false;
+
+function idleMinutesPref() {
+    const raw = localStorage.getItem(IDLE_MIN_KEY);
+    if (raw === "0") return 0;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 120;
+    if (n <= 0) return 0;
+    return Math.max(5, Math.min(180, n));
+}
+
+function setIdleMinutesPref(n) {
+    localStorage.setItem(IDLE_MIN_KEY, String(n <= 0 ? 0 : Math.max(5, Math.min(180, n))));
+}
+
+function bumpIdleActivity() {
+    sessionStorage.setItem(IDLE_AT_KEY, String(Date.now()));
+}
+
+function idleDue() {
+    const m = idleMinutesPref();
+    if (m <= 0) return false;
+    const at = Number(sessionStorage.getItem(IDLE_AT_KEY) || Date.now());
+    return Date.now() - at > m * 60 * 1000;
+}
+
+function startIdleWatch() {
+    if (!sessionStorage.getItem(IDLE_AT_KEY)) bumpIdleActivity();
+    if (idleDue()) {
+        logoutWeb();
+        toast("Signed out after idle time", true);
+        return;
+    }
+    if (!idleBumpBound) {
+        idleBumpBound = true;
+        const bump = () => bumpIdleActivity();
+        ["pointerdown", "keydown", "touchstart"].forEach((ev) => {
+            document.addEventListener(ev, bump, { passive: true });
+        });
+    }
+    if (idleWatchId) clearInterval(idleWatchId);
+    idleWatchId = setInterval(() => {
+        if (!token()) return;
+        if (idleDue()) {
+            logoutWeb();
+            toast("Signed out after idle time", true);
+        }
+    }, 15000);
+}
+
+function stopIdleWatch() {
+    if (idleWatchId) {
+        clearInterval(idleWatchId);
+        idleWatchId = 0;
+    }
+}
+
+function toggleActionPanel(which) {
+    const panels = {
+        tasks: ["taskListHeading", "taskListPanel"],
+        blocked: ["blockedHeading", "blockedPanel"]
+    };
+    Object.keys(panels).forEach((k) => {
+        const ids = panels[k];
+        const body = document.getElementById(ids[1]);
+        const show = k === which && body && body.classList.contains("panel-hidden");
+        ids.forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle("panel-hidden", !show);
+        });
+    });
+    const menu = document.getElementById("actionMenu");
+    if (menu) menu.hidden = true;
+}
+
+function closeActionMenu() {
+    const menu = document.getElementById("actionMenu");
+    if (menu) menu.hidden = true;
+}
+
+function showMinuteDuration(on) {
+    const wrap = document.getElementById("tDurMin");
+    const box = document.getElementById("tMinOn");
+    if (wrap) wrap.style.display = on ? "" : "none";
+    if (box) box.checked = !!on;
+}
+
+function showEndTime(on) {
+    const end = document.getElementById("tEnd");
+    const box = document.getElementById("tEndOn");
+    if (end) end.style.display = on ? "" : "none";
+    if (box) box.checked = !!on;
+    if (on) syncDuration("hours");
+}
+
+function minutesFromTime(hm) {
+    const n = minutes(hm);
+    return n == null ? null : n;
+}
+
+function hmFromMinutes(n) {
+    let m = ((n % (24 * 60)) + 24 * 60) % (24 * 60);
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    return hh + ":" + mm;
+}
+
+let linkingDur = false;
+
+function syncDuration(from) {
+    if (linkingDur) return;
+    linkingDur = true;
+    const hEl = document.getElementById("tDur");
+    const mEl = document.getElementById("tDurMin");
+    const timeEl = document.getElementById("tTime");
+    const endEl = document.getElementById("tEnd");
+    let mins = mEl ? Number(mEl.value) : 60;
+    if (from === "hours" && hEl) mins = Math.round(Number(hEl.value) * 60);
+    if (from === "end" && timeEl && endEl) {
+        const a = minutesFromTime(timeEl.value);
+        const b = minutesFromTime(endEl.value);
+        if (a != null && b != null) {
+            mins = b - a;
+            if (mins <= 0) mins += 24 * 60;
+            showMinuteDuration(true);
+        }
+    }
+    if (!Number.isFinite(mins) || mins < 1) mins = 1;
+    if (mins > 24 * 60) mins = 24 * 60;
+    if (mEl) mEl.value = String(mins);
+    if (hEl) hEl.value = String(Math.round((mins / 60) * 1000) / 1000);
+    if (from !== "end" && timeEl && endEl && timeEl.value) {
+        const a = minutesFromTime(timeEl.value);
+        if (a != null) endEl.value = hmFromMinutes(a + mins);
+    }
+    if (from === "minutes") showMinuteDuration(true);
+    if (from === "end") {
+        showMinuteDuration(mins % 30 !== 0);
+        showEndTime(true);
+    }
+    linkingDur = false;
+}
+
+let addFormBound = false;
+
+function bindAddForm() {
+    if (addFormBound) return;
+    addFormBound = true;
+    const hEl = document.getElementById("tDur");
+    const mEl = document.getElementById("tDurMin");
+    const on = document.getElementById("tMinOn");
+    const timeEl = document.getElementById("tTime");
+    const endEl = document.getElementById("tEnd");
+    const endOn = document.getElementById("tEndOn");
+    if (hEl) hEl.addEventListener("input", () => syncDuration("hours"));
+    if (mEl) mEl.addEventListener("input", () => syncDuration("minutes"));
+    if (on) on.addEventListener("change", () => {
+        showMinuteDuration(on.checked);
+        syncDuration(on.checked ? "minutes" : "hours");
+    });
+    if (endOn) endOn.addEventListener("change", () => showEndTime(endOn.checked));
+    if (timeEl) timeEl.addEventListener("input", () => syncDuration("hours"));
+    if (endEl) endEl.addEventListener("input", () => syncDuration("end"));
+    syncDuration("hours");
 }
 
 function paintTasks(rows) {
@@ -654,11 +1408,30 @@ function paintTasks(rows) {
     if (!list) return;
     list.innerHTML = "";
     const shown = filteredTasks();
+    const pager = document.getElementById("taskPager");
+    const prev = document.getElementById("btnTaskPrev");
+    const next = document.getElementById("btnTaskNext");
+    const pageLabel = document.getElementById("taskPageLabel");
     if (!shown.length) {
         list.innerHTML = "<li><span class='meta'>(none in this filter)</span></li>";
+        if (pager) pager.hidden = true;
+        showTaskDescription(selectedTask());
         return;
     }
-    for (const t of shown) {
+    const pages = Math.max(1, Math.ceil(shown.length / TASK_PAGE_SIZE));
+    if (taskPage >= pages) taskPage = pages - 1;
+    if (taskPage < 0) taskPage = 0;
+    const from = taskPage * TASK_PAGE_SIZE;
+    const slice = shown.slice(from, from + TASK_PAGE_SIZE);
+    if (pager) {
+        pager.hidden = shown.length <= TASK_PAGE_SIZE;
+        if (pageLabel) {
+            pageLabel.textContent = (from + 1) + "–" + (from + slice.length) + " of " + shown.length;
+        }
+        if (prev) prev.hidden = taskPage <= 0;
+        if (next) next.hidden = from + TASK_PAGE_SIZE >= shown.length;
+    }
+    for (const t of slice) {
         const li = document.createElement("li");
         const left = document.createElement("div");
         const head = document.createElement("div");
@@ -679,7 +1452,7 @@ function paintTasks(rows) {
             }
         });
         const name = document.createElement("div");
-        name.textContent = t.title || "(untitled)";
+        name.textContent = publicTitle(t) || "(untitled)";
         head.appendChild(notes);
         head.appendChild(name);
         const meta = document.createElement("div");
@@ -690,14 +1463,12 @@ function paintTasks(rows) {
             + (hasDeadline(t) ? " · deadline" : "")
             + " · " + lifeOf(t).toLowerCase()
             + " · " + (isFinished(t) ? "finished" : "unfinished")
-            + (t.category ? " · " + t.category : "")
-            + (t.subcategory ? " / " + t.subcategory : "")
-            + (t.description ? " · " + String(t.description).slice(0, 80) : "");
+            + (t.description && !sealedUi(t.description) ? " · " + String(t.description).slice(0, 80) : "");
         left.appendChild(head);
         left.appendChild(meta);
         left.style.cursor = "pointer";
-        left.title = "Fill Add task (title, description, category)";
-        left.addEventListener("click", () => fillAddFromTask(t));
+        left.title = "Show in description";
+        left.addEventListener("click", () => showTaskDescription(t));
         const actions = document.createElement("div");
         actions.className = "row";
         const done = document.createElement("button");
@@ -722,24 +1493,24 @@ function paintTasks(rows) {
         li.appendChild(actions);
         list.appendChild(li);
     }
+    showTaskDescription(selectedTask());
 }
 
 function setTaskWhen(v) {
     taskWhen = v || "all";
+    taskPage = 0;
     paintTasks();
 }
 
 function setTaskKind(v) {
     taskKind = v || "all";
+    taskPage = 0;
     paintTasks();
 }
 
-async function toggleTask(id) {
-    const t = allTasks.find((x) => String(x.id) === String(id));
-    if (!t) return;
-    const finished = isFinished(t);
+async function postTaskRow(t, extra) {
     const day = toYmd(t.placed_date);
-    await send("POST", "/tasks", {
+    await send("POST", "/tasks", Object.assign({
         id: t.id,
         title: t.title,
         duration: Number(t.duration || 0),
@@ -751,14 +1522,27 @@ async function toggleTask(id) {
         deadline_date: t.deadline_date || null,
         deadline_time: t.deadline_time || null,
         lifecycle: lifeOf(t),
-        workflow: finished ? "UNFINISHED" : "FINISHED",
+        workflow: isFinished(t) ? "FINISHED" : "UNFINISHED",
         last_updated_at: new Date().toISOString(),
         placement_updated_at: t.placement_updated_at || new Date().toISOString(),
-        category: t.category || "",
-        subcategory: t.subcategory || "",
         description: t.description || "",
-        description_done: t.description_done === true || t.description_done === "true"
-    });
+        description_done: t.description_done === true || t.description_done === "true",
+        parent_id: t.parent_id || t.parentId || null
+    }, extra || {}));
+}
+
+async function toggleTask(id) {
+    let t = allTasks.find((x) => String(x.id) === String(id));
+    if (!t) return;
+    t = parentOf(t);
+    if (!t || isQuick(t)) return;
+    const finished = isFinished(t);
+    await postTaskRow(t, { workflow: finished ? "UNFINISHED" : "FINISHED" });
+    if (!finished) {
+        for (const q of quicksOf(t)) {
+            if (!isFinished(q)) await postTaskRow(q, { workflow: "FINISHED" });
+        }
+    }
     await loadAll();
 }
 
@@ -781,8 +1565,6 @@ async function toggleDescDone(id, done) {
         workflow: isFinished(t) ? "FINISHED" : "UNFINISHED",
         last_updated_at: new Date().toISOString(),
         placement_updated_at: t.placement_updated_at || new Date().toISOString(),
-        category: t.category || "",
-        subcategory: t.subcategory || "",
         description: t.description || "",
         description_done: !!done
     });
@@ -1237,8 +2019,21 @@ async function loadImages(note, imgs, meta, label) {
     meta.textContent = label + " · " + list.length + " image(s)";
 }
 
+function lastTwLocked() {
+    const V = window.AshoreVault;
+    if (V && V.sealed(lastTwSent)) return true;
+    try {
+        return twStillCipher(JSON.parse(lastTwSent || "{}"));
+    } catch (_) {
+        return false;
+    }
+}
+
 async function saveBundle() {
     const content = JSON.stringify(twBundle);
+    if (lastTwLocked() && content === JSON.stringify(emptyBundle())) {
+        return;
+    }
     lastTwSent = content;
     await send("POST", "/typewriter", {
         content,
@@ -1246,9 +2041,24 @@ async function saveBundle() {
     });
 }
 
+function twStillCipher(bundle) {
+    const V = window.AshoreVault;
+    if (!V || !bundle) return false;
+    const notes = [].concat(bundle.diary || [], bundle.pages || []);
+    if (notes.some((p) => V.stillCipher(p && p.title) || V.stillCipher(p && p.body))) return true;
+    return (bundle.lists || []).some((l) => V.stillCipher(l && l.title)
+        || (l.items || []).some((it) => V.stillCipher(it && it.text)));
+}
+
 function applyTypewriter(tw) {
     hideTwView();
     const raw = (tw && tw.content) || "";
+    if (window.AshoreVault && window.AshoreVault.sealed(raw)) {
+        twBundle = emptyBundle();
+        lastTwSent = raw;
+        paintTwLists();
+        return;
+    }
     let parsed = null;
     try { parsed = raw ? JSON.parse(raw) : null; } catch (_) { parsed = null; }
     if (parsed && typeof parsed === "object") {
@@ -1259,6 +2069,12 @@ function applyTypewriter(tw) {
         };
     } else {
         twBundle = emptyBundle();
+    }
+    if (twStillCipher(twBundle) && !(window.AshoreVault && window.AshoreVault.enabled())) {
+        lastTwSent = raw;
+        twBundle = emptyBundle();
+        paintTwLists();
+        return;
     }
     lastTwSent = JSON.stringify(twBundle);
     paintTwLists();
@@ -1407,13 +2223,240 @@ async function sha256Hex(buf) {
 }
 
 function bufToB64(buf) {
-    const bytes = new Uint8Array(buf);
+    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
     let s = "";
     const chunk = 0x8000;
     for (let i = 0; i < bytes.length; i += chunk) {
         s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
     }
     return btoa(s);
+}
+
+function u8Concat(parts) {
+    let n = 0;
+    for (const p of parts) n += p.length;
+    const out = new Uint8Array(n);
+    let o = 0;
+    for (const p of parts) {
+        out.set(p, o);
+        o += p.length;
+    }
+    return out;
+}
+
+function u8Ascii(u8, start, end) {
+    let s = "";
+    for (let i = start; i < end; i++) s += String.fromCharCode(u8[i]);
+    return s;
+}
+
+function u16be(u8, i) {
+    return (u8[i] << 8) | u8[i + 1];
+}
+
+function u32be(u8, i) {
+    return ((u8[i] << 24) | (u8[i + 1] << 16) | (u8[i + 2] << 8) | u8[i + 3]) >>> 0;
+}
+
+function u32le(u8, i) {
+    return (u8[i] | (u8[i + 1] << 8) | (u8[i + 2] << 16) | (u8[i + 3] << 24)) >>> 0;
+}
+
+function putU32le(u8, i, v) {
+    u8[i] = v & 0xff;
+    u8[i + 1] = (v >>> 8) & 0xff;
+    u8[i + 2] = (v >>> 16) & 0xff;
+    u8[i + 3] = (v >>> 24) & 0xff;
+}
+
+function isPngU8(b) {
+    return b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+}
+
+function isJpegU8(b) {
+    return b.length >= 4 && b[0] === 0xff && b[1] === 0xd8;
+}
+
+function isGifU8(b) {
+    return b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46;
+}
+
+function isWebpU8(b) {
+    return b.length >= 12
+        && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46
+        && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50;
+}
+
+function renameImageExt(name, ext) {
+    const raw = String(name || "image").replace(/[/\\]/g, "");
+    const base = raw.replace(/\.[A-Za-z0-9]+$/, "");
+    return (base || "image").slice(0, 100) + ext;
+}
+
+function stripPngU8(buf) {
+    if (!isPngU8(buf)) return buf;
+    const keep = new Set(["IHDR", "PLTE", "IDAT", "IEND", "tRNS"]);
+    const out = [buf.subarray(0, 8)];
+    let i = 8;
+    while (i + 12 <= buf.length) {
+        const len = u32be(buf, i);
+        if (i + 12 + len > buf.length) break;
+        const type = u8Ascii(buf, i + 4, i + 8);
+        if (keep.has(type)) out.push(buf.subarray(i, i + 12 + len));
+        i += 12 + len;
+        if (type === "IEND") break;
+    }
+    return u8Concat(out);
+}
+
+function stripJpegU8(buf) {
+    if (!isJpegU8(buf)) return buf;
+    const out = [buf.subarray(0, 2)];
+    let i = 2;
+    while (i + 2 <= buf.length) {
+        if (buf[i] !== 0xff) {
+            out.push(buf.subarray(i));
+            break;
+        }
+        let j = i;
+        while (j < buf.length && buf[j] === 0xff) j++;
+        if (j >= buf.length) break;
+        const marker = buf[j];
+        if (marker === 0xd9) {
+            out.push(buf.subarray(i, j + 1));
+            break;
+        }
+        if (marker === 0xda) {
+            out.push(buf.subarray(i));
+            break;
+        }
+        if (marker >= 0xd0 && marker <= 0xd7) {
+            out.push(buf.subarray(i, j + 1));
+            i = j + 1;
+            continue;
+        }
+        if (j + 3 > buf.length) break;
+        const len = u16be(buf, j + 1);
+        const end = j + 1 + len;
+        if (end > buf.length) break;
+        const drop = marker === 0xfe || (marker >= 0xe1 && marker <= 0xef);
+        if (!drop) out.push(buf.subarray(i, end));
+        i = end;
+    }
+    return u8Concat(out);
+}
+
+function gifSkipSubBlocks(buf, start) {
+    let i = start;
+    while (i < buf.length) {
+        const sz = buf[i];
+        i += 1;
+        if (sz === 0) return i - start;
+        i += sz;
+    }
+    return i - start;
+}
+
+function stripGifU8(buf) {
+    if (!isGifU8(buf) || buf.length < 13) return buf;
+    const out = [];
+    out.push(buf.subarray(0, 13));
+    let i = 13;
+    const packed = buf[10];
+    if (packed & 0x80) {
+        const gct = 3 * (1 << ((packed & 7) + 1));
+        if (i + gct > buf.length) return buf;
+        out.push(buf.subarray(i, i + gct));
+        i += gct;
+    }
+    while (i < buf.length) {
+        const b = buf[i];
+        if (b === 0x3b) {
+            out.push(buf.subarray(i, i + 1));
+            break;
+        }
+        if (b === 0x2c) {
+            if (i + 10 > buf.length) break;
+            const imgPacked = buf[i + 9];
+            let n = 10;
+            if (imgPacked & 0x80) n += 3 * (1 << ((imgPacked & 7) + 1));
+            n += 1;
+            n += gifSkipSubBlocks(buf, i + n);
+            out.push(buf.subarray(i, i + n));
+            i += n;
+            continue;
+        }
+        if (b === 0x21) {
+            if (i + 2 > buf.length) break;
+            const label = buf[i + 1];
+            let n = 2;
+            if (label === 0xf9) {
+                n = 8;
+                out.push(buf.subarray(i, i + n));
+                i += n;
+                continue;
+            }
+            n += gifSkipSubBlocks(buf, i + n);
+            const keepLoop = label === 0xff && buf.length >= i + 13
+                && u8Ascii(buf, i + 3, i + 11) === "NETSCAPE";
+            if (keepLoop) out.push(buf.subarray(i, i + n));
+            i += n;
+            continue;
+        }
+        break;
+    }
+    return u8Concat(out);
+}
+
+function stripWebpU8(buf) {
+    if (!isWebpU8(buf) || buf.length < 12) return buf;
+    const chunks = [];
+    let i = 12;
+    while (i + 8 <= buf.length) {
+        const fourcc = u8Ascii(buf, i, i + 4);
+        const size = u32le(buf, i + 4);
+        let total = 8 + size;
+        if (total & 1) total += 1;
+        if (i + total > buf.length) break;
+        if (fourcc !== "EXIF" && fourcc !== "XMP " && fourcc !== "ICCP") {
+            chunks.push(buf.subarray(i, i + total));
+        }
+        i += total;
+    }
+    const body = u8Concat(chunks);
+    const out = new Uint8Array(12 + body.length);
+    out.set(buf.subarray(0, 8), 0);
+    putU32le(out, 4, body.length + 4);
+    out.set(buf.subarray(8, 12), 8);
+    out.set(body, 12);
+    return out;
+}
+
+function stripImageMetaBrowser(input, name) {
+    const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
+    if (isPngU8(buf)) {
+        return { bytes: stripPngU8(buf), mime: "image/png", name: renameImageExt(name, ".png") };
+    }
+    if (isJpegU8(buf)) {
+        return { bytes: stripJpegU8(buf), mime: "image/jpeg", name: renameImageExt(name, ".jpg") };
+    }
+    if (isGifU8(buf)) {
+        return { bytes: stripGifU8(buf), mime: "image/gif", name: renameImageExt(name, ".gif") };
+    }
+    if (isWebpU8(buf)) {
+        return { bytes: stripWebpU8(buf), mime: "image/webp", name: renameImageExt(name, ".webp") };
+    }
+    return null;
+}
+
+async function stripPhotoForUpload(file, mime) {
+    void mime;
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const cleaned = stripImageMetaBrowser(raw, file.name);
+    if (!cleaned || !cleaned.bytes || cleaned.bytes.length < 24) {
+        throw new Error((file.name || "image") + ": metadata wipe failed");
+    }
+    return { buf: cleaned.bytes, mime: cleaned.mime, name: cleaned.name };
 }
 
 function pickTwImages() {
@@ -1442,12 +2485,12 @@ async function attachTwImages(fileList) {
         if (!allow.has(mime)) {
             throw new Error((file.name || "file") + " is not png/jpg/gif/webp");
         }
-        const buf = await file.arrayBuffer();
-        if (buf.byteLength > 8 * 1024 * 1024) {
+        const stripped = await stripPhotoForUpload(file, mime);
+        if (stripped.buf.byteLength > 8 * 1024 * 1024) {
             throw new Error((file.name || "image") + " is over 8 MB");
         }
-        const sha = await sha256Hex(buf);
-        const imgName = clipImageName(file.name || "image.png");
+        const sha = await sha256Hex(stripped.buf);
+        const imgName = clipImageName(stripped.name || file.name || "image.png");
         const alreadySha = note.images.some((im) => {
             const id = typeof im === "string" ? im : (im && (im.id || im.sha256));
             return String(id || "").toLowerCase() === sha;
@@ -1458,13 +2501,22 @@ async function attachTwImages(fileList) {
             break;
         }
         try {
-            await send("POST", "/typewriter/images", {
+            const posted = await send("POST", "/typewriter/images", {
                 sha256: sha,
                 name: imgName,
-                mime,
+                mime: stripped.mime || mime,
                 kind,
-                data: bufToB64(buf)
+                data: bufToB64(stripped.buf)
             });
+            const storedSha = String((posted && (posted.sha256 || posted.sha)) || sha).toLowerCase();
+            note.images.push({
+                id: storedSha,
+                sha256: storedSha,
+                name: (posted && posted.name) || imgName,
+                added_at: new Date().toISOString()
+            });
+            added += 1;
+            continue;
         } catch (ex) {
             const msg = String(ex && ex.message ? ex.message : ex);
             if (/429|too many|wait a minute/i.test(msg)) {
@@ -1473,13 +2525,6 @@ async function attachTwImages(fileList) {
             }
             throw ex;
         }
-        note.images.push({
-            id: sha,
-            sha256: sha,
-            name: imgName,
-            added_at: new Date().toISOString()
-        });
-        added += 1;
     }
     if (added) {
         await saveBundle();
@@ -1573,7 +2618,7 @@ async function loadAll() {
         send("GET", "/blocked"),
         send("GET", "/typewriter")
     ]);
-    paintTasks(tasksRes.tasks || []);
+    paintTasks([].concat(tasksRes.tasks || [], tasksRes.nested || []));
     paintBlocked(blockedRes.blocked || []);
     applyTypewriter(tw);
     setTab(tab);
@@ -1582,8 +2627,7 @@ async function loadAll() {
         carrying = true;
         try {
             const expired = await expirePastBlocked(blockedRes.blocked || []);
-            const carried = await carryUnfinishedPast();
-            if (expired || carried) await loadAll();
+            if (expired) await loadAll();
         } catch (_) { /* keep the list that just painted */ }
         carrying = false;
     }
@@ -1594,8 +2638,57 @@ function setVal(id, value) {
     if (el) el.value = value;
 }
 
-async function afterLogin(data) {
+function stillEncryptedVisible() {
+    const V = window.AshoreVault;
+    if (!V) return false;
+    if ((allTasks || []).some((t) => V.stillCipher(t.title) || V.stillCipher(t.description))) return true;
+    if ((allBlocked || []).some((b) => V.stillCipher(b.title))) return true;
+    if (V.stillCipher(lastTwSent) || (twBundle.pages || []).some((p) => V.stillCipher(p.title) || V.stillCipher(p.body))) return true;
+    if ((twBundle.diary || []).some((n) => V.stillCipher(n.title) || V.stillCipher(n.body))) return true;
+    return false;
+}
+
+function finishVaultProbe() {
+    const V = window.AshoreVault;
+    if (!V) return;
+    const saw = V.consumeSawSealed();
+    if (saw && !stillEncryptedVisible()) V.setWanted(true);
+}
+
+async function unlockVault(uid, password) {
+    const V = window.AshoreVault;
+    const id = uid || localStorage.getItem("ashoreUserId") || (V && V.userId());
+    if (!id || !password) return false;
+    let nodeOk = false;
+    if (V && V.canSubtle && V.canSubtle()) {
+        try {
+            await V.unlock(id, password);
+        } catch (_) { /* Account Security fold reports this */ }
+    }
+    try {
+        await send("POST", "/vault/unlock", { password: password });
+        nodeOk = true;
+        if (V) {
+            V.setWanted(true);
+            V.setUserId(id);
+        }
+    } catch (e) {
+        if (!(V && V.enabled())) return false;
+    }
+    await loadAll();
+    const still = stillEncryptedVisible();
+    if (still && !nodeOk && !(V && V.enabled())) {
+        if (V) V.lock();
+        return false;
+    }
+    if (V && (nodeOk || V.enabled())) V.setWanted(true);
+    return !still;
+}
+
+async function afterLogin(data, password) {
     setToken(data && data.token);
+    if (data && data.id) localStorage.setItem("ashoreUserId", data.id);
+    if (data && data.username) localStorage.setItem("ashoreUsername", data.username);
     const who = document.getElementById("who");
     const userEl = document.getElementById("user");
     if (who) who.textContent = "Logged in as " + ((data && data.username) || (userEl && userEl.value) || "");
@@ -1607,11 +2700,24 @@ async function afterLogin(data) {
     setVal("bTo", todayYmd());
     setVal("twDay", todayYmd());
     weekOffset = 0;
+    monthOffset = 0;
+    applyTheme();
+    if (password || !sessionStorage.getItem(IDLE_AT_KEY)) bumpIdleActivity();
+    startIdleWatch();
+    bindAddForm();
     findLevel = "year";
     findYear = null;
     findMonth = null;
     syncBlockedDates();
-    await loadAll();
+    if (password && data && data.id) {
+        await unlockVault(data.id, password);
+    } else {
+        await loadAll();
+        finishVaultProbe();
+    }
+    if (wantReminders()) startReminderWatch();
+    showPageFromHash();
+    window.dispatchEvent(new Event("ashore-login"));
 }
 
 async function doLogin(register) {
@@ -1640,7 +2746,7 @@ async function doLogin(register) {
             }
         }
         const data = await send("POST", register ? "/register" : "/login", payload);
-        await afterLogin(data);
+        await afterLogin(data, password);
     } catch (ex) {
         showErr(ex.message);
         toast(ex.message, true);
@@ -1689,8 +2795,12 @@ function gridPiecesLocal(win) {
 function localTaskClash(task) {
     const win = localTaskWindow(task);
     if (!win) return null;
+    const pid = String(task.parent_id || task.parentId || "");
+    if (pid) return null;
     for (const t of allTasks) {
         if (String(t.id) === String(task.id)) continue;
+        const oid = String(t.parent_id || t.parentId || "");
+        if (oid) continue;
         const other = localTaskWindow(t);
         if (!other) continue;
         for (const p of gridPiecesLocal(win)) {
@@ -1701,49 +2811,28 @@ function localTaskClash(task) {
             }
         }
     }
-    const state = String(task.state || "").toLowerCase();
-    if (state !== "flexible" && state !== "3") return null;
-    const days = [win.day];
-    if (win.end > 24 * 60) days.push(addDaysYmd(win.day, 1));
-    for (const day of days) {
-        const clock = day === win.day
-            ? { a: win.start, b: Math.min(win.end, 24 * 60) }
-            : { a: 0, b: win.end - 24 * 60 };
-        for (const b of allBlocked) {
-            if (isExceptionRow(b) || !blockedAppliesOn(b, day)) continue;
-            const b0 = minutes(b.start_time);
-            const b1 = minutes(b.end_time);
-            if (b0 == null || b1 == null || !rangesOverlap(clock.a, clock.b, b0, b1)) continue;
-            const freed = allBlocked.some((ex) => {
-                if (!isExceptionRow(ex) || !blockedAppliesOn(ex, day)) return false;
-                const e0 = minutes(ex.start_time);
-                const e1 = minutes(ex.end_time);
-                return e0 != null && e1 != null && rangesOverlap(clock.a, clock.b, e0, e1);
-            });
-            if (!freed) return "Overlaps blocked: " + describeBlocked(b);
-        }
-    }
     return null;
 }
 
 async function addTask() {
     showErr("");
     const title = document.getElementById("tTitle").value.trim();
-    const duration = Number(document.getElementById("tDur").value);
+    const minOn = document.getElementById("tMinOn");
+    const duration = (minOn && minOn.checked)
+        ? Number(document.getElementById("tDurMin").value) / 60
+        : Number(document.getElementById("tDur").value);
+    const parentId = pendingQuickParent || "";
+    if (parentId) reuseTaskId = "";
     const state = document.getElementById("tState").value;
     const date = toYmd(document.getElementById("tDate").value);
     let time = document.getElementById("tTime").value;
     if (!title) throw new Error("title required");
     if (title.length > 100) throw new Error("title max 100 characters");
-    const category = document.getElementById("tCat").value.trim();
-    const subcategory = document.getElementById("tSub").value.trim();
     const description = document.getElementById("tDesc").value.trim();
-    if (category.length > 80) throw new Error("category max 80 characters");
-    if (subcategory.length > 80) throw new Error("subcategory max 80 characters");
     if (description.length > 8000) throw new Error("description max 8000 characters");
     if (!Number.isFinite(duration) || duration <= 0) throw new Error("duration must be > 0");
     if (duration > 24) throw new Error("duration must be <= 24 hours");
-    if (Math.round(duration * 2) !== duration * 2) throw new Error("duration must be in 0.5 hour steps");
+    if (Math.round(duration * 60) < 1) throw new Error("duration must be at least 1 minute");
     let deadlineDate = null;
     let deadlineTime = null;
     if (state === "Deadline") {
@@ -1777,13 +2866,25 @@ async function addTask() {
             if (due != null && due <= Date.now()) throw new Error("Cannot set deadline in the past.");
         }
     }
+    if (parentId) {
+        const parent = allTasks.find((x) => String(x.id) === String(parentId));
+        if (!parent) throw new Error("Quick event needs its parent task");
+        const pStart = clockMs(parent.placed_date, parent.placed_time);
+        const qStart = clockMs(placedDate, placedTime);
+        const pEnd = pStart == null ? null : pStart + taskMinutes(parent) * 60 * 1000;
+        const qEnd = qStart == null ? null : qStart + Math.round(duration * 60) * 60 * 1000;
+        if (pStart == null || qStart == null || qStart < pStart || qEnd > pEnd) {
+            throw new Error("Quick event must stay inside the parent task");
+        }
+    }
     const clash = localTaskClash({
         id: reuseTaskId || "",
         title,
         duration,
         state,
         placed_date: placedDate,
-        placed_time: placedTime
+        placed_time: placedTime,
+        parent_id: parentId || null
     });
     if (clash) throw new Error(clash);
     await send("POST", "/tasks", {
@@ -1808,17 +2909,17 @@ async function addTask() {
         placement_updated_at: (prev && samePlace && prev.placement_updated_at)
             ? prev.placement_updated_at
             : now,
-        category,
-        subcategory,
-        description,
-        description_done: document.getElementById("tDescDone").checked
+        description: parentId ? "" : description,
+        description_done: parentId ? false : document.getElementById("tDescDone").checked,
+        parent_id: parentId || null
     });
     document.getElementById("tTitle").value = "";
-    document.getElementById("tCat").value = "";
-    document.getElementById("tSub").value = "";
     document.getElementById("tDesc").value = "";
     document.getElementById("tDescDone").checked = false;
     reuseTaskId = "";
+    pendingQuickParent = "";
+    const qbtn = document.getElementById("btnQuick");
+    if (qbtn) qbtn.hidden = true;
     showReuseHint();
     await loadAll();
 }
@@ -1859,56 +2960,53 @@ async function addBlocked() {
 
     const every = document.getElementById("bEvery").checked;
     const isException = document.getElementById("bException").checked;
+    const rangeOn = !!(document.getElementById("bRange") && document.getElementById("bRange").checked);
     const from = toYmd(document.getElementById("bFrom").value);
-    const to = toYmd(document.getElementById("bTo").value) || from;
-    const chosen = Array.from(document.querySelectorAll(".bDow:checked"))
-        .map((el) => Number(el.value))
-        .filter((n) => n >= 1 && n <= 7);
+    const toRaw = toYmd(document.getElementById("bTo").value);
+    const to = (rangeOn || (every && isException)) ? (toRaw || from) : from;
+    const chosen = isException
+        ? Array.from(document.querySelectorAll(".bDow:checked"))
+            .map((el) => Number(el.value))
+            .filter((n) => n >= 1 && n <= 7)
+        : [];
     const now = new Date().toISOString();
 
     const rows = [];
-    if (isException && every && chosen.length) {
-        for (const w of chosen) {
-            rows.push({
-                id: nid(), title, weekday: w, specific_date: null,
-                start_time: start, end_time: end, last_updated_at: now, is_exception: true
-            });
+    if (isException) {
+        if (rangeOn && !from) throw new Error("pick dates for this range");
+        if (!from && !chosen.length) throw new Error("pick weekdays or a date for the exception");
+        if (from) {
+            if (to < from) throw new Error("end date is before start date");
+            for (const day of eachDate(from, to || from)) {
+                if (chosen.length && !chosen.includes(isoDow(day))) continue;
+                rows.push({
+                    id: nid(), title, weekday: null, specific_date: day,
+                    start_time: start, end_time: end, last_updated_at: now, is_exception: true
+                });
+            }
+            if (!rows.length) throw new Error("no dates in that range match the weekdays");
+        } else {
+            for (const w of chosen) {
+                rows.push({
+                    id: nid(), title, weekday: w, specific_date: null,
+                    start_time: start, end_time: end, last_updated_at: now, is_exception: true
+                });
+            }
         }
-    } else if (!isException && every && chosen.length) {
-        for (const w of chosen) {
-            rows.push({
-                id: nid(), title, weekday: w, specific_date: null,
-                start_time: start, end_time: end, last_updated_at: now, is_exception: false
-            });
-        }
-    } else if (!isException && every) {
+    } else if (every) {
         rows.push({
-            id: nid(),
-            title,
-            weekday: null,
-            specific_date: null,
-            start_time: start,
-            end_time: end,
-            last_updated_at: now,
-            is_exception: false
+            id: nid(), title, weekday: null, specific_date: null,
+            start_time: start, end_time: end, last_updated_at: now, is_exception: false
         });
     } else {
         if (!from) throw new Error("pick a date");
-        if (to < from) throw new Error("end date is before start date");
-        for (const day of eachDate(from, to)) {
-            if (chosen.length && !chosen.includes(isoDow(day))) continue;
+        if ((to || from) < from) throw new Error("end date is before start date");
+        for (const day of eachDate(from, to || from)) {
             rows.push({
-                id: nid(),
-                title,
-                weekday: null,
-                specific_date: day,
-                start_time: start,
-                end_time: end,
-                last_updated_at: now,
-                is_exception: isException
+                id: nid(), title, weekday: null, specific_date: day,
+                start_time: start, end_time: end, last_updated_at: now, is_exception: false
             });
         }
-        if (!rows.length) throw new Error("no dates in that range match the weekdays");
     }
 
     for (const row of rows) {
@@ -1923,9 +3021,10 @@ async function addBlocked() {
     const all = existing.concat(rows);
     for (const row of rows) {
         for (const b of all) {
-            if (b === row || b.id === row.id) continue;
-            if (sameLayer(row, b) && clockOverlap(row, b)) {
-                throw new Error("Overlaps existing: " + describeBlocked(b));
+            if (b === row) continue;
+            if (b && row && b.id != null && row.id != null && String(b.id) === String(row.id)) continue;
+            if (datesCanMeet(row, b) && clockOverlap(row, b)) {
+                throw new Error("Overlaps existing blocked time: " + describeBlocked(b));
             }
         }
     }
@@ -1939,8 +3038,17 @@ async function addBlocked() {
 
 const bEvery = document.getElementById("bEvery");
 const bException = document.getElementById("bException");
-if (bEvery) bEvery.addEventListener("change", syncBlockedDates);
+const bRange = document.getElementById("bRange");
+if (bEvery) bEvery.addEventListener("change", () => {
+    if (bEvery.checked && bRange) bRange.checked = false;
+    syncBlockedDates();
+});
+if (bRange) bRange.addEventListener("change", () => {
+    if (bRange.checked && bEvery) bEvery.checked = false;
+    syncBlockedDates();
+});
 if (bException) bException.addEventListener("change", syncBlockedDates);
+syncBlockedDates();
 
 function syncDeadlineUi() {
     const wrap = document.getElementById("tDeadlineWrap");
@@ -1984,6 +3092,7 @@ document.addEventListener("click", async (e) => {
     const t = e.target instanceof Element ? e.target : e.target && e.target.parentElement;
     if (!t || typeof t.closest !== "function") return;
     if (t.closest("#btnLogin") || t.closest("#btnReg")) return;
+    if (!t.closest(".action-wrap")) closeActionMenu();
     const whenBtn = t.closest("[data-taskwhen]");
     const kindBtn = t.closest("[data-taskkind]");
     try {
@@ -1995,24 +3104,70 @@ document.addEventListener("click", async (e) => {
             setTaskKind(kindBtn.dataset.taskkind);
             return;
         }
+        if (t.closest("#btnTaskNext")) {
+            taskPage += 1;
+            paintTasks();
+            return;
+        }
+        if (t.closest("#btnTaskPrev")) {
+            taskPage = Math.max(0, taskPage - 1);
+            paintTasks();
+            return;
+        }
         if (t.closest("#btnOut")) {
-            setToken("");
-            if (app) app.style.display = "none";
-            if (auth) auth.style.display = "block";
+            logoutWeb();
+        } else if (t.closest("[data-spa]")) {
+            const page = t.closest("[data-spa]").dataset.spa;
+            location.hash = page === "typewriter" ? "#/typewriter"
+                : page === "account" ? "#/account" : "#/calendar";
         } else if (t.closest("#btnReload")) {
             await loadAll();
+        } else if (t.closest("#btnAction")) {
+            const menu = document.getElementById("actionMenu");
+            if (menu) menu.hidden = !menu.hidden;
+        } else if (t.closest("#actTaskList")) {
+            toggleActionPanel("tasks");
+        } else if (t.closest("#actBlocked")) {
+            toggleActionPanel("blocked");
+        } else if (t.closest("#actMonth")) {
+            calMode = "month";
+            closeActionMenu();
+            paintWeek();
+        } else if (t.closest("#actWeek")) {
+            calMode = "week";
+            closeActionMenu();
+            paintWeek();
         } else if (t.closest("#btnPrevWeek")) {
-            weekOffset -= 1;
+            if (calMode === "month") monthOffset -= 1;
+            else weekOffset -= 1;
             paintWeek();
         } else if (t.closest("#btnNextWeek")) {
-            weekOffset += 1;
+            if (calMode === "month") monthOffset += 1;
+            else weekOffset += 1;
             paintWeek();
         } else if (t.closest("#btnThisWeek")) {
             weekOffset = 0;
+            monthOffset = 0;
             paintWeek();
         } else if (t.closest("#btnNewTask")) {
             clearReuse();
+        } else if (t.closest("#descAddBtn")) {
+            addDescItem();
+        } else if (t.closest("#descSave")) {
+            await saveTaskDescription();
+        } else if (t.closest("#descFinish")) {
+            const task = selectedTask();
+            if (!task) throw new Error("click a task first");
+            if (!toYmd(task.placed_date) || !task.placed_time) {
+                throw new Error("Finish is only for placed tasks.");
+            }
+            await toggleTask(task.id);
+        } else if (t.closest("#btnQuick")) {
+            pendingQuickParent = t.closest("#btnQuick").dataset.parentId || "";
+            if (!pendingQuickParent) throw new Error("open a task first, then add a quick event inside it");
+            await addTask();
         } else if (t.closest("#btnAdd")) {
+            pendingQuickParent = "";
             await addTask();
         } else if (t.closest("#btnAddBlocked")) {
             await addBlocked();
@@ -2059,6 +3214,11 @@ document.addEventListener("click", async (e) => {
             const row = allTasks.find((x) => String(x.id) === String(id));
             const name = (row && row.title) ? row.title : "this task";
             if (!confirm("Delete “" + name + "”?")) return;
+            if (row && !isQuick(row)) {
+                for (const q of quicksOf(row)) {
+                    if (q && q.id) await send("DELETE", "/tasks/" + q.id);
+                }
+            }
             await send("DELETE", "/tasks/" + id);
             await loadAll();
         } else if (t.closest("[data-blocked-id]")) {
@@ -2080,23 +3240,271 @@ window.addEventListener("offline", () => toast("Offline — using local cache", 
 
 function persistTwQuiet() {
     if (!twOpen || !token()) return;
+    if (window.AshoreVault && window.AshoreVault.sealed(lastTwSent)) return;
     applyOpenNoteFields();
     const content = JSON.stringify(twBundle);
     if (content === lastTwSent) return;
     lastTwSent = content;
     const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token() };
-    fetch("/typewriter", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-            content,
-            last_updated_at: new Date().toISOString()
-        }),
-        keepalive: true
-    }).catch(() => {});
+    const run = async () => {
+        let packed = content;
+        if (window.AshoreVault && window.AshoreVault.wanted()) {
+            packed = await window.AshoreVault.seal(content);
+        }
+        fetch("/typewriter", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                content: packed,
+                last_updated_at: new Date().toISOString()
+            }),
+            keepalive: true
+        }).catch(() => {});
+    };
+    run();
 }
 
 window.addEventListener("pagehide", persistTwQuiet);
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") persistTwQuiet();
 });
+
+function showPage(page) {
+    const name = page === "typewriter" || page === "account" ? page : "calendar";
+    document.querySelectorAll("[data-page]").forEach((el) => {
+        el.classList.toggle("on", el.dataset.page === name);
+    });
+    document.querySelectorAll("[data-spa]").forEach((el) => {
+        const on = el.dataset.spa === name;
+        el.classList.toggle("active", on);
+        el.classList.toggle("ghost", !on);
+    });
+}
+
+function showPageFromHash() {
+    const raw = (location.hash || "").replace(/^#\/?/, "");
+    const page = raw.split("/")[0];
+    showPage(page);
+}
+
+function logoutWeb() {
+    stopReminderWatch();
+    stopIdleWatch();
+    if (window.AshoreVault) window.AshoreVault.lock();
+    setToken("");
+    localStorage.removeItem("ashoreUserId");
+    localStorage.removeItem("ashoreUsername");
+    if (app) app.style.display = "none";
+    if (auth) auth.style.display = "block";
+}
+
+function wipeLocalWeb() {
+    stopReminderWatch();
+    stopIdleWatch();
+    if (window.AshoreVault && window.AshoreVault.eraseLocal) window.AshoreVault.eraseLocal();
+    else if (window.AshoreVault) window.AshoreVault.lock();
+    setToken("");
+    localStorage.removeItem("ashoreUserId");
+    localStorage.removeItem("ashoreUsername");
+    allTasks = [];
+    allBlocked = [];
+    twBundle = emptyBundle();
+    twOpen = null;
+    if (app) app.style.display = "none";
+    if (auth) auth.style.display = "block";
+}
+
+async function wipeIfAccountDeleted() {
+    const uid = localStorage.getItem("ashoreUserId");
+    if (!uid) return false;
+    try {
+        const res = await fetch("/account-status?userId=" + encodeURIComponent(uid));
+        const json = await res.json();
+        if (json && json.deleted) {
+            wipeLocalWeb();
+            toast("This account was deleted. Local data on this browser was cleared.", true);
+            return true;
+        }
+    } catch (_) {}
+    return false;
+}
+
+async function deleteAccount(password) {
+    await send("POST", "/me/delete", { password: password || "" });
+    wipeLocalWeb();
+}
+
+function wantReminders() {
+    const v = localStorage.getItem("ashoreReminders");
+    return v !== "false";
+}
+
+function setReminders(on) {
+    localStorage.setItem("ashoreReminders", on ? "true" : "false");
+    if (on) startReminderWatch();
+    else stopReminderWatch();
+}
+
+function parseLeads(raw) {
+    const out = [];
+    const seen = new Set();
+    String(raw || "").split(/[,\s]+/).forEach((part) => {
+        if (!part) return;
+        const n = Number.parseInt(part, 10);
+        if (!Number.isFinite(n) || n < 0 || n > 20160 || seen.has(n)) return;
+        seen.add(n);
+        out.push(n);
+    });
+    return out;
+}
+
+function reminderLeads() {
+    const raw = localStorage.getItem("ashoreReminderLeads");
+    if (raw == null || raw === "") return [0, 5];
+    const parsed = parseLeads(raw);
+    return parsed.length ? parsed : [0, 5];
+}
+
+function setReminderLeads(leads) {
+    localStorage.setItem("ashoreReminderLeads", parseLeads((leads || []).join(",")).join(","));
+}
+
+function wantReminderSound() {
+    return localStorage.getItem("ashoreReminderSound") !== "false";
+}
+
+function setReminderSound(on) {
+    localStorage.setItem("ashoreReminderSound", on ? "true" : "false");
+}
+
+function formatLead(minutes) {
+    const n = Number(minutes) || 0;
+    if (n <= 0) return "when it starts";
+    if (n % 1440 === 0) {
+        const d = n / 1440;
+        return d + (d === 1 ? " day" : " days");
+    }
+    if (n % 60 === 0) {
+        const h = n / 60;
+        return h + (h === 1 ? " hour" : " hours");
+    }
+    return n + " min";
+}
+
+function beepReminder() {
+    try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = 880;
+        g.gain.value = 0.05;
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        setTimeout(() => {
+            try { o.stop(); } catch (_) {}
+            try { ctx.close(); } catch (_) {}
+        }, 160);
+    } catch (_) {}
+}
+
+const reminderSent = new Set();
+let reminderTimer = null;
+
+function startReminderWatch() {
+    if (reminderTimer) return;
+    reminderTimer = setInterval(tickReminders, 20000);
+    tickReminders();
+}
+
+function stopReminderWatch() {
+    if (reminderTimer) {
+        clearInterval(reminderTimer);
+        reminderTimer = null;
+    }
+    reminderSent.clear();
+}
+
+function tickReminders() {
+    if (!wantReminders() || !token()) return;
+    const leads = reminderLeads();
+    if (!leads.length) return;
+    const maxLead = Math.max.apply(null, leads);
+    const now = Date.now();
+    const sound = wantReminderSound();
+    for (const t of allTasks) {
+        if (!t || isFinished(t)) continue;
+        const day = toYmd(t.placed_date || t.placedDate);
+        const time = String(t.placed_time || t.placedTime || "").slice(0, 5);
+        if (!day || time.length < 4) continue;
+        const start = Date.parse(day + "T" + time + ":00");
+        if (!Number.isFinite(start)) continue;
+        const mins = Math.round((start - now) / 60000);
+        if (mins > maxLead) continue;
+        if (sealedUi(t.title) || sealedUi(t.description)) continue;
+        const name = publicTitle(t) || "Task";
+        for (const lead of leads) {
+            const hit = lead <= 0
+                ? mins <= 0 && mins > -2
+                : mins <= lead && mins > lead - 2 && mins > 0;
+            if (!hit) continue;
+            const key = String(t.id) + "|" + start + "|" + lead;
+            if (reminderSent.has(key)) continue;
+            reminderSent.add(key);
+            const title = lead <= 0 ? "Task now" : "Starting soon";
+            const body = lead <= 0
+                ? name + " is on (" + time + ")"
+                : name + " starts in " + formatLead(lead) + " (" + time + ")";
+            toast(title + " — " + body);
+            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+                try { new Notification(title, { body: body, silent: !sound }); } catch (_) {}
+            } else if (typeof Notification !== "undefined" && Notification.permission === "default") {
+                Notification.requestPermission();
+            }
+            if (sound) beepReminder();
+        }
+    }
+}
+
+window.AshoreApp = {
+    send: send,
+    toast: toast,
+    loadAll: loadAll,
+    logout: logoutWeb,
+    showPage: showPage,
+    unlockVault: unlockVault,
+    wantReminders: wantReminders,
+    setReminders: setReminders,
+    reminderLeads: reminderLeads,
+    setReminderLeads: setReminderLeads,
+    wantReminderSound: wantReminderSound,
+    setReminderSound: setReminderSound,
+    formatLead: formatLead,
+    deleteAccount: deleteAccount,
+    wipeIfAccountDeleted: wipeIfAccountDeleted,
+    idleMinutes: idleMinutesPref,
+    setIdleMinutes: setIdleMinutesPref,
+    wantDark: wantDark,
+    setDark: setDark
+};
+
+window.addEventListener("hashchange", showPageFromHash);
+showPageFromHash();
+window.addEventListener("online", () => { wipeIfAccountDeleted(); });
+
+(async function boot() {
+    if (await wipeIfAccountDeleted()) return;
+    if (!token()) return;
+    try {
+        const me = await send("GET", "/me");
+        await afterLogin({
+            token: token(),
+            id: me.id,
+            username: me.username
+        });
+    } catch (_) {
+        if (!(await wipeIfAccountDeleted())) setToken("");
+    }
+})();

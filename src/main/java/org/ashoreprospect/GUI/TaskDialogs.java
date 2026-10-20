@@ -33,6 +33,34 @@ public class TaskDialogs {
     private Pane currentPopup;
     private StackPane currentConfirmOverlay;
 
+    private boolean addBuilt;
+    private boolean addFromGrid;
+    private LocalDate addClickedDate;
+    private int addSlotIndex = -1;
+    private StackPane addDim;
+    private Pane addPopup;
+    private Label addTitle;
+    private Label addSlotHint;
+    private TextField addName;
+    private TextArea addDesc;
+    private CheckBox addDescDone;
+    private Spinner<Double> addDur;
+    private Spinner<Integer> addMin;
+    private CheckBox addMinMode;
+    private RadioButton addFixed;
+    private RadioButton addDeadline;
+    private RadioButton addFlexible;
+    private ToggleGroup addTypeGroup;
+    private DatePicker addStartDate;
+    private ComboBox<String> addStartSlot;
+    private VBox addFixedBox;
+    private DatePicker addDeadlineDate;
+    private ComboBox<String> addDeadlineSlot;
+    private VBox addDeadlineBox;
+    private CheckBox addEndMode;
+    private ComboBox<String> addEndSlot;
+    private static javafx.collections.ObservableList<String> SLOT_CHOICES;
+
     public TaskDialogs(StackPane root, TaskManagementSystem system, Runnable onChanged) {
         this.root = root;
         this.system = system;
@@ -58,16 +86,14 @@ public class TaskDialogs {
 
         CheckBox everyDay = new CheckBox("Every day");
         everyDay.setSelected(true);
-        CheckBox exceptionBox = new CheckBox("Exception (free this date / weekdays)");
+        CheckBox rangeBox = new CheckBox("Range");
+        CheckBox exceptionBox = new CheckBox("Exception (from every day)");
         DatePicker fromPicker = new DatePicker(AppTimeReference.getCurrentDate());
         DatePicker toPicker = new DatePicker(AppTimeReference.getCurrentDate());
-        fromPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
-        toPicker.disableProperty().bind(everyDay.selectedProperty().and(exceptionBox.selectedProperty().not()));
-        everyDay.selectedProperty().addListener((obs, was, now) ->
-                exceptionBox.setText(now
-                        ? "Exception (free this date / weekdays)"
-                        : "Exception (free this range / weekdays)"));
-        HBox whenRow = new HBox(8, everyDay, exceptionBox, new Label("From"), fromPicker, new Label("To"), toPicker);
+        Label fromLab = new Label("Date");
+        Label toLab = new Label("To");
+        HBox dateRow = new HBox(8, fromLab, fromPicker, toLab, toPicker);
+        HBox whenRow = new HBox(8, everyDay, rangeBox, exceptionBox);
         HBox weekRow = new HBox(6, new Label("Weekdays:"));
         CheckBox[] weekBoxes = new CheckBox[7];
         java.time.DayOfWeek[] dows = {
@@ -80,6 +106,51 @@ public class TaskDialogs {
             weekBoxes[i] = new CheckBox(dowNames[i]);
             weekRow.getChildren().add(weekBoxes[i]);
         }
+
+        Runnable syncBlockedFields = () -> {
+            boolean every = everyDay.isSelected();
+            boolean range = rangeBox.isSelected();
+            boolean ex = exceptionBox.isSelected();
+            exceptionBox.setText(every
+                    ? "Exception (from every day)"
+                    : range ? "Exception (from this range)"
+                    : "Exception (this date / weekdays)");
+            weekRow.setVisible(ex);
+            weekRow.setManaged(ex);
+            boolean showFrom = !every || ex;
+            boolean showTo = range || (every && ex);
+            if (every && !ex) {
+                fromPicker.setValue(null);
+                toPicker.setValue(null);
+                fromPicker.getEditor().clear();
+                toPicker.getEditor().clear();
+            } else if (!(every && ex && !range)) {
+                LocalDate today = AppTimeReference.getCurrentDate();
+                if (fromPicker.getValue() == null) fromPicker.setValue(today);
+                if (showTo && toPicker.getValue() == null) toPicker.setValue(fromPicker.getValue());
+            }
+            fromLab.setText(showTo ? "From" : "Date");
+            fromLab.setVisible(showFrom);
+            fromLab.setManaged(showFrom);
+            fromPicker.setVisible(showFrom);
+            fromPicker.setManaged(showFrom);
+            toLab.setVisible(showTo);
+            toLab.setManaged(showTo);
+            toPicker.setVisible(showTo);
+            toPicker.setManaged(showTo);
+            dateRow.setVisible(showFrom);
+            dateRow.setManaged(showFrom);
+        };
+        everyDay.selectedProperty().addListener((o, was, now) -> {
+            if (now) rangeBox.setSelected(false);
+            syncBlockedFields.run();
+        });
+        rangeBox.selectedProperty().addListener((o, was, now) -> {
+            if (now) everyDay.setSelected(false);
+            syncBlockedFields.run();
+        });
+        exceptionBox.selectedProperty().addListener((o, a, b) -> syncBlockedFields.run());
+        syncBlockedFields.run();
 
         TextField nameField = new TextField();
         nameField.setPromptText("title (morning)");
@@ -120,51 +191,72 @@ public class TaskDialogs {
                 return;
             }
 
+            boolean every = everyDay.isSelected();
+            boolean range = rangeBox.isSelected();
             boolean isException = exceptionBox.isSelected();
             List<java.time.DayOfWeek> chosenDays = new ArrayList<>();
-            for (int i = 0; i < 7; i++) {
-                if (weekBoxes[i].isSelected()) chosenDays.add(dows[i]);
+            if (isException) {
+                for (int i = 0; i < 7; i++) {
+                    if (weekBoxes[i].isSelected()) chosenDays.add(dows[i]);
+                }
             }
             List<BlockedTime> rows = new ArrayList<>();
-            if (isException && everyDay.isSelected() && !chosenDays.isEmpty()) {
-                for (java.time.DayOfWeek d : chosenDays) {
-                    BlockedTime row = BlockedTime.weekly(name, d, start, end);
-                    row.setUserId(Api.INSTANCE.getUserId());
-                    row.setException(true);
-                    rows.add(row);
+            LocalDate from = fromPicker.getValue();
+            LocalDate to = (range || (every && isException)) && toPicker.getValue() != null
+                    ? toPicker.getValue() : from;
+            if (isException) {
+                if (range && from == null) {
+                    showAlertPopup(scene, "Pick dates for this range.");
+                    return;
                 }
-            } else if (!isException && everyDay.isSelected() && chosenDays.isEmpty()) {
+                if (from == null && chosenDays.isEmpty()) {
+                    showAlertPopup(scene, "Pick weekdays or a date for the exception.");
+                    return;
+                }
+                if (from != null) {
+                    if (to == null) to = from;
+                    if (to.isBefore(from)) {
+                        showAlertPopup(scene, "End date is before start date.");
+                        return;
+                    }
+                    for (BlockedTime row : BlockedTime.dailyRange(name, from, to, start, end)) {
+                        if (!chosenDays.isEmpty()
+                                && !chosenDays.contains(row.getSpecificDate().getDayOfWeek())) {
+                            continue;
+                        }
+                        row.setUserId(Api.INSTANCE.getUserId());
+                        row.setException(true);
+                        rows.add(row);
+                    }
+                    if (rows.isEmpty()) {
+                        showAlertPopup(scene, "No dates in that range match the weekdays.");
+                        return;
+                    }
+                } else {
+                    for (java.time.DayOfWeek d : chosenDays) {
+                        BlockedTime row = BlockedTime.weekly(name, d, start, end);
+                        row.setUserId(Api.INSTANCE.getUserId());
+                        row.setException(true);
+                        rows.add(row);
+                    }
+                }
+            } else if (every) {
                 BlockedTime row = BlockedTime.daily(name, start, end);
                 row.setUserId(Api.INSTANCE.getUserId());
                 rows.add(row);
-            } else if (!isException && chosenDays.size() > 0 && (everyDay.isSelected() || fromPicker.getValue() == null)) {
-                for (java.time.DayOfWeek d : chosenDays) {
-                    BlockedTime row = BlockedTime.weekly(name, d, start, end);
-                    row.setUserId(Api.INSTANCE.getUserId());
-                    rows.add(row);
-                }
             } else {
-                LocalDate from = fromPicker.getValue();
-                LocalDate to = toPicker.getValue() == null ? from : toPicker.getValue();
                 if (from == null) {
                     showAlertPopup(scene, "Pick a date.");
                     return;
                 }
+                if (to == null) to = from;
                 if (to.isBefore(from)) {
                     showAlertPopup(scene, "End date is before start date.");
                     return;
                 }
                 for (BlockedTime row : BlockedTime.dailyRange(name, from, to, start, end)) {
-                    if (!chosenDays.isEmpty() && !chosenDays.contains(row.getSpecificDate().getDayOfWeek())) {
-                        continue;
-                    }
                     row.setUserId(Api.INSTANCE.getUserId());
-                    row.setException(isException);
                     rows.add(row);
-                }
-                if (rows.isEmpty()) {
-                    showAlertPopup(scene, "No dates in that range match the weekdays.");
-                    return;
                 }
             }
 
@@ -207,6 +299,7 @@ public class TaskDialogs {
                 nameField,
                 whenRow,
                 weekRow,
+                dateRow,
                 timeRow,
                 buttons,
                 new Label("Existing:"),
@@ -281,15 +374,17 @@ public class TaskDialogs {
         root.getChildren().add(currentPopup);
 
         VBox content = GuiHelper.createWhiteBox();
-        Label title = new Label("Unscheduled tasks");
+        Label title = new Label("View task list");
         title.setStyle("-fx-font-weight: bold; -fx-font-size: 16px;");
         List<Task> rows = new ArrayList<>();
         try {
             for (Task t : system.getTaskRepo().fetchUnscheduledTasks()) {
-                if (t != null && t.canGoUnscheduled()) rows.add(t);
+                if (t != null && !t.isQuick() && t.canGoUnscheduled()) rows.add(t);
             }
         } catch (SQLException e) {
-            rows.addAll(system.getUnscheduledTasks());
+            for (Task t : system.getUnscheduledTasks()) {
+                if (t != null && !t.isQuick() && t.canGoUnscheduled()) rows.add(t);
+            }
         }
         if (rows.isEmpty()) {
             content.getChildren().addAll(title, new Label("No unscheduled task at the moment."),
@@ -398,7 +493,9 @@ public class TaskDialogs {
         return close;
     }
 
-    public void showTaskInfoPopup(Task task, LocalDate date, int slotIndex) {
+    public void showTaskInfoPopup(Task raw, LocalDate date, int slotIndex) {
+        final Task task = system == null ? raw : system.mainTask(raw);
+        if (task == null || task.isQuick()) return;
         Scene scene = root.getScene();
         removeMainEscHandler(scene);
 
@@ -406,8 +503,8 @@ public class TaskDialogs {
         root.getChildren().add(currentDimmedOverlay);
 
         currentPopup = new Pane();
-        currentPopup.setPrefSize(440, 460);
-        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
+        currentPopup.setPrefSize(480, 620);
+        GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.45);
         root.getChildren().add(currentPopup);
 
         VBox content = GuiHelper.createWhiteBox();
@@ -421,12 +518,50 @@ public class TaskDialogs {
         TextField nameField = new TextField(task.getTaskName());
         capField(nameField, 100);
         Label typeLabel = new Label("Type: " + typeText);
+        int storedMins = Math.max(1, (int) Math.round(task.getDurationMinutes()));
         Spinner<Double> durationSpinner = new Spinner<>();
         durationSpinner.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(
-                0.5, 24.0, Math.max(0.5, task.getDurationHours()), 0.5));
+                1.0 / 60.0, 24.0, Math.max(1.0 / 60.0, storedMins / 60.0), 0.5));
         durationSpinner.setEditable(true);
         durationSpinner.setPrefWidth(100);
         GuiHelper.styleSpinner(durationSpinner);
+        Spinner<Integer> minuteSpinner = new Spinner<>();
+        minuteSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 24 * 60, storedMins, 1));
+        minuteSpinner.setEditable(true);
+        minuteSpinner.setPrefWidth(90);
+        GuiHelper.styleSpinner(minuteSpinner);
+        CheckBox minuteMode = new CheckBox("Minute duration");
+        boolean startInMinutes = storedMins % 30 != 0;
+        minuteMode.setSelected(startInMinutes);
+        minuteSpinner.setVisible(startInMinutes);
+        minuteSpinner.setManaged(startInMinutes);
+        final boolean[] linkingInfo = { false };
+        durationSpinner.valueProperty().addListener((o, a, b) -> {
+            if (linkingInfo[0]) return;
+            linkingInfo[0] = true;
+            int mins = (int) Math.round((b == null ? 1.0 : b) * 60.0);
+            minuteSpinner.getValueFactory().setValue(Math.max(1, mins));
+            linkingInfo[0] = false;
+        });
+        minuteSpinner.valueProperty().addListener((o, a, b) -> {
+            if (linkingInfo[0]) return;
+            linkingInfo[0] = true;
+            durationSpinner.getValueFactory().setValue((b == null ? 60 : b) / 60.0);
+            minuteMode.setSelected(true);
+            minuteSpinner.setVisible(true);
+            minuteSpinner.setManaged(true);
+            linkingInfo[0] = false;
+        });
+        minuteMode.selectedProperty().addListener((o, a, on) -> {
+            minuteSpinner.setVisible(on);
+            minuteSpinner.setManaged(on);
+        });
+        ComboBox<String> placedBox = createSlotCombo(
+                task.getPlacedTime() == null ? slotIndex : AppTimeReference.localTimeToSlot(task.getPlacedTime()));
+        if (task.getPlacedTime() != null) {
+            placedBox.setValue(String.format("%02d:%02d",
+                    task.getPlacedTime().getHour(), task.getPlacedTime().getMinute()));
+        }
 
         Label extraLabel;
         if (task.isFixedTime()) {
@@ -438,10 +573,7 @@ public class TaskDialogs {
             extraLabel = new Label("Flexible task");
         }
 
-        String placedText = (task.getPlacedDate() != null && task.getPlacedTime() != null)
-                ? task.getPlacedDate() + " " + task.getPlacedTime()
-                : date + " " + AppTimeReference.slotToLocalTime(slotIndex);
-        Label placedLabel = new Label("Currently placed: " + placedText);
+        Label placedLabel = new Label("Stored time (grid occupancy still rounds to 30 min):");
 
         DatePicker deadlinePick = new DatePicker(task.getDeadLineDate());
         ComboBox<String> deadlineSlot = createSlotCombo(
@@ -458,11 +590,79 @@ public class TaskDialogs {
         Button saveBtn = new Button("Save changes");
         Button clearBtn = new Button("Clear Task");
         Button closeBtn = new Button("Close");
+        Button quickBtn = new Button("Add another quick event");
+        boolean canQuick = !task.isQuick() && task.getPlacedTime() != null && task.getPlacedDate() != null;
+        quickBtn.setVisible(canQuick);
+        quickBtn.setManaged(canQuick);
 
         HBox buttonBox = new HBox(12, finishBtn, saveBtn, clearBtn, closeBtn);
 
+        CheckBox endMode = new CheckBox("End time");
+        ComboBox<String> endBox = createSlotCombo(
+                task.getPlacedTime() == null
+                        ? slotIndex
+                        : AppTimeReference.localTimeToSlot(task.getPlacedTime().plusMinutes(storedMins)));
+        if (task.getPlacedTime() != null) {
+            LocalTime endAt = task.getPlacedTime().plusMinutes(storedMins);
+            endBox.setValue(String.format("%02d:%02d", endAt.getHour(), endAt.getMinute()));
+        }
+        endBox.setVisible(false);
+        endBox.setManaged(false);
+        endMode.selectedProperty().addListener((o, a, on) -> {
+            endBox.setVisible(on);
+            endBox.setManaged(on);
+        });
+        endBox.valueProperty().addListener((o, a, b) -> {
+            if (linkingInfo[0] || !endMode.isSelected()) return;
+            try {
+                LocalTime start = parseSlotCombo(placedBox.getValue());
+                LocalTime end = parseSlotCombo(b);
+                int mins = minutesBetween(start, end);
+                linkingInfo[0] = true;
+                minuteSpinner.getValueFactory().setValue(mins);
+                durationSpinner.getValueFactory().setValue(mins / 60.0);
+                minuteMode.setSelected(mins % 30 != 0);
+                minuteSpinner.setVisible(minuteMode.isSelected());
+                minuteSpinner.setManaged(minuteMode.isSelected());
+                linkingInfo[0] = false;
+            } catch (Exception ignored) {
+                linkingInfo[0] = false;
+            }
+        });
+
+        VBox nestedBox = new VBox(4);
+        Label nestedHead = new Label("Quick time events");
+        nestedHead.setStyle("-fx-font-weight: bold;");
+        nestedBox.getChildren().add(nestedHead);
+        List<Task> nested = system == null ? List.of() : system.quicksOf(task);
+        if (nested.isEmpty()) {
+            Label empty = new Label("None on this task yet.");
+            empty.setWrapText(true);
+            nestedBox.getChildren().add(empty);
+        } else {
+            boolean parentDone = task.getWorkflow() == Workflow.FINISHED;
+            for (Task q : nested) {
+                if (q == null) continue;
+                String clock = q.getPlacedTime() == null ? ""
+                        : String.format("%02d:%02d  ", q.getPlacedTime().getHour(), q.getPlacedTime().getMinute());
+                int mins = (int) Math.round(q.getDurationMinutes());
+                boolean done = parentDone || q.getWorkflow() == Workflow.FINISHED;
+                Label row = new Label((done ? "done  ·  " : "") + clock + q.getTaskName()
+                        + "  ·  " + mins + " min");
+                row.setWrapText(true);
+                nestedBox.getChildren().add(row);
+            }
+        }
+        nestedBox.setVisible(true);
+        nestedBox.setManaged(true);
+
         content.getChildren().addAll(title, new Label("Name"), nameField, typeLabel,
-                new Label("Duration (hours)"), durationSpinner, extraLabel, placedLabel, deadlineEdit, buttonBox);
+                new Label("Duration (hours / optional minutes):"),
+                new HBox(8, durationSpinner, minuteMode, minuteSpinner),
+                new Label("Or set an end time instead of duration:"),
+                new HBox(8, endMode, endBox),
+                extraLabel, placedLabel, placedBox, deadlineEdit,
+                nestedBox, quickBtn, buttonBox);
         currentPopup.getChildren().add(content);
         GuiHelper.paintInk(content);
         popupIsOpen = true;
@@ -475,8 +675,24 @@ public class TaskDialogs {
                 showAlertPopup(scene, "Task name cannot be empty.");
                 return;
             }
-            next.durationHours = AppTimeReference.normalizeDurationHours(
-                    durationSpinner.getValue() == null ? task.getDurationHours() : durationSpinner.getValue());
+            int durationMinutes = minuteMode.isSelected()
+                    ? (minuteSpinner.getValue() == null ? storedMins : minuteSpinner.getValue())
+                    : AppTimeReference.hoursToMinutes(
+                            durationSpinner.getValue() == null ? task.getDurationHours() : durationSpinner.getValue());
+            try {
+                LocalTime nextTime = parseSlotCombo(placedBox.getValue());
+                if (task.getPlacedDate() != null && nextTime != null) {
+                    task.setPlacedTime(nextTime);
+                }
+                if (endMode.isSelected()) {
+                    LocalTime end = parseSlotCombo(endBox.getValue());
+                    durationMinutes = minutesBetween(nextTime, end);
+                }
+            } catch (Exception ex) {
+                showAlertPopup(scene, "Invalid stored or end time. Use HH:mm such as 18:31.");
+                return;
+            }
+            next.durationHours = durationMinutes / 60.0;
             if (task.hasDeadline()) {
                 next.deadlineDate = deadlinePick.getValue();
                 try {
@@ -519,94 +735,350 @@ public class TaskDialogs {
         });
 
         closeBtn.setOnAction(e -> closeEverything(scene));
+        quickBtn.setOnAction(e -> {
+            closeEverything(scene);
+            showQuickEventPopup(task);
+        });
         setupEscHandler(scene);
     }
 
-    public void showTaskPopup(boolean fromGridClick, LocalDate clickedDate, int slotIndex)  {
+    private void showQuickEventPopup(Task parent) {
+        if (system != null) parent = system.mainTask(parent);
+        if (parent == null || parent.isQuick()
+                || parent.getPlacedDate() == null || parent.getPlacedTime() == null) {
+            return;
+        }
+        final Task host = parent;
         Scene scene = root.getScene();
         removeMainEscHandler(scene);
-
         currentDimmedOverlay = GuiHelper.createDimmedOverlay(root);
         root.getChildren().add(currentDimmedOverlay);
-
         currentPopup = new Pane();
-        currentPopup.setPrefSize(480, 520);
+        currentPopup.setPrefSize(420, 360);
         GuiHelper.centerInParentOffset(currentPopup, currentDimmedOverlay, 0.7, 0.7);
         root.getChildren().add(currentPopup);
+        VBox content = GuiHelper.createWhiteBox();
+        Label title = new Label("During “"
+                + (host.getTaskName() == null ? "task" : host.getTaskName()) + "”");
+        title.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        title.setWrapText(true);
+        Label hint = new Label("A timed bit of this task — not a separate task. Time must stay inside the parent.");
+        hint.setWrapText(true);
+        TextField nameField = new TextField();
+        nameField.setPromptText("Name");
+        capField(nameField, 100);
+        LocalDateTime p0 = LocalDateTime.of(host.getPlacedDate(), host.getPlacedTime());
+        int parentMins = Math.max(1, (int) Math.round(host.getDurationMinutes()));
+        LocalDateTime p1 = p0.plusMinutes(parentMins);
+        ComboBox<String> startBox = new ComboBox<>();
+        for (LocalDateTime t = p0; t.isBefore(p1); t = t.plusMinutes(1)) {
+            String label = String.format("%02d:%02d", t.getHour(), t.getMinute());
+            if (!startBox.getItems().contains(label)) startBox.getItems().add(label);
+        }
+        if (startBox.getItems().isEmpty()) {
+            startBox.getItems().add(String.format("%02d:%02d", p0.getHour(), p0.getMinute()));
+        }
+        startBox.setValue(startBox.getItems().get(0));
+        startBox.setEditable(true);
+        startBox.setPrefWidth(100);
+        Spinner<Integer> minuteSpinner = new Spinner<>();
+        minuteSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                1, parentMins, Math.min(15, parentMins), 1));
+        minuteSpinner.setEditable(true);
+        GuiHelper.styleSpinner(minuteSpinner);
+        Runnable syncRemain = () -> {
+            try {
+                LocalDateTime q0 = instantInParent(p0, p1, parseSlotCombo(startBox.getValue()));
+                int remain = q0 == null ? parentMins
+                        : (int) java.time.Duration.between(q0, p1).toMinutes();
+                if (remain < 1) remain = 1;
+                int cur = minuteSpinner.getValue() == null ? 1 : minuteSpinner.getValue();
+                minuteSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                        1, remain, Math.min(cur, remain), 1));
+                GuiHelper.styleSpinner(minuteSpinner);
+            } catch (Exception ignored) {
+            }
+        };
+        startBox.valueProperty().addListener((o, a, b) -> syncRemain.run());
+        Button saveBtn = new Button("Add");
+        Button cancelBtn = new Button("Cancel");
+        saveBtn.setOnAction(e -> {
+            String name = nameField.getText() == null ? "" : nameField.getText().trim();
+            if (name.isEmpty()) {
+                showAlertPopup(scene, "Name cannot be empty.");
+                return;
+            }
+            LocalTime start;
+            try {
+                start = parseSlotCombo(startBox.getValue());
+            } catch (Exception ex) {
+                showAlertPopup(scene, "Invalid time.");
+                return;
+            }
+            LocalDateTime q0 = instantInParent(p0, p1, start);
+            int mins = minuteSpinner.getValue() == null ? 15 : minuteSpinner.getValue();
+            if (q0 == null || !AppTimeReference.rangeInside(
+                    host.getPlacedDate(), host.getPlacedTime(), parentMins,
+                    q0.toLocalDate(), q0.toLocalTime(), mins)) {
+                showAlertPopup(scene, "Must stay inside the parent task’s time.");
+                return;
+            }
+            int state = host.isFixedTime() ? 1 : host.hasDeadline() ? 2 : 3;
+            FetchPopOutTask pop = new FetchPopOutTask(
+                    name, mins / 60.0, state,
+                    q0.toLocalDate(), q0.toLocalTime(),
+                    null, null,
+                    q0.toLocalDate(), q0.toLocalTime()
+            );
+            pop.setParentId(host.getID());
+            system.fetchPopupTask(pop);
+            if (!system.command("addTask")) {
+                showAlertPopup(scene, "Must stay inside the parent task’s time.");
+                return;
+            }
+            if (onChanged != null) onChanged.run();
+            closeEverything(scene);
+        });
+        cancelBtn.setOnAction(e -> closeEverything(scene));
+        content.getChildren().addAll(
+                title, hint,
+                new Label("Name"), nameField,
+                new Label("Start (inside this task)"), startBox,
+                new Label("Minutes"), minuteSpinner,
+                new HBox(10, saveBtn, cancelBtn)
+        );
+        currentPopup.getChildren().add(content);
+        GuiHelper.paintInk(content);
+        popupIsOpen = true;
+        setupEscHandler(scene);
+    }
+
+    public void prewarmAddTask() {
+        if (addBuilt || root == null || root.getScene() == null) return;
+        ensureAddTaskUi(root.getScene());
+        hideAddTask();
+        popupIsOpen = false;
+    }
+
+    public void showTaskPopup(boolean fromGridClick, LocalDate clickedDate, int slotIndex)  {
+        if (popupIsOpen) return;
+        popupIsOpen = true;
+        Scene scene = root.getScene();
+        removeMainEscHandler(scene);
+        ensureAddTaskUi(scene);
+        fillAddTaskContext(fromGridClick, clickedDate, slotIndex);
+        addDim.setVisible(true);
+        addDim.setManaged(true);
+        addDim.setMouseTransparent(false);
+        addPopup.setVisible(true);
+        addPopup.setManaged(false);
+        addPopup.setMouseTransparent(false);
+        currentDimmedOverlay = addDim;
+        currentPopup = addPopup;
+        setupEscHandler(scene);
+    }
+
+    private void hideAddTask() {
+        if (addDim != null) {
+            addDim.setVisible(false);
+            addDim.setManaged(false);
+            addDim.setMouseTransparent(true);
+        }
+        if (addPopup != null) {
+            addPopup.setVisible(false);
+            addPopup.setManaged(false);
+            addPopup.setMouseTransparent(true);
+        }
+    }
+
+    private void fillAddTaskContext(boolean fromGridClick, LocalDate clickedDate, int slotIndex) {
+        addFromGrid = fromGridClick;
+        addClickedDate = clickedDate;
+        addSlotIndex = slotIndex;
+        LocalTime gridTime = fromGridClick ? AppTimeReference.slotToLocalTime(slotIndex) : null;
+        addTitle.setText(fromGridClick
+                ? "New Task @ " + clickedDate + " " + gridTime
+                : "Add New Task");
+        if (addSlotHint != null) {
+            addSlotHint.setText(fromGridClick ? "Grid slot: " + clickedDate + "  " + gridTime : "");
+            addSlotHint.setVisible(fromGridClick);
+            addSlotHint.setManaged(fromGridClick);
+        }
+        addName.clear();
+        addDesc.clear();
+        addDescDone.setSelected(false);
+        addMinMode.setSelected(false);
+        addMin.setVisible(false);
+        addMin.setManaged(false);
+        addDur.getValueFactory().setValue(1.0);
+        addMin.getValueFactory().setValue(60);
+        addFixed.setSelected(true);
+        addEndMode.setSelected(false);
+        addEndSlot.setVisible(false);
+        addEndSlot.setManaged(false);
+        LocalDate day = clickedDate == null ? AppTimeReference.getCurrentDate() : clickedDate;
+        addStartDate.setValue(day);
+        addDeadlineDate.setValue(day);
+        addStartDate.setDisable(fromGridClick);
+        if (fromGridClick) {
+            addStartSlot.setValue(clockLabel(slotIndex));
+            addFixedBox.setVisible(true);
+            addFixedBox.setManaged(true);
+        } else {
+            addStartSlot.setValue(clockLabel(AppTimeReference.localTimeToSlot(LocalTime.of(9, 0))));
+            addFixedBox.setVisible(true);
+            addFixedBox.setManaged(true);
+        }
+        addDeadlineSlot.setValue(clockLabel(AppTimeReference.localTimeToSlot(LocalTime.of(18, 0))));
+        addDeadlineBox.setVisible(false);
+        addDeadlineBox.setManaged(false);
+        addEndSlot.setValue(clockLabel(AppTimeReference.localTimeToSlot(LocalTime.of(10, 0))));
+    }
+
+    private void ensureAddTaskUi(Scene scene) {
+        if (addBuilt) return;
+
+        addDim = GuiHelper.createDimmedOverlay(root);
+        addDim.setVisible(false);
+        addDim.setManaged(false);
+        root.getChildren().add(addDim);
+
+        addPopup = new Pane();
+        addPopup.setPrefSize(500, 580);
+        addPopup.setVisible(false);
+        addPopup.setManaged(false);
+        GuiHelper.centerInParentOffset(addPopup, addDim, 0.7, 0.45);
+        root.getChildren().add(addPopup);
 
         VBox content = GuiHelper.createWhiteBox();
 
-        LocalTime gridTime = fromGridClick ? AppTimeReference.slotToLocalTime(slotIndex) : null;
-        Label title = new Label(fromGridClick
-                ? "New Task @ " + clickedDate + " " + gridTime
-                : "Add New Task");
-        title.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
-        Label slotHint = fromGridClick
-                ? new Label("Grid slot: " + clickedDate + "  " + gridTime)
-                : null;
+        addTitle = new Label("Add New Task");
+        addTitle.setStyle("-fx-font-weight: bold; -fx-font-size: 15px;");
+        addSlotHint = new Label();
+        addSlotHint.setVisible(false);
+        addSlotHint.setManaged(false);
 
-        TextField nameField = new TextField();
-        nameField.setPromptText("Task name");
-        capField(nameField, 100);
-        TextField categoryField = new TextField();
-        categoryField.setPromptText("category (e.g. study)");
-        capField(categoryField, 80);
-        TextField subcatField = new TextField();
-        subcatField.setPromptText("subcategory (e.g. revision)");
-        capField(subcatField, 80);
-        javafx.scene.control.TextArea descField = new javafx.scene.control.TextArea();
-        descField.setPromptText("what to do exactly");
-        descField.setPrefRowCount(3);
-        descField.setWrapText(true);
-        capArea(descField, 8000);
-        javafx.scene.control.CheckBox descDoneBox = new javafx.scene.control.CheckBox("Description done");
+        addName = new TextField();
+        addName.setPromptText("Task name");
+        capField(addName, 100);
+        addDesc = new TextArea();
+        addDesc.setPromptText("what to do exactly");
+        addDesc.setPrefRowCount(3);
+        addDesc.setWrapText(true);
+        capArea(addDesc, 8000);
+        addDescDone = new CheckBox("Description done");
 
-        Spinner<Double> durationSpinner = new Spinner<>();
-        SpinnerValueFactory.DoubleSpinnerValueFactory durationFactory =
-                new SpinnerValueFactory.DoubleSpinnerValueFactory(0.5, 24.0, 1.0, 0.5);
-        durationSpinner.setValueFactory(durationFactory);
-        durationSpinner.setEditable(true);
-        durationSpinner.setPrefWidth(100);
-        GuiHelper.styleSpinner(durationSpinner);
+        addDur = new Spinner<>();
+        addDur.setValueFactory(new SpinnerValueFactory.DoubleSpinnerValueFactory(1.0 / 60.0, 24.0, 1.0, 0.5));
+        addDur.setEditable(true);
+        addDur.setPrefWidth(100);
+        GuiHelper.styleSpinner(addDur);
+        addMin = new Spinner<>();
+        addMin.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(1, 24 * 60, 60, 1));
+        addMin.setEditable(true);
+        addMin.setPrefWidth(90);
+        GuiHelper.styleSpinner(addMin);
+        addMinMode = new CheckBox("Minute duration");
+        addMin.setVisible(false);
+        addMin.setManaged(false);
+        final boolean[] linking = { false };
+        addDur.valueProperty().addListener((o, a, b) -> {
+            if (linking[0]) return;
+            linking[0] = true;
+            int mins = (int) Math.round((b == null ? 1.0 : b) * 60.0);
+            addMin.getValueFactory().setValue(Math.max(1, mins));
+            linking[0] = false;
+        });
+        addMin.valueProperty().addListener((o, a, b) -> {
+            if (linking[0]) return;
+            linking[0] = true;
+            addDur.getValueFactory().setValue((b == null ? 60 : b) / 60.0);
+            addMinMode.setSelected(true);
+            addMin.setVisible(true);
+            addMin.setManaged(true);
+            linking[0] = false;
+        });
+        addMinMode.selectedProperty().addListener((o, a, on) -> {
+            addMin.setVisible(on);
+            addMin.setManaged(on);
+        });
+        addTypeGroup = new ToggleGroup();
+        addFixed = new RadioButton("Fixed");
+        addDeadline = new RadioButton("Deadline");
+        addFlexible = new RadioButton("Flexible");
+        addFixed.setToggleGroup(addTypeGroup);
+        addDeadline.setToggleGroup(addTypeGroup);
+        addFlexible.setToggleGroup(addTypeGroup);
+        addFixed.setSelected(true);
+        HBox typeBox = new HBox(12, addFixed, addDeadline, addFlexible);
 
-        ToggleGroup typeGroup = new ToggleGroup();
-        RadioButton fixedRadio = new RadioButton("Fixed");
-        RadioButton deadlineRadio = new RadioButton("Deadline");
-        RadioButton flexibleRadio = new RadioButton("Flexible");
-        fixedRadio.setToggleGroup(typeGroup);
-        deadlineRadio.setToggleGroup(typeGroup);
-        flexibleRadio.setToggleGroup(typeGroup);
-        fixedRadio.setSelected(true);
-        HBox typeBox = new HBox(12, fixedRadio, deadlineRadio, flexibleRadio);
+        addStartDate = new DatePicker(AppTimeReference.getCurrentDate());
+        addStartSlot = createSlotCombo(AppTimeReference.localTimeToSlot(LocalTime.of(9, 0)));
+        HBox startRow = new HBox(10, addStartDate, addStartSlot);
+        addFixedBox = new VBox(6, new Label("Start Date & Time:"), startRow);
 
-        DatePicker startDatePicker = new DatePicker((clickedDate==null?AppTimeReference.getCurrentDate():clickedDate));
-        ComboBox<String> startSlotBox = createSlotCombo(
-                AppTimeReference.localTimeToSlot(LocalTime.of(9, 0)));
-        HBox startRow = new HBox(10, startDatePicker, startSlotBox);
-        VBox fixedBox = new VBox(6, new Label("Start Date & Time:"), startRow);
+        addDeadlineDate = new DatePicker(AppTimeReference.getCurrentDate());
+        addDeadlineSlot = createSlotCombo(AppTimeReference.localTimeToSlot(LocalTime.of(18, 0)));
+        HBox deadlineRow = new HBox(10, addDeadlineDate, addDeadlineSlot);
+        addDeadlineBox = new VBox(6, new Label("Deadline Date & Time:"), deadlineRow);
+        addDeadlineBox.setVisible(false);
+        addDeadlineBox.setManaged(false);
 
-        DatePicker deadlineDatePicker = new DatePicker(clickedDate==null?AppTimeReference.getCurrentDate():clickedDate);
-        ComboBox<String> deadlineSlotBox = createSlotCombo(
-                AppTimeReference.localTimeToSlot(LocalTime.of(18, 0)));
-        HBox deadlineRow = new HBox(10, deadlineDatePicker, deadlineSlotBox);
-        VBox deadlineBox = new VBox(6, new Label("Deadline Date & Time:"), deadlineRow);
-        deadlineBox.setVisible(false);
-        deadlineBox.setManaged(false);
-
-        if (fromGridClick) {
-            fixedBox.setVisible(false);
-            fixedBox.setManaged(false);
-        }
-
-        typeGroup.selectedToggleProperty().addListener((o, old, neo) -> {
-            boolean isFixed = neo == fixedRadio;
-            boolean isDeadline = neo == deadlineRadio;
-            if (!fromGridClick) {
-                fixedBox.setVisible(isFixed);
-                fixedBox.setManaged(isFixed);
+        addEndMode = new CheckBox("End time");
+        addEndSlot = createSlotCombo(AppTimeReference.localTimeToSlot(LocalTime.of(10, 0)));
+        addEndSlot.setVisible(false);
+        addEndSlot.setManaged(false);
+        Runnable syncEndFromDuration = () -> {
+            if (linking[0] || !addEndMode.isSelected()) return;
+            try {
+                LocalTime start = parseSlotCombo(addStartSlot.getValue());
+                int mins = addMinMode.isSelected()
+                        ? (addMin.getValue() == null ? 60 : addMin.getValue())
+                        : AppTimeReference.hoursToMinutes(
+                                addDur.getValue() == null ? 1.0 : addDur.getValue());
+                LocalTime end = start.plusMinutes(mins);
+                linking[0] = true;
+                addEndSlot.setValue(String.format("%02d:%02d", end.getHour(), end.getMinute()));
+                linking[0] = false;
+            } catch (Exception ignored) {
+                linking[0] = false;
             }
-            deadlineBox.setVisible(isDeadline);
-            deadlineBox.setManaged(isDeadline);
+        };
+        addEndMode.selectedProperty().addListener((o, a, on) -> {
+            addEndSlot.setVisible(on);
+            addEndSlot.setManaged(on);
+            if (on) syncEndFromDuration.run();
+        });
+        addEndSlot.valueProperty().addListener((o, a, b) -> {
+            if (linking[0] || !addEndMode.isSelected()) return;
+            try {
+                LocalTime start = parseSlotCombo(addStartSlot.getValue());
+                LocalTime end = parseSlotCombo(b);
+                int mins = minutesBetween(start, end);
+                linking[0] = true;
+                addMin.getValueFactory().setValue(mins);
+                addDur.getValueFactory().setValue(mins / 60.0);
+                addMinMode.setSelected(mins % 30 != 0);
+                addMin.setVisible(addMinMode.isSelected());
+                addMin.setManaged(addMinMode.isSelected());
+                linking[0] = false;
+            } catch (Exception ignored) {
+                linking[0] = false;
+            }
+        });
+        addDur.valueProperty().addListener((o, a, b) -> syncEndFromDuration.run());
+        addMin.valueProperty().addListener((o, a, b) -> syncEndFromDuration.run());
+        addStartSlot.valueProperty().addListener((o, a, b) -> syncEndFromDuration.run());
+
+        addTypeGroup.selectedToggleProperty().addListener((o, old, neo) -> {
+            boolean isFixed = neo == addFixed;
+            boolean isDeadline = neo == addDeadline;
+            if (!addFromGrid) {
+                addFixedBox.setVisible(isFixed);
+                addFixedBox.setManaged(isFixed);
+            }
+            addDeadlineBox.setVisible(isDeadline);
+            addDeadlineBox.setManaged(isDeadline);
         });
 
         Button saveBtn = new Button("Save Task");
@@ -614,50 +1086,69 @@ public class TaskDialogs {
         HBox btnBox = new HBox(10, saveBtn, cancelBtn);
 
         content.getChildren().addAll(
-                title
-        );
-        if (slotHint != null) content.getChildren().add(slotHint);
-        content.getChildren().addAll(
-                new Label("Task Name:"), nameField,
-                new Label("Category / subcategory:"),
-                new HBox(8, categoryField, subcatField),
-                new Label("Description:"), descField, descDoneBox,
-                new Label("Duration (hours):"), durationSpinner,
+                addTitle, addSlotHint,
+                new Label("Task Name:"), addName,
+                new Label("Description:"), addDesc, addDescDone,
+                new Label("Duration (hours / optional minutes):"),
+                new HBox(8, addDur, addMinMode, addMin),
+                new Label("Or set an end time instead of duration:"),
+                new HBox(8, addEndMode, addEndSlot),
                 new Label("Type:"), typeBox,
-                fixedBox,
-                deadlineBox,
+                addFixedBox,
+                addDeadlineBox,
                 btnBox
         );
 
-        currentPopup.getChildren().add(content);
+        addPopup.getChildren().add(content);
         GuiHelper.paintInk(content);
-        popupIsOpen = true;
+        addBuilt = true;
 
-        saveBtn.setOnAction(e -> {
-            String name = nameField.getText().trim();
+        saveBtn.setOnAction(e -> saveAddTask(scene));
+        cancelBtn.setOnAction(e -> closeEverything(scene));
+    }
+
+    private void saveAddTask(Scene scene) {
+            String name = addName.getText().trim();
             if (name.isEmpty()) {
                 showAlertPopup(scene, "Task name cannot be empty.");
                 return;
             }
 
-            double durationHours = AppTimeReference.normalizeDurationHours(
-                    durationSpinner.getValue() == null ? 1.0 : durationSpinner.getValue());
-            int slotCount = AppTimeReference.hoursToSlots(durationHours);
+            int durationMinutes = addMinMode.isSelected()
+                    ? (addMin.getValue() == null ? 60 : addMin.getValue())
+                    : AppTimeReference.hoursToMinutes(
+                            AppTimeReference.normalizeDurationHours(
+                                    addDur.getValue() == null ? 1.0 : addDur.getValue()));
+            double durationHours = durationMinutes / 60.0;
+            int slotCount = AppTimeReference.minutesToSlots(durationMinutes);
 
             LocalDateTime nowDt = AppTimeReference.getCurrentDateTime();
 
             LocalTime clickedTime = null;
-            if (fromGridClick) {
-                clickedTime = AppTimeReference.slotToLocalTime(slotIndex);
-                LocalDateTime clickDt = LocalDateTime.of(clickedDate, clickedTime);
+            if (addFromGrid) {
+                clickedTime = parseSlotCombo(addStartSlot.getValue());
+                LocalDateTime clickDt = LocalDateTime.of(addClickedDate, clickedTime);
                 if (!clickDt.isAfter(nowDt)) {
                     showAlertPopup(scene, "Cannot create a task in the past.");
                     return;
                 }
             }
 
-            boolean isFixed = fixedRadio.isSelected();
-            boolean isDeadline = deadlineRadio.isSelected();
+            if (addEndMode.isSelected()) {
+                try {
+                    LocalTime durationStart = parseSlotCombo(addStartSlot.getValue());
+                    LocalTime end = parseSlotCombo(addEndSlot.getValue());
+                    durationMinutes = minutesBetween(durationStart, end);
+                    durationHours = durationMinutes / 60.0;
+                    slotCount = AppTimeReference.minutesToSlots(durationMinutes);
+                } catch (Exception ex) {
+                    showAlertPopup(scene, "Invalid end time. Use HH:mm such as 18:31.");
+                    return;
+                }
+            }
+
+            boolean isFixed = addFixed.isSelected();
+            boolean isDeadline = addDeadline.isSelected();
 
             LocalDate startDate = null;
             LocalTime startTime = null;
@@ -666,34 +1157,34 @@ public class TaskDialogs {
 
             try {
                 if (isFixed) {
-                    if (fromGridClick) {
-                        startDate = clickedDate;
+                    if (addFromGrid) {
+                        startDate = addClickedDate;
                         startTime = clickedTime;
                     } else {
-                        startDate = startDatePicker.getValue();
+                        startDate = addStartDate.getValue();
                         if (startDate == null) {
                             showAlertPopup(scene, "Please select a start date.");
                             return;
                         }
-                        startTime = parseSlotCombo(startSlotBox.getValue());
+                        startTime = parseSlotCombo(addStartSlot.getValue());
                     }
                     if (!LocalDateTime.of(startDate, startTime).isAfter(nowDt)) {
                         showAlertPopup(scene, "Cannot create Fixed task in the past.");
                         return;
                     }
                 } else if (isDeadline) {
-                    deadlineDate = deadlineDatePicker.getValue();
+                    deadlineDate = addDeadlineDate.getValue();
                     if (deadlineDate == null) {
                         showAlertPopup(scene, "Please select a deadline date.");
                         return;
                     }
-                    deadlineTime = parseSlotCombo(deadlineSlotBox.getValue());
+                    deadlineTime = parseSlotCombo(addDeadlineSlot.getValue());
                     if (!LocalDateTime.of(deadlineDate, deadlineTime).isAfter(nowDt)) {
                         showAlertPopup(scene, "Cannot set deadline in the past.");
                         return;
                     }
-                    if (fromGridClick) {
-                        LocalDateTime start = LocalDateTime.of(clickedDate, clickedTime);
+                    if (addFromGrid) {
+                        LocalDateTime start = LocalDateTime.of(addClickedDate, clickedTime);
                         LocalDateTime finish = start.plusMinutes(
                                 (long) slotCount * AppTimeReference.MINUTES_PER_SLOT);
                         LocalDateTime deadline = LocalDateTime.of(deadlineDate, deadlineTime);
@@ -711,8 +1202,8 @@ public class TaskDialogs {
             LocalDate placeDate = null;
             LocalTime placeTime = null;
 
-            if (fromGridClick) {
-                placeDate = clickedDate;
+            if (addFromGrid) {
+                placeDate = addClickedDate;
                 placeTime = clickedTime;
             } else if (isFixed && startDate != null && startTime != null) {
                 placeDate = startDate;
@@ -733,12 +1224,6 @@ public class TaskDialogs {
                         showAlertPopup(scene, "Time conflict with another task.");
                         return;
                     }
-                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, placeSlot + i);
-                    if (system.getBlockedTime() != null
-                            && system.getBlockedTime().isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
-                        showAlertPopup(scene, "That slot is a blocked time.");
-                        return;
-                    }
                 }
             }
 
@@ -748,13 +1233,11 @@ public class TaskDialogs {
                     name, durationHours, state,
                     startDate, startTime,
                     deadlineDate, deadlineTime,
-                    fromGridClick ? clickedDate : null,
-                    fromGridClick ? clickedTime : null
+                    addFromGrid ? addClickedDate : null,
+                    addFromGrid ? clickedTime : null
             );
-            pop.setCategory(categoryField.getText());
-            pop.setSubcategory(subcatField.getText());
-            pop.setDescription(descField.getText());
-            pop.setDescriptionDone(descDoneBox.isSelected());
+            pop.setDescription(addDesc.getText());
+            pop.setDescriptionDone(addDescDone.isSelected());
 
             system.fetchPopupTask(pop);
 
@@ -762,7 +1245,7 @@ public class TaskDialogs {
                 if (isDeadline) {
                     showAlertPopup(scene,
                             "Could not fit this deadline task before its deadline.\nTask was not created.");
-                } else if (flexibleRadio.isSelected()) {
+                } else if (addFlexible.isSelected()) {
                     showAlertPopup(scene,
                             "Could not place this flexible task.\nTask was not created.");
                 } else {
@@ -773,10 +1256,6 @@ public class TaskDialogs {
 
             if (onChanged != null) onChanged.run();
             closeEverything(scene);
-        });
-
-        cancelBtn.setOnAction(e -> closeEverything(scene));
-        setupEscHandler(scene);
     }
 
     private void askConfirm(Scene scene, String message, String yesText, Runnable onYes) {
@@ -925,11 +1404,17 @@ public class TaskDialogs {
             root.getChildren().remove(currentConfirmOverlay);
             currentConfirmOverlay = null;
         }
-        if (currentPopup != null) {
+        if (currentPopup == addPopup && addPopup != null) {
+            hideAddTask();
+            currentPopup = null;
+        } else if (currentPopup != null) {
             root.getChildren().remove(currentPopup);
             currentPopup = null;
         }
-        if (currentDimmedOverlay != null) {
+        if (currentDimmedOverlay == addDim && addDim != null) {
+            hideAddTask();
+            currentDimmedOverlay = null;
+        } else if (currentDimmedOverlay != null) {
             root.getChildren().remove(currentDimmedOverlay);
             currentDimmedOverlay = null;
         }
@@ -938,18 +1423,36 @@ public class TaskDialogs {
         alertIsOpen = false;
     }
 
+    private static int minutesBetween(LocalTime start, LocalTime end) {
+        int a = start.getHour() * 60 + start.getMinute();
+        int b = end.getHour() * 60 + end.getMinute();
+        int d = b - a;
+        if (d <= 0) d += 24 * 60;
+        if (d > 24 * 60) d = 24 * 60;
+        return Math.max(1, d);
+    }
+
     private ComboBox<String> createSlotCombo(int defaultSlotIndex) {
         ComboBox<String> box = new ComboBox<>();
-        for (int s = 0; s < AppTimeReference.SLOTS_PER_DAY; s++) {
-            box.getItems().add(clockLabel(s));
-        }
+        box.setItems(javafx.collections.FXCollections.observableArrayList(slotChoices()));
         if (defaultSlotIndex < 0) defaultSlotIndex = 0;
         if (defaultSlotIndex >= AppTimeReference.SLOTS_PER_DAY) {
             defaultSlotIndex = AppTimeReference.SLOTS_PER_DAY - 1;
         }
         box.setValue(clockLabel(defaultSlotIndex));
-        box.setPrefWidth(90);
+        box.setEditable(true);
+        box.setPrefWidth(100);
         return box;
+    }
+
+    private static javafx.collections.ObservableList<String> slotChoices() {
+        if (SLOT_CHOICES == null) {
+            SLOT_CHOICES = javafx.collections.FXCollections.observableArrayList();
+            for (int s = 0; s < AppTimeReference.SLOTS_PER_DAY; s++) {
+                SLOT_CHOICES.add(clockLabel(s));
+            }
+        }
+        return SLOT_CHOICES;
     }
 
     private static String clockLabel(int slotIndex) {
@@ -957,10 +1460,21 @@ public class TaskDialogs {
         return String.format("%02d:%02d", t.getHour(), t.getMinute());
     }
 
+    private static LocalDateTime instantInParent(LocalDateTime p0, LocalDateTime p1, LocalTime clock) {
+        if (clock == null || p0 == null || p1 == null) return null;
+        LocalDateTime t = LocalDateTime.of(p0.toLocalDate(), clock);
+        if (t.isBefore(p0)) t = t.plusDays(1);
+        if (t.isBefore(p0) || !t.isBefore(p1)) return null;
+        return t;
+    }
+
     private LocalTime parseSlotCombo(String value) {
         String raw = value == null ? "" : value.replace("+", "").trim();
         String[] p = raw.split(":");
-        return LocalTime.of(Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()));
+        int h = Integer.parseInt(p[0].trim());
+        int m = Integer.parseInt(p[1].trim());
+        if (h < 0 || h > 23 || m < 0 || m > 59) throw new IllegalArgumentException("time");
+        return LocalTime.of(h, m);
     }
 
     private static void capField(TextField field, int max) {

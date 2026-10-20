@@ -17,11 +17,11 @@ public final class BuiltinThemes {
 
     public static final ThemePack DARK = new ColorThemePack("dark", "Dark",
             new ThemePalette(
-                    "#121820", "#161c24", "#1a222c",
-                    "#e8e4dc", "#9aa3ad", "#2a3340",
-                    "#1a222c", "#2a3340", "#1a4a58", "#4a3040",
-                    "#e8e4dc", "#1c2430",
-                    "#ffffff", "#1c2430", "#5c564c"
+                    "#141618", "#17191c", "#1c1e22",
+                    "#e6e8ea", "#9aa3ad", "#2e3238",
+                    "#243044", "#0b0c0e", "#2e3c56", "#3b4c6a",
+                    "#8b95a1", "#1c1e22",
+                    "#222428", "#e6e8ea", "#9aa3ad"
             ));
 
     private BuiltinThemes() {}

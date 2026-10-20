@@ -1,4 +1,4 @@
-/** Calendar window controller: week/month grid, side description, tabs, and the in-app CLI bar. */
+/** Calendar window controller: week/day/month grid, side description, tabs, and the in-app CLI bar. */
 package org.ashoreprospect.GUI;
 
 import javafx.animation.Animation;
@@ -17,6 +17,7 @@ import javafx.geometry.Side;
 import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
@@ -33,18 +34,25 @@ import java.util.ArrayList;
 import java.util.List;
 import javafx.util.Duration;
 import org.ashoreprospect.AppTimeReference;
+import org.ashoreprospect.Command.FinishTask;
+import org.ashoreprospect.Command.UnfinishTask;
 import org.ashoreprospect.RefreshLifeCycle;
 import org.ashoreprospect.SchedulerApp;
 import org.ashoreprospect.TaskManagementSystem;
+import org.ashoreprospect.Workflow;
 import org.ashoreprospect.net.Api;
 import org.ashoreprospect.net.LocalSession;
 import org.ashoreprospect.net.NetworkWatch;
 
 public class SchedulerController {
 
-    private static final Duration IDLE_LIMIT = Duration.minutes(100);
+    private Duration idleLimit() {
+        int mins = LocalSession.idleMinutes();
+        if (mins <= 0) return null;
+        return Duration.minutes(mins);
+    }
 
-    private enum ViewMode { WEEK, MONTH }
+    private enum ViewMode { WEEK, DAY, MONTH }
 
     @FXML private MenuItem resetAll;
     @FXML private MenuItem clearPast;
@@ -54,9 +62,13 @@ public class SchedulerController {
     @FXML private Label sidePanel;
     @FXML private Label descMeta;
     @FXML private VBox descList;
+    @FXML private Label descListHead;
+    @FXML private Label descQuicksHead;
+    @FXML private VBox descQuicks;
     @FXML private TextField descAddField;
     @FXML private Button descAddBtn;
     @FXML private Button descSave;
+    @FXML private Button descFinish;
     @FXML private Button cliShow, cliRun;
     @FXML private javafx.scene.control.TextField cliInput;
     @FXML private Label cliOut;
@@ -64,12 +76,12 @@ public class SchedulerController {
     @FXML private javafx.scene.layout.VBox sidePanelContainer;
     @FXML private Label lblUser;
     @FXML private Label lblNet;
-    @FXML private Button btnPrev, btnNext, btnUndo, btnRedo, btnMonthView, btnJumpNow;
+    @FXML private Button btnPrev, btnNext, btnUndo, btnRedo, btnDayView, btnMonthView, btnJumpNow;
     @FXML private Button btnFab, btnFabPrev, btnFabNext;
     @FXML private Button btnAction;
     @FXML private MenuButton menuView;
     @FXML private MenuItem btnImport, btnRun, menuAddTask, menuBlocked, menuUnscheduled;
-    @FXML private MenuItem menuWeek, menuMonth, menuThisWeek, menuThisMonth, menuUndo, menuRedo;
+    @FXML private MenuItem menuWeek, menuDay, menuMonth, menuThisWeek, menuToday, menuThisMonth, menuUndo, menuRedo;
     @FXML private MenuItem menuAccount, menuUsername, menuEmail, menuPassword, menuSessions, menuLogout, menuAbout;
     @FXML private Pane prevPane, nextPane;
     @FXML private ScrollPane gridScroll;
@@ -84,18 +96,22 @@ public class SchedulerController {
     private ViewMode viewMode = ViewMode.WEEK;
     private int weekOffset = 0;
     private int monthOffset = 0;
+    private int dayOffset = 0;
 
     private TaskDragDropSupport dragDrop;
     private TaskDialogs dialogs;
     private WeekGridBuilder weekGridBuilder;
     private MonthGridBuilder monthGridBuilder;
+    private DayGridBuilder dayGridBuilder;
     private Timeline nowLineClock;
+    private PauseTransition refreshSoon;
     private PauseTransition idleTimer;
     private boolean loggingOut;
     private boolean skipSaveOnLogout;
     private AccountPane accountPane;
     private boolean accountOn;
     private org.ashoreprospect.Task selectedTask;
+    private boolean fillingDesc;
 
     @FXML
     public void initialize() {
@@ -104,7 +120,13 @@ public class SchedulerController {
 
         paintUser();
         paintNet(NetworkWatch.isOnline());
-        NetworkWatch.addListener(online -> Platform.runLater(() -> paintNet(online)));
+        NetworkWatch.addListener(online -> Platform.runLater(() -> {
+            paintNet(online);
+            if (online && SchedulerApp.wipeIfAccountDeleted()) logout();
+        }));
+        Platform.runLater(() -> {
+            if (SchedulerApp.wipeIfAccountDeleted()) logout();
+        });
         AppTheme.listen(() -> Platform.runLater(this::onThemeChanged));
         if (lblUser != null) {
             lblUser.setOnMouseClicked(e -> showAccount(AccountPane.Page.HOME));
@@ -114,8 +136,29 @@ public class SchedulerController {
         dialogs = new TaskDialogs(root, system, this::refresh);
         weekGridBuilder = new WeekGridBuilder(system, dragDrop, dialogs);
         weekGridBuilder.setOnSelectTask(this::showTaskDescription);
+        weekGridBuilder.setRealtimeOverlay(LocalSession.wantRealtimeOverlay());
+        if (gridScroll != null) {
+            gridScroll.setFitToHeight(false);
+            PauseTransition scrollIdle = new PauseTransition(Duration.millis(90));
+            scrollIdle.setOnFinished(e -> {
+                weekGridBuilder.setScrolling(false);
+                if (grid != null) grid.setCache(false);
+            });
+            javafx.beans.value.ChangeListener<Number> onScroll = (o, a, b) -> {
+                weekGridBuilder.setScrolling(true);
+                if (grid != null) {
+                    grid.setCache(true);
+                    grid.setCacheHint(javafx.scene.CacheHint.SPEED);
+                }
+                scrollIdle.playFromStart();
+            };
+            gridScroll.vvalueProperty().addListener(onScroll);
+            gridScroll.hvalueProperty().addListener(onScroll);
+        }
         monthGridBuilder = new MonthGridBuilder(system, dialogs);
         monthGridBuilder.setOnSelectTask(this::showTaskDescription);
+        dayGridBuilder = new DayGridBuilder(system);
+        dayGridBuilder.setOnSelectTask(this::showTaskDescription);
         showTaskDescription(null);
         if (descAddBtn != null) descAddBtn.setOnAction(e -> addDescItem());
         if (descAddField != null) {
@@ -124,7 +167,10 @@ public class SchedulerController {
 
         btnPrev.setOnAction(e -> step(-1));
         btnNext.setOnAction(e -> step(+1));
-        btnMonthView.setOnAction(e -> toggleViewMode());
+        if (btnDayView != null) btnDayView.setOnAction(e ->
+                setViewMode(viewMode == ViewMode.DAY ? ViewMode.WEEK : ViewMode.DAY));
+        btnMonthView.setOnAction(e ->
+                setViewMode(viewMode == ViewMode.MONTH ? ViewMode.WEEK : ViewMode.MONTH));
         btnImport.setOnAction(e -> {
             system.command("addTaskFromFile");
             refresh();
@@ -165,6 +211,7 @@ public class SchedulerController {
         if (menuUnscheduled != null) menuUnscheduled.setOnAction(e -> dialogs.showUnscheduledPopup());
         if (menuBlocked != null) menuBlocked.setOnAction(e -> dialogs.showBlockedEditor());
         if (descSave != null) descSave.setOnAction(e -> saveTaskDescription());
+        if (descFinish != null) descFinish.setOnAction(e -> toggleTaskFinish());
         if (cliShow != null) cliShow.setOnAction(e -> toggleCli());
         if (cliRun != null) cliRun.setOnAction(e -> runCli());
         if (cliInput != null) cliInput.setOnKeyPressed(e -> {
@@ -173,6 +220,7 @@ public class SchedulerController {
         wireMenus();
 
         dragDrop.setupWeekEdgePanes(prevPane, nextPane, delta -> {
+            if (viewMode == ViewMode.DAY) return;
             if (viewMode == ViewMode.WEEK) {
                 weekOffset += delta;
                 refresh();
@@ -221,6 +269,7 @@ public class SchedulerController {
 
         updateNavLabels();
         startNowLineClock();
+        TaskReminders.start();
 
         Platform.runLater(() -> {
             try {
@@ -238,7 +287,7 @@ public class SchedulerController {
                 ex.printStackTrace();
                 typewriterPane = null;
             }
-            accountPane = new AccountPane(this::logout, this::wipeCacheAndLogout, name -> paintUser(),
+            accountPane = new AccountPane(this::logout, this::flushThenWipeCacheAndLogout, name -> paintUser(),
                     () -> typewriterPane == null ? TypewriterStore.load() : typewriterPane.snapshot());
             accountPane.setVisible(false);
             accountPane.setManaged(false);
@@ -248,9 +297,18 @@ public class SchedulerController {
         });
     }
 
+    public void applyTypewriterFromNode(TypewriterStore.Data data) {
+        if (data == null || typewriterPane == null || !typewriterPane.isVisible()) return;
+        typewriterPane.applyFromNode(data);
+    }
+
     public void refreshAfterLoad() {
-        refresh();
-        Platform.runLater(this::scrollToCurrentTime);
+        if (refreshSoon != null) refreshSoon.stop();
+        refreshNow();
+        Platform.runLater(() -> {
+            scrollToCurrentTime();
+            if (dialogs != null) dialogs.prewarmAddTask();
+        });
         System.out.println("calendar refresh placed=" + system.getPlacedTasks().size()
                 + " days=" + system.getGrid().size());
     }
@@ -276,6 +334,7 @@ public class SchedulerController {
         setSchedChrome(!typewriter);
         styleTab(tabScheduler, !typewriter);
         styleTab(tabTypewriter, typewriter);
+        if (typewriter && typewriterPane != null) typewriterPane.applyTheme();
         if (!typewriter) refresh();
     }
 
@@ -304,24 +363,35 @@ public class SchedulerController {
     private void wireMenus() {
         if (menuWeek != null) menuWeek.setOnAction(e -> {
             showMain(false);
-            if (viewMode != ViewMode.WEEK) toggleViewMode();
+            setViewMode(ViewMode.WEEK);
+        });
+        if (menuDay != null) menuDay.setOnAction(e -> {
+            showMain(false);
+            setViewMode(ViewMode.DAY);
         });
         if (menuMonth != null) menuMonth.setOnAction(e -> {
             showMain(false);
-            if (viewMode != ViewMode.MONTH) toggleViewMode();
+            setViewMode(ViewMode.MONTH);
         });
         if (menuThisWeek != null) menuThisWeek.setOnAction(e -> {
             showMain(false);
-            if (viewMode != ViewMode.WEEK) toggleViewMode();
+            setViewMode(ViewMode.WEEK);
             weekOffset = 0;
+            refresh();
+        });
+        if (menuToday != null) menuToday.setOnAction(e -> {
+            showMain(false);
+            setViewMode(ViewMode.DAY);
+            dayOffset = 0;
             refresh();
         });
         if (menuThisMonth != null) menuThisMonth.setOnAction(e -> {
             showMain(false);
-            if (viewMode != ViewMode.MONTH) toggleViewMode();
+            setViewMode(ViewMode.MONTH);
             monthOffset = 0;
             refresh();
         });
+        addRealtimeOverlayToViewMenu();
         addThemeToViewMenu();
         AppTheme.hookPopups(root);
         if (btnAction != null && btnAction.getContextMenu() != null) {
@@ -372,6 +442,7 @@ public class SchedulerController {
 
     private void setSchedChrome(boolean on) {
         if (btnPrev != null) { btnPrev.setVisible(on); btnPrev.setManaged(on); }
+        if (btnDayView != null) { btnDayView.setVisible(on); btnDayView.setManaged(on); }
         if (btnMonthView != null) { btnMonthView.setVisible(on); btnMonthView.setManaged(on); }
         if (btnNext != null) { btnNext.setVisible(on); btnNext.setManaged(on); }
         if (btnUndo != null) { btnUndo.setVisible(true); btnUndo.setManaged(true); }
@@ -381,6 +452,20 @@ public class SchedulerController {
         if (btnFabPrev != null) { btnFabPrev.setVisible(on); btnFabPrev.setManaged(on); }
         if (btnFabNext != null) { btnFabNext.setVisible(on); btnFabNext.setManaged(on); }
         if (btnJumpNow != null) { btnJumpNow.setVisible(on); btnJumpNow.setManaged(on); }
+    }
+
+    private void addRealtimeOverlayToViewMenu() {
+        if (menuView == null) return;
+        CheckMenuItem item = new CheckMenuItem("Real-time overlay");
+        item.setSelected(LocalSession.wantRealtimeOverlay());
+        item.setOnAction(e -> {
+            LocalSession.setRealtimeOverlay(item.isSelected());
+            if (weekGridBuilder != null) {
+                weekGridBuilder.setRealtimeOverlay(item.isSelected());
+                refresh();
+            }
+        });
+        menuView.getItems().add(item);
     }
 
     private void addThemeToViewMenu() {
@@ -404,12 +489,15 @@ public class SchedulerController {
     private void jumpNow() {
         showMain(false);
         if (viewMode == ViewMode.WEEK) weekOffset = 0;
+        else if (viewMode == ViewMode.DAY) dayOffset = 0;
         else monthOffset = 0;
         refresh();
         if (viewMode == ViewMode.WEEK) Platform.runLater(this::scrollToCurrentTime);
     }
 
     private void showTaskDescription(org.ashoreprospect.Task task) {
+        if (system != null) task = system.mainTask(task);
+        if (task != null && task.isQuick()) task = null;
         selectedTask = task;
         boolean on = task != null;
         if (sidePanel != null) sidePanel.setText(on ? "Task description" : "Task description");
@@ -423,11 +511,12 @@ public class SchedulerController {
                 String deadline = !task.hasDeadline() ? ""
                         : "\nDeadline " + task.getDeadLineDate()
                         + (task.getDeadLineTime() == null ? "" : " " + task.getDeadLineTime());
+                int mins = (int) Math.round(task.getDurationMinutes());
+                String dur = mins + " min"
+                        + (mins % 30 == 0 ? " · " + task.getDurationHours() + "h grid" : "");
                 descMeta.setText(task.getTaskName()
-                        + "\n" + kind + " · " + task.getDurationHours() + "h"
+                        + "\n" + kind + " · " + dur
                         + " · " + (task.getWorkflow() == null ? "" : task.getWorkflow().name())
-                        + (task.getCategory().isBlank() ? "" : "\n" + task.getCategory()
-                        + (task.getSubcategory().isBlank() ? "" : " / " + task.getSubcategory()))
                         + "\nPlaced " + placed
                         + deadline);
             }
@@ -438,7 +527,86 @@ public class SchedulerController {
         }
         if (descAddBtn != null) descAddBtn.setDisable(!on);
         if (descSave != null) descSave.setDisable(!on);
-        fillDescList(on ? task.getDescription() : null);
+        if (descListHead != null) {
+            descListHead.setVisible(on);
+            descListHead.setManaged(on);
+            if (on) {
+                descListHead.setText("Checklist");
+                descListHead.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: "
+                        + AppTheme.ink() + ";");
+            }
+        }
+        boolean placed = on && task.getPlacedDate() != null && task.getPlacedTime() != null;
+        if (descFinish != null) {
+            descFinish.setDisable(!placed);
+            descFinish.setText(placed && task.getWorkflow() == Workflow.FINISHED ? "Unfinish" : "Finish");
+        }
+        fillingDesc = true;
+        try {
+            fillDescList(on ? task.getDescription() : null);
+            fillQuicks(on ? task : null);
+        } finally {
+            fillingDesc = false;
+        }
+    }
+
+    private void fillQuicks(org.ashoreprospect.Task task) {
+        if (descQuicks != null) descQuicks.getChildren().clear();
+        if (descQuicksHead != null) {
+            descQuicksHead.setVisible(false);
+            descQuicksHead.setManaged(false);
+        }
+        if (task == null || system == null || descQuicks == null) return;
+        if (descQuicksHead != null) {
+            descQuicksHead.setText("Quick time events");
+            descQuicksHead.setVisible(true);
+            descQuicksHead.setManaged(true);
+            descQuicksHead.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: "
+                    + AppTheme.ink() + ";");
+        }
+        List<org.ashoreprospect.Task> nested = system.quicksOf(task);
+        if (nested.isEmpty()) {
+            Label empty = new Label("None on this task.");
+            empty.setWrapText(true);
+            empty.setStyle("-fx-font-size: 12px; -fx-text-fill: " + AppTheme.muted() + ";");
+            descQuicks.getChildren().add(empty);
+            return;
+        }
+        boolean parentDone = task.getWorkflow() == Workflow.FINISHED;
+        for (org.ashoreprospect.Task q : nested) {
+            if (q == null) continue;
+            String clock = "";
+            if (q.getPlacedTime() != null) {
+                clock = String.format("%02d:%02d  ", q.getPlacedTime().getHour(), q.getPlacedTime().getMinute());
+            }
+            int mins = (int) Math.round(q.getDurationMinutes());
+            boolean done = parentDone || q.getWorkflow() == Workflow.FINISHED;
+            Label row = new Label((done ? "done  ·  " : "") + clock + q.getTaskName() + "  ·  " + mins + " min");
+            row.setWrapText(true);
+            row.setStyle("-fx-font-size: 12px; -fx-text-fill: " + AppTheme.ink() + ";");
+            descQuicks.getChildren().add(row);
+        }
+    }
+
+    private void toggleTaskFinish() {
+        if (selectedTask == null) return;
+        if (selectedTask.getPlacedDate() == null || selectedTask.getPlacedTime() == null) {
+            new Alert(Alert.AlertType.INFORMATION, "Finish is only for placed tasks.").showAndWait();
+            return;
+        }
+        try {
+            boolean finished = selectedTask.getWorkflow() == Workflow.FINISHED;
+            boolean ok = finished
+                    ? new UnfinishTask(selectedTask).execute()
+                    : new FinishTask(selectedTask).execute();
+            if (!ok) {
+                new Alert(Alert.AlertType.ERROR, "Could not change finish state.").showAndWait();
+                return;
+            }
+            refresh();
+        } catch (Exception ex) {
+            new Alert(Alert.AlertType.ERROR, "Could not change finish state: " + ex.getMessage()).showAndWait();
+        }
     }
 
     private void fillDescList(String raw) {
@@ -457,21 +625,33 @@ public class SchedulerController {
         if (t.length() > 500) t = t.substring(0, 500);
         descList.getChildren().add(descRow(false, t));
         descAddField.clear();
+        persistDesc();
     }
 
     private HBox descRow(boolean done, String text) {
         CheckBox box = new CheckBox();
         box.setSelected(done);
+        box.setOnAction(e -> persistDesc());
         TextField tf = new TextField(text == null ? "" : text);
         tf.setPromptText("What to do…");
         HBox.setHgrow(tf, Priority.ALWAYS);
+        tf.setOnAction(e -> persistDesc());
+        tf.focusedProperty().addListener((o, was, now) -> {
+            if (was && !now) persistDesc();
+        });
         Button rm = new Button("×");
         rm.setOnAction(e -> {
             if (descList != null) descList.getChildren().remove(rm.getParent());
+            persistDesc();
         });
         HBox row = new HBox(6, box, tf, rm);
         row.setAlignment(Pos.CENTER_LEFT);
         return row;
+    }
+
+    private void persistDesc() {
+        if (fillingDesc || selectedTask == null) return;
+        saveTaskDescription();
     }
 
     private static final class DescLine {
@@ -586,40 +766,6 @@ public class SchedulerController {
         return ask.showAndWait().orElse(ButtonType.NO) == ButtonType.YES;
     }
 
-    private void promptCarryOrphans() {
-        if (system == null) return;
-        java.util.List<org.ashoreprospect.Task> orphans = system.takeCarryOrphans();
-        if (orphans == null || orphans.isEmpty()) return;
-        Platform.runLater(() -> {
-            for (org.ashoreprospect.Task past : orphans) {
-                Alert ask = new Alert(Alert.AlertType.CONFIRMATION);
-                ask.setTitle("Unfinished leftover");
-                ask.setHeaderText("No later session for “" + past.getTaskName() + "”");
-                ask.setContentText("Category: " + past.getCategory()
-                        + " / " + past.getSubcategory()
-                        + "\nCreate a follow-up Flexible task to pick up this leftover?");
-                ask.getButtonTypes().setAll(ButtonType.YES, ButtonType.NO);
-                ask.showAndWait().ifPresent(bt -> {
-                    if (bt != ButtonType.YES) return;
-                    org.ashoreprospect.FetchPopOutTask pop = new org.ashoreprospect.FetchPopOutTask(
-                            past.getTaskName(),
-                            Math.max(0.5, past.getDurationHours()),
-                            3, null, null, null, null);
-                    pop.setCategory(past.getCategory());
-                    pop.setSubcategory(past.getSubcategory());
-                    String leftover = past.getDescription() == null ? "" : past.getDescription().trim();
-                    String note = "Leftover from " + past.getPlacedDate()
-                            + " “" + past.getTaskName() + "”.";
-                    pop.setDescription(leftover.isBlank() || leftover.contains(note)
-                            ? note : note + "\n" + leftover);
-                    system.fetchPopupTask(pop);
-                    system.command("addTask");
-                    refresh();
-                });
-            }
-        });
-    }
-
     private void styleTab(Button tab, boolean active) {
         if (tab == null) return;
         tab.setStyle(active ? AppTheme.tabOn() : AppTheme.tabOff());
@@ -634,10 +780,9 @@ public class SchedulerController {
     }
 
     private void onThemeChanged() {
-        if (root != null && root.getScene() != null) AppTheme.apply(root.getScene());
         styleTab(tabScheduler, !typewriterOn && !accountOn);
         styleTab(tabTypewriter, typewriterOn);
-        if (typewriterPane != null) typewriterPane.applyTheme();
+        if (typewriterPane != null && typewriterPane.isVisible()) typewriterPane.applyTheme();
         if (accountPane != null) accountPane.refreshIfVisible();
         GuiHelper.paintInk(prevPane);
         GuiHelper.paintInk(nextPane);
@@ -661,6 +806,17 @@ public class SchedulerController {
         wipeCacheAndLogout();
     }
 
+    private void flushThenWipeCacheAndLogout() {
+        try {
+            TypewriterStore.Data snap = typewriterPane == null
+                    ? TypewriterStore.load() : typewriterPane.snapshot();
+            TypewriterStore.saveImmediate(snap);
+        } catch (Exception e) {
+            System.err.println("typewriter flush before cache wipe failed: " + e.getMessage());
+        }
+        wipeCacheAndLogout();
+    }
+
     private void wipeCacheAndLogout() {
         skipSaveOnLogout = true;
         try {
@@ -675,15 +831,26 @@ public class SchedulerController {
 
     private void attachIdleWatch(javafx.scene.Scene scene) {
         if (idleTimer == null) {
-            idleTimer = new PauseTransition(IDLE_LIMIT);
+            idleTimer = new PauseTransition(Duration.minutes(120));
             idleTimer.setOnFinished(e -> Platform.runLater(this::logout));
         }
         scene.addEventFilter(InputEvent.ANY, e -> bumpIdle());
         bumpIdle();
     }
 
+    public void applyIdleLimit() {
+        bumpIdle();
+    }
+
     private void bumpIdle() {
-        if (idleTimer != null && !loggingOut) idleTimer.playFromStart();
+        if (loggingOut || idleTimer == null) return;
+        Duration limit = idleLimit();
+        if (limit == null) {
+            idleTimer.stop();
+            return;
+        }
+        idleTimer.setDuration(limit);
+        idleTimer.playFromStart();
     }
 
     private void logout() {
@@ -704,7 +871,6 @@ public class SchedulerController {
             if (viewMode != ViewMode.WEEK) return;
             if (weekGridBuilder.nowLineNeedsRowChange()) {
                 RefreshLifeCycle.refreshAll(system);
-                promptCarryOrphans();
                 refresh();
             } else {
                 weekGridBuilder.updateNowLinePosition();
@@ -714,21 +880,22 @@ public class SchedulerController {
         nowLineClock.play();
     }
 
-    private void toggleViewMode() {
-        if (viewMode == ViewMode.WEEK) {
-            viewMode = ViewMode.MONTH;
-            monthOffset = 0;
-        } else {
-            viewMode = ViewMode.WEEK;
-            weekOffset = 0;
-        }
+    private void setViewMode(ViewMode next) {
+        if (next == null) next = ViewMode.WEEK;
+        viewMode = next;
+        if (viewMode == ViewMode.WEEK) weekOffset = 0;
+        else if (viewMode == ViewMode.DAY) dayOffset = 0;
+        else monthOffset = 0;
         updateNavLabels();
         refresh();
+        if (viewMode == ViewMode.WEEK) Platform.runLater(this::scrollToCurrentTime);
     }
 
     private void step(int delta) {
         if (viewMode == ViewMode.WEEK) {
             weekOffset += delta;
+        } else if (viewMode == ViewMode.DAY) {
+            dayOffset += delta;
         } else {
             monthOffset += delta;
         }
@@ -739,20 +906,49 @@ public class SchedulerController {
         if (viewMode == ViewMode.WEEK) {
             btnPrev.setText("Prev Week");
             btnNext.setText("Next Week");
+            if (btnDayView != null) btnDayView.setText("Daily View");
             btnMonthView.setText("Monthly View");
             if (btnJumpNow != null) btnJumpNow.setText("Jump to this week");
+        } else if (viewMode == ViewMode.DAY) {
+            btnPrev.setText("Prev Day");
+            btnNext.setText("Next Day");
+            if (btnDayView != null) btnDayView.setText("Weekly View");
+            btnMonthView.setText("Monthly View");
+            if (btnJumpNow != null) btnJumpNow.setText("Jump to today");
         } else {
             btnPrev.setText("Prev Month");
             btnNext.setText("Next Month");
+            if (btnDayView != null) btnDayView.setText("Daily View");
             btnMonthView.setText("Weekly View");
             if (btnJumpNow != null) btnJumpNow.setText("Jump to this month");
+        }
+        boolean edges = viewMode != ViewMode.DAY;
+        if (prevPane != null) {
+            prevPane.setVisible(edges);
+            prevPane.setManaged(edges);
+        }
+        if (nextPane != null) {
+            nextPane.setVisible(edges);
+            nextPane.setManaged(edges);
         }
     }
 
     public void refresh() {
         if (typewriterOn || accountOn) return;
+        if (refreshSoon == null) {
+            refreshSoon = new PauseTransition(Duration.millis(20));
+            refreshSoon.setOnFinished(e -> refreshNow());
+        }
+        refreshSoon.playFromStart();
+    }
+
+    private void refreshNow() {
+        if (typewriterOn || accountOn) return;
         if (viewMode == ViewMode.WEEK) {
             weekGridBuilder.build(grid, sidePanel, weekOffset);
+        } else if (viewMode == ViewMode.DAY) {
+            dayGridBuilder.build(grid, sidePanel, dayOffset);
+            if (gridScroll != null) gridScroll.setVvalue(0);
         } else {
             monthGridBuilder.build(grid, sidePanel, monthOffset);
             if (gridScroll != null) {

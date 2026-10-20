@@ -214,8 +214,9 @@ public class BlockedTimePeriod {
             return "End must be after start.";
         }
         for (BlockedTime b : blockedPeriod) {
-            if (sameLayer(b, candidate) && clockOverlap(b, candidate)) {
-                return "Overlaps existing: " + describe(b);
+            if (b == null || (b.getId() != null && b.getId().equals(candidate.getId()))) continue;
+            if (blockedOverlap(b, candidate)) {
+                return "Overlaps existing blocked time: " + describe(b);
             }
         }
         return null;
@@ -226,8 +227,7 @@ public class BlockedTimePeriod {
             String vsExisting = conflictMessage(incoming.get(i));
             if (vsExisting != null) return vsExisting;
             for (int j = 0; j < i; j++) {
-                if (sameLayer(incoming.get(j), incoming.get(i))
-                        && clockOverlap(incoming.get(j), incoming.get(i))) {
+                if (blockedOverlap(incoming.get(j), incoming.get(i))) {
                     return "Overlaps in this add: " + describe(incoming.get(j));
                 }
             }
@@ -235,20 +235,46 @@ public class BlockedTimePeriod {
         return null;
     }
 
-    static boolean sameLayer(BlockedTime a, BlockedTime b) {
+    /**
+     * Two rows clash when they are the same kind (block vs block, exception vs exception),
+     * their clocks overlap, and there is at least one calendar day both cover.
+     * Every-day (no date, no weekday) covers every day.
+     */
+    static boolean blockedOverlap(BlockedTime a, BlockedTime b) {
+        if (a == null || b == null) return false;
         if (a.isException() != b.isException()) return false;
-        if (a.getSpecificDate() != null || b.getSpecificDate() != null) {
-            return java.util.Objects.equals(a.getSpecificDate(), b.getSpecificDate());
-        }
-        if (a.getWeekday() != null || b.getWeekday() != null) {
-            return java.util.Objects.equals(a.getWeekday(), b.getWeekday());
-        }
-        return a.isDaily() && b.isDaily();
+        if (!clockOverlap(a, b)) return false;
+        return daysCanMeet(a, b);
+    }
+
+    /** True when there is at least one calendar day both rows cover. */
+    static boolean daysCanMeet(BlockedTime a, BlockedTime b) {
+        boolean openA = a.getSpecificDate() == null && a.getWeekday() == null;
+        boolean openB = b.getSpecificDate() == null && b.getWeekday() == null;
+        if (openA && openB) return true;
+        if (openA) return true;
+        if (openB) return true;
+        java.time.LocalDate da = a.getSpecificDate();
+        java.time.LocalDate db = b.getSpecificDate();
+        java.time.DayOfWeek wa = a.getWeekday();
+        java.time.DayOfWeek wb = b.getWeekday();
+        if (da != null && db != null) return da.equals(db);
+        if (da != null) return wb != null && da.getDayOfWeek() == wb;
+        if (db != null) return wa != null && db.getDayOfWeek() == wa;
+        return wa != null && wb != null && wa == wb;
     }
 
     static boolean clockOverlap(BlockedTime a, BlockedTime b) {
-        return a.getStartTime().isBefore(b.getEndTime())
-                && b.getStartTime().isBefore(a.getEndTime());
+        if (a.getStartTime() == null || a.getEndTime() == null
+                || b.getStartTime() == null || b.getEndTime() == null) {
+            return false;
+        }
+        int a0 = a.getStartTime().toSecondOfDay();
+        int a1 = a.getEndTime().toSecondOfDay();
+        int b0 = b.getStartTime().toSecondOfDay();
+        int b1 = b.getEndTime().toSecondOfDay();
+        if (a0 >= a1 || b0 >= b1) return false;
+        return a0 < b1 && b0 < a1;
     }
 
     static String describe(BlockedTime b) {

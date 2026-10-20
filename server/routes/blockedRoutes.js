@@ -1,8 +1,9 @@
 /** HTTP list/upsert/delete for blocked time. */
 import { randomUUID } from "node:crypto";
 import { userFromToken, listBlocked, upsertBlocked, deleteBlocked } from "../db.js";
-import { readBody, send, parseJson, pathname, toYmd } from "../lib/httpUtil.js";
+import { readBody, send, parseJson, pathname, toYmd, normTime } from "../lib/httpUtil.js";
 import { blockedConflict } from "../lib/overlap.js";
+import { revealPayload, hideBlocked } from "../lib/vaultSession.js";
 
 export async function handleBlocked(req, res) {
     const path = pathname(req);
@@ -15,7 +16,7 @@ export async function handleBlocked(req, res) {
             return true;
         }
         try {
-            send(res, 200, { blocked: await listBlocked(user.id) });
+            send(res, 200, await revealPayload(req, { blocked: await listBlocked(user.id) }));
         } catch (e) {
             send(res, 500, { error: String(e.message || e) });
         }
@@ -50,13 +51,14 @@ export async function handleBlocked(req, res) {
                 || body.is_exception === "true"
                 || body.is_exception === 1;
             const specific = toYmd(body.specific_date || body.specificDate) || null;
-            const start = String(body.start_time ?? "").trim() || null;
-            const end = String(body.end_time ?? "").trim() || null;
+            const start = normTime(String(body.start_time ?? body.startTime ?? "").trim()) || null;
+            const end = normTime(String(body.end_time ?? body.endTime ?? "").trim()) || null;
             if (!start || !end) {
                 send(res, 400, { error: "start_time and end_time required" });
                 return true;
             }
-            const weekday = body.weekday == null || body.weekday === "" ? null : Number(body.weekday);
+            let weekday = body.weekday == null || body.weekday === "" ? null : Number(body.weekday);
+            if (weekday === 0) weekday = 7;
             const hasWeekday = weekday != null && weekday >= 1 && weekday <= 7;
             if (isException && !specific && !hasWeekday) {
                 send(res, 400, { error: "exception needs a date or weekday" });
@@ -98,8 +100,9 @@ export async function handleBlocked(req, res) {
                 send(res, 400, { error: clash });
                 return true;
             }
+            await hideBlocked(req, row);
             await upsertBlocked(row);
-            send(res, 201, row);
+            send(res, 201, (await revealPayload(req, { blocked: [row] })).blocked[0]);
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
         }

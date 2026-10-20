@@ -57,7 +57,24 @@ export function sendResetMailLater(to, token, question) {
         + "\n\nOn the login screen tap Forgot password, then enter this token "
         + "with your security-question answer.";
     setImmediate(() => {
-        deliverResetMail(to, text).catch((e) => {
+        deliverMail(to, "Ashore Prospect password reset", text, "PASSWORD RESET").catch((e) => {
+            console.error("SMTP send failed:", e.message || e);
+        });
+    });
+}
+
+/** Notice only — never includes the new password. Skipped when the account has no email. */
+export function sendPasswordChangedMailLater(to, username) {
+    const who = String(username || "").trim();
+    const text =
+        "Your Ashore Prospect password was just changed"
+        + (who ? " for " + who : "")
+        + ".\n\nIf this was you, you can ignore this mail.\n"
+        + "If it was not you, use Forgot password on the login screen "
+        + "(email + security-question answer) and sign out other sessions.";
+    console.log("PASSWORD CHANGED notice for", to || "(no email on file)");
+    setImmediate(() => {
+        deliverMail(to, "Ashore Prospect password changed", text, "PASSWORD CHANGED").catch((e) => {
             console.error("SMTP send failed:", e.message || e);
         });
     });
@@ -109,15 +126,16 @@ export async function sendResetMail(to, token, question) {
     return { sent: false, printed: true, hint: "reset-token: " + token };
 }
 
-async function deliverResetMail(to, text) {
+async function deliverMail(to, subject, text, logTag) {
+    const tag = logTag || "MAIL";
     const cfg = loadSmtp();
     if (!cfg) {
         logSmtpStatus();
-        console.log("PASSWORD RESET mailed: no (SMTP not ready — use the token printed above)");
+        console.log(tag + " mailed: no (SMTP not ready)");
         return;
     }
     if (!to) {
-        console.log("PASSWORD RESET mailed: no (account has no email)");
+        console.log(tag + " mailed: no (account has no email)");
         return;
     }
     const gmail = /gmail\.com/i.test(cfg.host) || /gmail\.com/i.test(cfg.user);
@@ -130,10 +148,10 @@ async function deliverResetMail(to, text) {
             await transport.sendMail({
                 from: cfg.from,
                 to,
-                subject: "Ashore Prospect password reset",
+                subject,
                 text
             });
-            console.log("PASSWORD RESET mailed", cfg.from, "->", to,
+            console.log(tag + " mailed", cfg.from, "->", to,
                 cfg.from.toLowerCase() === String(to).toLowerCase()
                     ? "(same address — check Inbox and Spam)"
                     : "");

@@ -9,8 +9,6 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.ashoreprospect.AppTimeReference;
-import org.ashoreprospect.BlockedTime;
-import org.ashoreprospect.BlockedTimePeriod;
 import org.ashoreprospect.Day;
 import org.ashoreprospect.Task;
 import org.ashoreprospect.TaskManagementSystem;
@@ -19,7 +17,6 @@ import org.ashoreprospect.Command.MoveTask;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.List;
 import java.util.function.IntConsumer;
 
 public class TaskDragDropSupport {
@@ -77,8 +74,17 @@ public class TaskDragDropSupport {
         });
     }
 
-    public void makeDraggable(Pane cell, Task task, LocalDate fromColumn, int clickedSlotIndex) {
+    public void makeDraggable(Pane cell) {
         cell.setOnDragDetected(event -> {
+            WeekGridBuilder.CellState st = WeekGridBuilder.cellState(cell);
+            if (st == null || st.task == null || st.columnDate == null) return;
+            Task task = st.task;
+            if (task.getWorkflow() == org.ashoreprospect.Workflow.FINISHED
+                    || task.getLifeCycle() == org.ashoreprospect.TaskLifeCycle.PAST) {
+                return;
+            }
+            LocalDate fromColumn = st.columnDate;
+            int clickedSlotIndex = st.slotIndex;
             Day day = system.getGrid().get(fromColumn);
             if (day == null) return;
 
@@ -103,14 +109,15 @@ public class TaskDragDropSupport {
             dbContainer.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
             dbContainer.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
 
-            applyDayStyle(cell, fromColumn, clickedSlotIndex);
+            WeekGridBuilder.styleSlot(cell, system, fromColumn, clickedSlotIndex);
 
             for (int i = 0; i < slotCount; i++) {
                 Pane virtualDbCell = new Pane();
                 Label taskName = new Label(task.getTaskName());
                 taskName.setStyle("-fx-font-size: 10px;");
                 virtualDbCell.getChildren().add(taskName);
-                virtualDbCell.setStyle(cell.getStyle());
+                virtualDbCell.setBackground(cell.getBackground());
+                virtualDbCell.setBorder(cell.getBorder());
                 virtualDbCell.setPrefSize(cell.getWidth(), cell.getHeight());
                 dbContainer.getChildren().add(virtualDbCell);
             }
@@ -143,7 +150,7 @@ public class TaskDragDropSupport {
         });
     }
 
-    public void setupDropTarget(Pane cell, LocalDate targetColumn, int targetSlotIndex) {
+    public void setupDropTarget(Pane cell) {
 
         cell.setOnDragOver(event -> {
             if (event.getGestureSource() != cell && event.getDragboard().hasString()) {
@@ -153,17 +160,29 @@ public class TaskDragDropSupport {
         });
 
         cell.setOnDragExited(event -> {
-            applyDayStyle(cell, targetColumn, targetSlotIndex);
+            WeekGridBuilder.CellState st = WeekGridBuilder.cellState(cell);
+            if (st != null && st.columnDate != null) {
+                WeekGridBuilder.styleSlot(cell, system, st.columnDate, st.slotIndex);
+            }
             event.consume();
         });
 
         cell.setOnDragEntered(event -> {
+            WeekGridBuilder.CellState st = WeekGridBuilder.cellState(cell);
+            if (st == null || st.columnDate == null) {
+                event.consume();
+                return;
+            }
+            LocalDate targetColumn = st.columnDate;
+            int targetSlotIndex = st.slotIndex;
             if (event.getGestureSource() != cell && event.getDragboard().hasString()) {
-                Task movingTask = resolveMovingTask(event.getDragboard());
-                boolean ok = canDropOn(targetColumn, targetSlotIndex, movingTask);
-                cell.setStyle(ok
-                        ? "-fx-background-color: #a0e7a0; -fx-border-color: #999999;"
-                        : "-fx-background-color: #f38888; -fx-border-color: #999999;");
+                LocalDateTime start = AppTimeReference.dateTimeForSlot(targetColumn, targetSlotIndex);
+                if (start.isAfter(AppTimeReference.getCurrentDateTime())) {
+                    WeekGridBuilder.styleSlot(cell, system, targetColumn, targetSlotIndex);
+                    Task movingTask = resolveMovingTask(event.getDragboard());
+                    boolean ok = canDropOn(targetColumn, targetSlotIndex, movingTask);
+                    WeekGridBuilder.paintDropHover(cell, st, ok);
+                }
             }
             event.consume();
         });
@@ -171,8 +190,11 @@ public class TaskDragDropSupport {
         cell.setOnDragDropped(event -> {
             Dragboard db = event.getDragboard();
             boolean success = false;
+            WeekGridBuilder.CellState st = WeekGridBuilder.cellState(cell);
+            LocalDate targetColumn = st == null ? null : st.columnDate;
+            int targetSlotIndex = st == null ? -1 : st.slotIndex;
 
-            if (db.hasString()) {
+            if (db.hasString() && targetColumn != null && targetSlotIndex >= 0) {
                 try {
                     String[] parts = db.getString().split("\\|");
                     String taskId = parts[0];
@@ -243,63 +265,6 @@ public class TaskDragDropSupport {
             return true;
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    private List<BlockedTime> loadBlocked() {
-        BlockedTimePeriod holder = system.getBlockedTime();
-        if (holder == null || holder.blockedPeriod == null) return List.of();
-        return holder.blockedPeriod;
-    }
-
-    private static BlockedTime blockedAt(List<BlockedTime> blocked, LocalDate columnDate, int slotIndex) {
-        LocalDate date = AppTimeReference.calendarDateForSlot(columnDate, slotIndex);
-        LocalTime slotStart = AppTimeReference.slotToLocalTime(slotIndex);
-        LocalTime slotEnd = slotStart.plusMinutes(AppTimeReference.MINUTES_PER_SLOT);
-
-        BlockedTime daily = null;
-        BlockedTime specific = null;
-        boolean exception = false;
-
-        for (BlockedTime b : blocked) {
-            if (b.getStartTime() == null || b.getEndTime() == null) continue;
-            if (!(slotStart.isBefore(b.getEndTime()) && slotEnd.isAfter(b.getStartTime()))) continue;
-
-            if (b.freesOn(date)) {
-                exception = true;
-            } else if (b.isException()) {
-                continue;
-            } else if (b.isDaily()) {
-                daily = b;
-            } else if (b.appliesOn(date)) {
-                specific = b;
-            }
-        }
-
-        if (exception) return null;
-        if (specific != null) return specific;
-        return daily;
-    }
-
-    private void applyDayStyle(Pane cell, LocalDate columnDate, int slotIndex) {
-        LocalDateTime start = AppTimeReference.dateTimeForSlot(columnDate, slotIndex);
-        if (!start.isAfter(AppTimeReference.getCurrentDateTime())) {
-            cell.setStyle("-fx-background-color: #bdc8c8; -fx-border-color: #999999;");
-            return;
-        }
-        BlockedTime block = blockedAt(loadBlocked(), columnDate, slotIndex);
-        if (block != null && block.getStartTime() != null) {
-            int hour = block.getStartTime().getHour();
-            String fill = (hour >= 21 || hour < 8) ? "#c5cbe8"
-                    : (hour >= 11 && hour < 14) ? "#f3d5a3"
-                      : (hour < 11) ? "#b9dde6" : "#ddc6ea";
-            cell.setStyle("-fx-background-color: " + fill + "; -fx-border-color: #999999; -fx-border-width: 1;");
-            return;
-        }
-        if (columnDate.equals(AppTimeReference.currentColumnDate())) {
-            cell.setStyle("-fx-background-color: #70d9f1; -fx-border-color: #999999;");
-        } else {
-            cell.setStyle("-fx-border-color: #999999;");
         }
     }
 

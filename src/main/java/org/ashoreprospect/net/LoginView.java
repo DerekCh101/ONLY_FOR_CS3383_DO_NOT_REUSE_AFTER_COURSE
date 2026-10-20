@@ -14,6 +14,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import org.ashoreprospect.GUI.AppTheme;
 import org.ashoreprospect.crypto.Vault;
 import org.ashoreprospect.db.TaskRepository;
 
@@ -70,7 +71,7 @@ public class LoginView {
 
         CheckBox remember = new CheckBox("Remember login");
         remember.setSelected(LocalSession.wantRemember());
-        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        remember.setStyle("-fx-text-fill: " + AppTheme.cardInk() + "; -fx-font-size: 13px; " + AppTheme.font());
         Label rememberHint = muted("Checked: next launch skips this screen and opens the local cache, even offline.");
 
         Label err = error();
@@ -111,7 +112,7 @@ public class LoginView {
         PasswordField answer = secret("security answer (min 4)");
         CheckBox remember = new CheckBox("Remember login");
         remember.setSelected(LocalSession.wantRemember());
-        remember.setStyle("-fx-text-fill: #1c2430; -fx-font-size: 13px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        remember.setStyle("-fx-text-fill: " + AppTheme.cardInk() + "; -fx-font-size: 13px; " + AppTheme.font());
         Label err = error();
         Button create = new Button("Create account");
         Button cancel = new Button("Back to login");
@@ -284,8 +285,8 @@ public class LoginView {
 
     private static Label heading(String t) {
         Label l = new Label(t);
-        l.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #1c2430; "
-                + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        l.setStyle("-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: "
+                + AppTheme.cardInk() + "; " + AppTheme.font());
         return l;
     }
 
@@ -293,8 +294,8 @@ public class LoginView {
         Label l = new Label(t);
         l.getStyleClass().add("login-muted");
         l.setWrapText(true);
-        l.setStyle("-fx-font-size: 12px; -fx-text-fill: #5c564c; "
-                + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        l.setStyle("-fx-font-size: 12px; -fx-text-fill: "
+                + AppTheme.cardMuted() + "; " + AppTheme.font());
         return l;
     }
 
@@ -321,12 +322,7 @@ public class LoginView {
     }
 
     private static String fieldStyle() {
-        return "-fx-background-color: #ffffff;"
-                + "-fx-text-fill: #1c2430;"
-                + "-fx-prompt-text-fill: #8a8378;"
-                + "-fx-font-size: 14px;"
-                + "-fx-padding: 9 12;"
-                + "-fx-background-radius: 6;";
+        return AppTheme.fieldCss();
     }
 
     private static void stretch(Button... buttons) {
@@ -334,20 +330,11 @@ public class LoginView {
     }
 
     private static void stylePrimary(Button b) {
-        b.setStyle(
-                "-fx-background-color: #1c2430; -fx-text-fill: #f3eee4;"
-                        + "-fx-font-size: 14px; -fx-padding: 10 18; -fx-background-radius: 8; "
-                        + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;"
-        );
+        b.setStyle(AppTheme.cardPrimaryBtnCss() + "-fx-font-size: 14px;");
     }
 
     private static void styleGhost(Button b) {
-        b.setStyle(
-                "-fx-background-color: transparent; -fx-text-fill: #1c2430;"
-                        + "-fx-border-color: #1c2430; -fx-border-radius: 8;"
-                        + "-fx-font-size: 14px; -fx-padding: 8 18; "
-                        + "-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;"
-        );
+        b.setStyle(AppTheme.cardGhostBtnCss() + "-fx-font-size: 14px;");
     }
 
     private static boolean blank(String s) {

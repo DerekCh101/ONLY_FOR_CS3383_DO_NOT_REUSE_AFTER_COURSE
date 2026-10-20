@@ -4,6 +4,7 @@ package org.ashoreprospect.GUI;
 import javafx.scene.Node;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Control;
 import javafx.scene.control.DatePicker;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
@@ -28,9 +29,7 @@ public class GuiHelper {
     public static VBox createWhiteBox() {
         VBox box = new VBox(12);
         box.getStyleClass().add("dialog-card");
-        box.setStyle("-fx-background-color: #f3eee4; -fx-padding: 20; "
-                + "-fx-border-color: #1c2430; -fx-border-width: 2; "
-                + "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 10, 0, 0, 0);");
+        box.setStyle(AppTheme.cardBoxCss());
         box.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
         return box;
     }
@@ -67,19 +66,23 @@ public class GuiHelper {
     public static void paintInk(Node n) {
         if (n == null) return;
         boolean card = inDialogCard(n);
-        String ink = card ? "#1c2430" : AppTheme.ink();
-        String paper = card ? "#ffffff" : AppTheme.paper();
+        String ink = card ? AppTheme.cardInk() : AppTheme.ink();
+        String paper = card ? AppTheme.cardPaper() : AppTheme.paper();
         if (n instanceof Label l) {
             String s = l.getStyle() == null ? "" : l.getStyle();
-            l.setStyle(s.replaceAll("-fx-text-fill:\\s*#[0-9a-fA-F]{3,8}", "")
-                    + "; -fx-text-fill: " + ink + "; " + AppTheme.font());
+            if (s.contains("#8b1e1e")) {
+                /* keep error red */
+            } else {
+                l.setStyle(s.replaceAll("-fx-text-fill:\\s*#[0-9a-fA-F]{3,8}", "")
+                        + "; -fx-text-fill: " + ink + "; " + AppTheme.font());
+            }
         } else if (n instanceof CheckBox || n instanceof RadioButton) {
             Labeled l = (Labeled) n;
             l.setStyle(AppTheme.font() + "-fx-text-fill: " + ink + ";");
         } else if (n instanceof TextInputControl tf) {
             tf.setStyle(card
-                    ? "-fx-background-color: #ffffff; -fx-text-fill: #1c2430; "
-                    + "-fx-prompt-text-fill: #8a8378; " + AppTheme.font()
+                    ? "-fx-background-color: " + AppTheme.paper() + "; -fx-text-fill: " + ink
+                    + "; -fx-prompt-text-fill: " + AppTheme.cardMuted() + "; " + AppTheme.font()
                     : AppTheme.fieldCss());
         } else if (n instanceof ComboBox<?> cb) {
             cb.setStyle("-fx-background-color: " + paper + "; -fx-text-fill: " + ink + ";");
@@ -88,6 +91,7 @@ public class GuiHelper {
         } else if (n instanceof Spinner<?> sp) {
             styleSpinner(sp);
         }
+        if (n instanceof Control) return;
         if (n instanceof javafx.scene.Parent p) {
             for (Node child : p.getChildrenUnmodifiable()) paintInk(child);
         }

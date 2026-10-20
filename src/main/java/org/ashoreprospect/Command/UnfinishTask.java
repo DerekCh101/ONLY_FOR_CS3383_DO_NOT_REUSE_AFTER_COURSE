@@ -20,16 +20,7 @@ public class UnfinishTask implements Command {
         if (thisTask == null || thisTask.getID() == null) return false;
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return false;
         if (thisTask.getWorkflow() != Workflow.FINISHED) return false;
-
-        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
-        if (thatDay == null) return false;
-        Task[] slots = thatDay.returnDayGrid();
-        int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
-        for (int i = 0; i < thisTask.getDurationSlots(); i++) {
-            if (theSlot < 0 || theSlot >= slots.length || slots[theSlot] == null) break;
-            slots[theSlot].setWorkflow(Workflow.UNFINISHED);
-            theSlot++;
-        }
+        markSlots(Workflow.UNFINISHED);
         thisTask.setWorkflow(Workflow.UNFINISHED);
         theSystem.getTaskRepo().dbUpdateWorkflow(thisTask);
         RecordedCommand.getRedoList().clear();
@@ -41,15 +32,7 @@ public class UnfinishTask implements Command {
     public void undo() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return;
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return;
-        Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
-        if (thatDay == null) return;
-        Task[] slots = thatDay.returnDayGrid();
-        int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
-        for (int i = 0; i < thisTask.getDurationSlots(); i++) {
-            if (theSlot < 0 || theSlot >= slots.length || slots[theSlot] == null) break;
-            slots[theSlot].setWorkflow(Workflow.FINISHED);
-            theSlot++;
-        }
+        markSlots(Workflow.FINISHED);
         thisTask.setWorkflow(Workflow.FINISHED);
         theSystem.getTaskRepo().dbUpdateWorkflow(thisTask);
         RecordedCommand.getRedoList().add(this);
@@ -60,18 +43,23 @@ public class UnfinishTask implements Command {
     public void redo() throws SQLException {
         if (thisTask == null || thisTask.getID() == null) return;
         if (thisTask.getPlacedDate() == null || thisTask.getPlacedTime() == null) return;
+        markSlots(Workflow.UNFINISHED);
+        thisTask.setWorkflow(Workflow.UNFINISHED);
+        theSystem.getTaskRepo().dbUpdateWorkflow(thisTask);
+        RecordedCommand.getRedoList().remove(this);
+        RecordedCommand.getUndoList().add(this);
+    }
+
+    private void markSlots(Workflow state) {
+        if (theSystem.getGrid() == null) return;
         Day thatDay = theSystem.getGrid().get(AppTimeReference.columnDateFor(thisTask.getPlacedDate(), thisTask.getPlacedTime()));
         if (thatDay == null) return;
         Task[] slots = thatDay.returnDayGrid();
         int theSlot = AppTimeReference.localTimeToSlot(thisTask.getPlacedTime());
         for (int i = 0; i < thisTask.getDurationSlots(); i++) {
             if (theSlot < 0 || theSlot >= slots.length || slots[theSlot] == null) break;
-            slots[theSlot].setWorkflow(Workflow.UNFINISHED);
+            slots[theSlot].setWorkflow(state);
             theSlot++;
         }
-        thisTask.setWorkflow(Workflow.UNFINISHED);
-        theSystem.getTaskRepo().dbUpdateWorkflow(thisTask);
-        RecordedCommand.getRedoList().remove(this);
-        RecordedCommand.getUndoList().add(this);
     }
 }

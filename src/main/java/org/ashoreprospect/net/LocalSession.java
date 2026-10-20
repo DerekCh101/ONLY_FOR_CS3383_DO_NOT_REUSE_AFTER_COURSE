@@ -6,7 +6,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 /** Remembered Node session for this PC. Lives under {@code .scheduler/} (gitignored). */
 public final class LocalSession {
@@ -65,6 +69,115 @@ public final class LocalSession {
         Properties p = prefsOrEmpty();
         p.setProperty("randomChallenge", on ? "true" : "false");
         writePrefs(p);
+    }
+
+    /** Task start reminders. Missing prefs file means on. */
+    public static boolean wantReminders() {
+        Properties p = loadPrefs();
+        if (p == null) return true;
+        return !"false".equalsIgnoreCase(p.getProperty("reminders", "true"));
+    }
+
+    public static void setReminders(boolean on) {
+        Properties p = prefsOrEmpty();
+        p.setProperty("reminders", on ? "true" : "false");
+        writePrefs(p);
+    }
+
+    /** Minutes before start. 0 = when it starts. Default 0 and 5. */
+    public static List<Integer> reminderLeads() {
+        Properties p = loadPrefs();
+        String raw = p == null ? "0,5" : p.getProperty("reminderLeads", "0,5");
+        return parseLeads(raw);
+    }
+
+    public static void setReminderLeads(List<Integer> leads) {
+        Properties p = prefsOrEmpty();
+        p.setProperty("reminderLeads", joinLeads(leads));
+        writePrefs(p);
+    }
+
+    public static boolean wantReminderSound() {
+        Properties p = loadPrefs();
+        if (p == null) return true;
+        return !"false".equalsIgnoreCase(p.getProperty("reminderSound", "true"));
+    }
+
+    public static void setReminderSound(boolean on) {
+        Properties p = prefsOrEmpty();
+        p.setProperty("reminderSound", on ? "true" : "false");
+        writePrefs(p);
+    }
+
+    /**
+     * Idle logout minutes on this device. 0 = never. Default 120. Allowed 5–180 when not never.
+     */
+    public static int idleMinutes() {
+        Properties p = loadPrefs();
+        if (p == null) return 120;
+        String raw = p.getProperty("idleMinutes", "120").trim();
+        if ("never".equalsIgnoreCase(raw) || "0".equals(raw)) return 0;
+        try {
+            int n = Integer.parseInt(raw);
+            if (n <= 0) return 0;
+            if (n < 5) return 5;
+            if (n > 180) return 180;
+            return n;
+        } catch (NumberFormatException e) {
+            return 120;
+        }
+    }
+
+    /** Exact-minute bars on top of the rounded occupancy grid. On by default. */
+    public static boolean wantRealtimeOverlay() {
+        Properties p = loadPrefs();
+        if (p == null) return true;
+        String v = p.getProperty("realtimeOverlay");
+        if (v == null || v.isBlank()) return true;
+        return "true".equalsIgnoreCase(v);
+    }
+
+    public static void setRealtimeOverlay(boolean on) {
+        Properties p = prefsOrEmpty();
+        p.setProperty("realtimeOverlay", on ? "true" : "false");
+        writePrefs(p);
+    }
+
+    public static void setIdleMinutes(int minutes) {
+        Properties p = prefsOrEmpty();
+        if (minutes <= 0) p.setProperty("idleMinutes", "0");
+        else p.setProperty("idleMinutes", String.valueOf(Math.max(5, Math.min(180, minutes))));
+        writePrefs(p);
+    }
+
+    public static List<Integer> parseLeads(String raw) {
+        Set<Integer> out = new LinkedHashSet<>();
+        if (raw == null || raw.isBlank()) {
+            out.add(0);
+            out.add(5);
+            return new ArrayList<>(out);
+        }
+        for (String part : raw.split("[,\\s]+")) {
+            if (part.isBlank()) continue;
+            try {
+                int n = Integer.parseInt(part.trim());
+                if (n >= 0 && n <= 20160) out.add(n);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    public static String joinLeads(List<Integer> leads) {
+        if (leads == null || leads.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        Set<Integer> seen = new LinkedHashSet<>();
+        for (Integer n : leads) {
+            if (n == null || n < 0 || n > 20160 || !seen.add(n)) continue;
+            if (sb.length() > 0) sb.append(',');
+            sb.append(n);
+        }
+        return sb.toString();
     }
 
     public static boolean wantRemember() {

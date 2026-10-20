@@ -38,8 +38,7 @@ function parseDuration(raw) {
 
 /**
  * Shape / enum / date checks only.
- * Blocked overlap for Flexible is enforced in overlap.taskConflict;
- * Fixed and Deadline may sit in blocked time.
+ * Blocked time does not collide with tasks.
  *
  * @returns {string|null} error, or null if OK
  */
@@ -70,21 +69,16 @@ export function validateTask(body) {
     if (!UUID_RE.test(id)) return "id must be a UUID";
 
     if (!title) return "title required";
-    const category = String(body.category ?? "");
-    const subcategory = String(body.subcategory ?? "");
     const description = String(body.description ?? "");
     const sealed = (s) => String(s ?? "").startsWith("AP1.");
     if (!sealed(title) && title.length > 100) return "title max 100 characters";
-    if (!sealed(category) && category.length > 80) return "category max 80 characters";
-    if (!sealed(subcategory) && subcategory.length > 80) return "subcategory max 80 characters";
     if (!sealed(description) && description.length > 8000) return "description max 8000 characters";
 
     if (!Number.isFinite(duration)) return "duration required and must be a number";
     if (duration <= 0) return "duration must be > 0";
     if (duration > 24) return "duration must be <= 24 hours";
-    if (Math.round(duration * 2) !== duration * 2) {
-        return "duration must be in 0.5 hour steps";
-    }
+    const mins = Math.round(duration * 60);
+    if (mins < 1) return "duration must be at least 1 minute";
 
     if (!state) return "state required";
     if (!STATES.has(state)) return "state must be Fixed, Deadline, or Flexible";

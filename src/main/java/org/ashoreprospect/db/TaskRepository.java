@@ -11,8 +11,10 @@ import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +42,7 @@ public class TaskRepository {
 
     private final String deviceId = DeviceConfig.getOrCreateDeviceId();
     private boolean postgresAvailable = false;
+    private String lastNodeFingerprint;
 
     public TaskRepository() {
         try {
@@ -240,6 +243,12 @@ public class TaskRepository {
             System.out.println("dbAddBlocked: id tombstoned, skip " + blocked.getId());
             return;
         }
+        if (sqlite.findBlockedById(blocked.getId()) == null) {
+            BlockedTimePeriod probe = new BlockedTimePeriod();
+            probe.replaceBlockedPeriods(sqlite.fetchAllBlocked());
+            String clash = probe.conflictMessage(blocked);
+            if (clash != null) throw new SQLException(clash);
+        }
         sqlite.upsertBlocked(blocked);
         if (postgresAvailable) {
             try {
@@ -306,8 +315,8 @@ public class TaskRepository {
                     + " blocked=" + sqlite.fetchAllBlocked().size());
         }
 
-        loadBlockedIntoMemory(theSystem);
-        loadSqliteIntoMemory(theSystem);
+        loadBlockedIntoMemory(theSystem, true);
+        loadSqliteIntoMemory(theSystem, true);
         System.out.println("memory placed=" + theSystem.getPlacedTasks().size()
                 + " pending=" + theSystem.getPendingTasks().size()
                 + " unscheduled=" + theSystem.getUnscheduledTasks().size()
@@ -315,13 +324,18 @@ public class TaskRepository {
     }
 
     public void reloadFromSqlite(TaskManagementSystem theSystem) throws SQLException {
+        reloadFromSqlite(theSystem, false);
+    }
+
+    public void reloadFromSqlite(TaskManagementSystem theSystem, boolean persistLifecycle)
+            throws SQLException {
         if (theSystem == null) return;
         theSystem.getPendingTasks().clear();
         theSystem.getPlacedTasks().clear();
         theSystem.getUnscheduledTasks().clear();
         theSystem.getGrid().clear();
-        loadBlockedIntoMemory(theSystem);
-        loadSqliteIntoMemory(theSystem);
+        loadBlockedIntoMemory(theSystem, persistLifecycle);
+        loadSqliteIntoMemory(theSystem, persistLifecycle);
     }
 
     public List<Task> fetchUnscheduledTasks() throws SQLException {
@@ -334,14 +348,22 @@ public class TaskRepository {
 
     public boolean pullFromNode() {
         if (Api.INSTANCE.getToken() == null || Api.INSTANCE.getToken().isBlank()) {
+            lastNodeFingerprint = null;
             return false;
         }
         try {
-            mergeNodeTasks();
-            mergeNodeBlocked();
+            List<Map<String, String>> tasks = Api.INSTANCE.getTasks();
+            List<Map<String, String>> blocked = Api.INSTANCE.getBlocked();
+            String fp = fingerprint(tasks, blocked);
+            if (fp.equals(lastNodeFingerprint)) {
+                return false;
+            }
+            boolean changed = mergeNodeTasks(tasks);
+            changed = mergeNodeBlocked(blocked) || changed;
+            lastNodeFingerprint = fp;
             sqlite.setMeta("last_node_sync_at", Instant.now().toString());
-            System.out.println("Node pull ok");
-            return true;
+            if (changed) System.out.println("Node pull applied");
+            return changed;
         } catch (Exception e) {
             System.err.println("Node pull failed: " + e.getMessage());
             e.printStackTrace();
@@ -408,10 +430,9 @@ public class TaskRepository {
         field(sb, "workflow", flow, false);
         field(sb, "placement_updated_at", instantStr(task.getPlacementUpdatedAt()), false);
         field(sb, "last_updated_at", instantStr(task.getLastUpdatedAt()), false);
-        field(sb, "category", Vault.seal(task.getCategory()), false);
-        field(sb, "subcategory", Vault.seal(task.getSubcategory()), false);
         field(sb, "description", Vault.seal(task.getDescription()), false);
         sb.append(",\"description_done\":").append(task.isDescriptionDone() ? "true" : "false");
+        field(sb, "parent_id", task.getParentId(), false);
         sb.append("}");
         return sb.toString();
     }
@@ -460,13 +481,15 @@ public class TaskRepository {
     }
 
     private static int toWeekdayInt(DayOfWeek d) {
-        return d.getValue() % 7;
+        return d.getValue();
     }
 
-    private void mergeNodeTasks() throws Exception {
+    private boolean mergeNodeTasks(List<Map<String, String>> rows) throws Exception {
+        boolean changed = false;
         Set<String> deleted = new HashSet<>(sqlite.fetchDeletedIds());
         List<Task> remoteList = new ArrayList<>();
-        for (Map<String, String> row : Api.INSTANCE.getTasks()) {
+        if (rows == null) rows = List.of();
+        for (Map<String, String> row : rows) {
             Task remote = taskFromNode(row);
             if (remote == null || remote.getID() == null) continue;
             remoteList.add(remote);
@@ -476,10 +499,13 @@ public class TaskRepository {
             if (deleted.contains(remote.getID())) {
                 sqlite.unrecordDelete(remote.getID());
                 deleted.remove(remote.getID());
+                changed = true;
             }
             Task local = sqlite.findById(remote.getID());
+            if (local != null && sameTaskStamp(local, remote)) continue;
             Task merged = (local == null) ? remote : mergeTasks(local, remote);
             sqlite.upsert(merged);
+            changed = true;
         }
 
         Map<String, Task> remoteById = new HashMap<>();
@@ -497,14 +523,18 @@ public class TaskRepository {
             if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
                 sqlite.deleteTaskRow(local.getID());
                 sqlite.recordDelete(local.getID(), Instant.now());
+                changed = true;
             }
         }
+        return changed;
     }
 
-    private void mergeNodeBlocked() throws Exception {
+    private boolean mergeNodeBlocked(List<Map<String, String>> rows) throws Exception {
+        boolean changed = false;
         Set<String> deleted = new HashSet<>(sqlite.fetchBlockedDeletedIds());
         List<BlockedTime> remoteList = new ArrayList<>();
-        for (Map<String, String> row : Api.INSTANCE.getBlocked()) {
+        if (rows == null) rows = List.of();
+        for (Map<String, String> row : rows) {
             BlockedTime remote = blockedFromNode(row);
             if (remote == null || remote.getId() == null) continue;
             if (remote.getStartTime() == null || remote.getEndTime() == null) {
@@ -524,9 +554,11 @@ public class TaskRepository {
                 deleted.remove(remote.getId());
             }
             BlockedTime local = sqlite.findBlockedById(remote.getId());
+            if (local != null && sameBlockedStamp(local, remote)) continue;
             BlockedTime merged = (local == null) ? remote : mergeBlocked(local, remote);
             if (merged.getStartTime() == null || merged.getEndTime() == null) continue;
             sqlite.upsertBlocked(merged);
+            changed = true;
         }
 
         Map<String, BlockedTime> remoteById = new HashMap<>();
@@ -543,8 +575,62 @@ public class TaskRepository {
             if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
                 sqlite.deleteBlockedRow(local.getId());
                 sqlite.recordBlockedDelete(local.getId(), Instant.now(), local.getTitle());
+                changed = true;
             }
         }
+        return changed;
+    }
+
+    private static boolean sameTaskStamp(Task local, Task remote) {
+        return sameStamp(local.getLastUpdatedAt(), remote.getLastUpdatedAt())
+                && sameStamp(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt());
+    }
+
+    private static boolean sameBlockedStamp(BlockedTime local, BlockedTime remote) {
+        return sameStamp(local.getLastUpdatedAt(), remote.getLastUpdatedAt());
+    }
+
+    private static boolean sameStamp(Instant local, Instant remote) {
+        if (local == null && remote == null) return true;
+        if (local == null || remote == null) return false;
+        return local.toEpochMilli() == remote.toEpochMilli();
+    }
+
+    private static String fingerprint(List<Map<String, String>> tasks, List<Map<String, String>> blocked) {
+        StringBuilder sb = new StringBuilder();
+        fingerRows(sb, tasks, true);
+        sb.append('#');
+        fingerRows(sb, blocked, false);
+        return sb.toString();
+    }
+
+    private static void fingerRows(StringBuilder sb, List<Map<String, String>> rows, boolean withPlace) {
+        List<String> parts = new ArrayList<>();
+        if (rows != null) {
+            for (Map<String, String> row : rows) {
+                if (row == null) continue;
+                String id = first(row, "id");
+                if (id == null) continue;
+                String last = stampKey(first(row, "last_updated_at", "lastUpdatedAt"));
+                if (withPlace) {
+                    String place = stampKey(first(row, "placement_updated_at", "placementUpdatedAt"));
+                    parts.add(id + '=' + last + '/' + place);
+                } else {
+                    parts.add(id + '=' + last);
+                }
+            }
+        }
+        Collections.sort(parts);
+        for (String p : parts) sb.append(p).append(';');
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String stampKey(String raw) {
+        Instant i = parseInstant(raw);
+        return i != null ? Long.toString(i.toEpochMilli()) : nz(raw);
     }
 
     private static Task taskFromNode(Map<String, String> row) {
@@ -586,11 +672,10 @@ public class TaskRepository {
         if (placeAt != null) task.setPlacementUpdatedAt(placeAt);
         if (lastAt != null) task.setLastUpdatedAt(lastAt);
         else if (placeAt != null) task.setLastUpdatedAt(placeAt);
-        task.setCategory(first(row, "category"));
-        task.setSubcategory(first(row, "subcategory"));
         task.setDescription(first(row, "description"));
         String done = first(row, "description_done", "descriptionDone");
         task.setDescriptionDone("true".equalsIgnoreCase(done) || "t".equalsIgnoreCase(done) || "1".equals(done));
+        task.setParentId(first(row, "parent_id", "parentId"));
         Vault.openTask(task);
         return task;
     }
@@ -607,7 +692,6 @@ public class TaskRepository {
             }
         }
         Instant last = parseInstant(first(row, "last_updated_at", "lastUpdatedAt"));
-        if (last == null) last = Instant.now();
 
         LocalTime start = parseTime(first(row, "start_time", "startTime", "start"));
         LocalTime end = parseTime(first(row, "end_time", "endTime", "end"));
@@ -676,12 +760,24 @@ public class TaskRepository {
     }
 
     private static Instant parseInstant(String s) {
-        if (s == null || s.isBlank()) return null;
+        if (s == null || s.isBlank() || "null".equalsIgnoreCase(s)) return null;
+        String t = s.trim();
+        if (t.indexOf(' ') > 0 && t.indexOf('T') < 0) t = t.replace(' ', 'T');
         try {
-            return Instant.parse(s);
-        } catch (Exception e) {
-            return null;
+            return Instant.parse(t);
+        } catch (Exception ignored) {
         }
+        try {
+            return OffsetDateTime.parse(t).toInstant();
+        } catch (Exception ignored) {
+        }
+        if (t.endsWith("+00") || t.matches(".*[+-]\\d{2}$")) {
+            try {
+                return Instant.parse(t + ":00");
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
     }
 
     private static DayOfWeek toDayOfWeek(Integer weekday) {
@@ -954,6 +1050,12 @@ public class TaskRepository {
         out.setLifeCycle(src.getLifeCycle());
         out.setWorkflow(src.getWorkflow());
         out.copyExtrasFrom(src);
+        String parent = src.getParentId();
+        if (parent == null || parent.isBlank()) {
+            String other = src == remote ? local.getParentId() : remote.getParentId();
+            if (other != null && !other.isBlank()) parent = other;
+        }
+        out.setParentId(parent);
         out.setLastUpdatedAt(src.getLastUpdatedAt() != null ? src.getLastUpdatedAt() : Instant.now());
         return out;
     }
@@ -1029,9 +1131,10 @@ public class TaskRepository {
         }
     }
 
-    private void loadBlockedIntoMemory(TaskManagementSystem theSystem) throws SQLException {
+    private void loadBlockedIntoMemory(TaskManagementSystem theSystem, boolean expirePast)
+            throws SQLException {
         if (theSystem == null || theSystem.getBlockedTime() == null) return;
-        expirePastBlocked();
+        if (expirePast) expirePastBlocked();
         theSystem.getBlockedTime().replaceBlockedPeriods(sqlite.fetchAllBlocked());
     }
 
@@ -1051,7 +1154,8 @@ public class TaskRepository {
         }
     }
 
-    private void loadSqliteIntoMemory(TaskManagementSystem theSystem) throws SQLException {
+    private void loadSqliteIntoMemory(TaskManagementSystem theSystem, boolean persistLifecycle)
+            throws SQLException {
         Set<String> deleted = sqlite.fetchDeletedIds();
         for (Task task : sqlite.fetchAll()) {
             if (deleted.contains(task.getID())) continue;
@@ -1061,16 +1165,20 @@ public class TaskRepository {
             TaskLifeCycle lifeFromDb = task.getLifeCycle();
 
             if (placedDate != null && placedTime != null) {
+                theSystem.getPlacedTasks().add(task);
+                if (task.isQuick()) {
+                    RefreshLifeCycle.refreshLifeCycle(task);
+                    continue;
+                }
                 LocalDate column = AppTimeReference.columnDateFor(placedDate, placedTime);
                 theSystem.getGrid().putIfAbsent(column, new Day(theSystem.getBlockedTime()));
                 Day day = theSystem.getGrid().get(column);
                 int slot = AppTimeReference.localTimeToSlot(placedTime);
                 day.placeTask(slot, task);
-                theSystem.getPlacedTasks().add(task);
 
                 TaskLifeCycle before = task.getLifeCycle();
                 RefreshLifeCycle.refreshLifeCycle(task);
-                if (before != task.getLifeCycle()) {
+                if (persistLifecycle && before != task.getLifeCycle()) {
                     dbAddTask(task);
                 }
             } else if (lifeFromDb == TaskLifeCycle.UNSCHEDULED && task.canGoUnscheduled()) {

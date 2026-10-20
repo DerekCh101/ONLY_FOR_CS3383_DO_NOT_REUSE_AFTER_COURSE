@@ -178,11 +178,12 @@ public class MonthGridBuilder {
         Day day = system.getGrid().get(date);
         if (day != null) {
             for (Task t : day.returnDayGrid()) {
-                if (t != null) set.add(t);
+                if (t != null && !t.isQuick()) set.add(t);
             }
         }
         // Fallback: placed list (in case grid not built for that day)
         for (Task t : system.getPlacedTasks()) {
+            if (t == null || t.isQuick()) continue;
             if (date.equals(AppTimeReference.columnDateFor(t.getPlacedDate(), t.getPlacedTime()))) {
                 set.add(t);
             }

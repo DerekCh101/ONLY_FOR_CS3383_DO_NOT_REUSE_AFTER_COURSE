@@ -31,10 +31,12 @@ public class AddTask implements Command {
         );
         FetchPopOutTask pop = this.theSystem.getPopupTask();
         if (pop != null) {
-            theTask.setCategory(pop.getCategory());
-            theTask.setSubcategory(pop.getSubcategory());
             theTask.setDescription(pop.getDescription());
             theTask.setDescriptionDone(pop.isDescriptionDone());
+            theTask.setParentId(pop.getParentId());
+            if (pop.getDuration() > 0 && pop.getDuration() < 0.5) {
+                theTask.setDurationMinutes((int) Math.round(pop.getDuration() * 60.0));
+            }
         }
     }
 
@@ -81,6 +83,33 @@ public class AddTask implements Command {
      * @return false if cannot place (does NOT add to unscheduled)
      */
     private boolean placeOnGrid(LocalDate date, LocalTime time) throws SQLException {
+        FetchPopOutTask pop = theSystem.getPopupTask();
+        if (pop != null && pop.getParentId() != null && !pop.getParentId().isBlank()) {
+            theTask.setParentId(pop.getParentId());
+        }
+        if (theTask.isQuick()) {
+            Task parent = theSystem.mainTask(theTask);
+            if (parent == null || parent == theTask
+                    || parent.getPlacedDate() == null || parent.getPlacedTime() == null) {
+                return false;
+            }
+            int mins = (int) Math.round(theTask.getDurationMinutes());
+            if (!AppTimeReference.rangeInside(
+                    parent.getPlacedDate(), parent.getPlacedTime(),
+                    (int) Math.round(parent.getDurationMinutes()),
+                    date, time, mins)) {
+                return false;
+            }
+            theTask.setPlacedDate(date);
+            theTask.setPlacedTime(time);
+            theTask.setLifeCycle(TaskLifeCycle.ONGOING);
+            theSystem.getPlacedTasks().add(theTask);
+            RefreshLifeCycle.refreshLifeCycle(theTask);
+            theTask.touchPlacementUpdated();
+            theSystem.getTaskRepo().dbAddTask(theTask);
+            AddTaskHooks.fireAfterAdd(theTask);
+            return true;
+        }
         int slotIndex = AppTimeReference.localTimeToSlot(time);
         int slotCount = theTask.getDurationSlots();
         LocalDate column = AppTimeReference.columnDateFor(date, time);
@@ -92,18 +121,10 @@ public class AddTask implements Command {
         if (slotIndex < 0 || slotIndex + slotCount > AppTimeReference.SLOTS_PER_DAY) {
             canPlace = false;
         } else {
-            BlockedTimePeriod blocks = theSystem.getBlockedTime();
             for (int i = 0; i < slotCount; i++) {
                 if (day.returnDayGrid()[slotIndex + i] != null) {
                     canPlace = false;
                     break;
-                }
-                if (blocks != null) {
-                    java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(column, slotIndex + i);
-                    if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
-                        canPlace = false;
-                        break;
-                    }
                 }
             }
         }
@@ -114,7 +135,7 @@ public class AddTask implements Command {
 
         day.placeTask(slotIndex, theTask);
         theTask.setPlacedDate(date);
-        theTask.setPlacedTime(AppTimeReference.slotToLocalTime(slotIndex));
+        theTask.setPlacedTime(time);
         theSystem.getPlacedTasks().add(theTask);
         RefreshLifeCycle.refreshLifeCycle(theTask);
         theTask.touchPlacementUpdated();

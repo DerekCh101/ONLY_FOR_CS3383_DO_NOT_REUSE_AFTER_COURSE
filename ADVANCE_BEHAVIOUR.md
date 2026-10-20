@@ -2,7 +2,7 @@
 
 Exact rules for Ashore Prospect. The main [README](README.md) only lists features. This file is the source of truth for how those features actually behave.
 
-Do not put mailbox passwords in chat or in git. `.scheduler/` is gitignored.
+Do not put mailbox passwords in chat or in git. `.scheduler/` is gitignored. Do not write Windows `setx` / user env from the app.
 
 ---
 
@@ -25,8 +25,8 @@ The stage is undecorated. A themed title bar (– □ ✕) sits at the top.
 Every change on this PC is written in this order:
 
 1. **SQLite** `scheduler-cache.db` in the working directory (always).
-2. **Postgres** on the host, if this install opened JDBC (skipped on the creator host — Node owns that DB).
-3. **Node HTTP**, if a Bearer session token exists.
+2. **Postgres** on the host, if this install opened JDBC (skipped on the host for Typewriter — Node owns those `tw_*` tables. Task JDBC still runs on localhost).
+3. **Node HTTP**, if a Bearer session token exists. Typewriter POST is JSON with optional `AP1.` **per field** (title/body/text), so Node can fill `tw_diary` / `tw_pages` / `tw_lists`. A whole-bundle `AP1.` blob only in `typewriter.content` is leftover.
 
 Reads at login / load:
 
@@ -35,7 +35,7 @@ Reads at login / load:
 3. If online and JDBC is up, two-way merge with Postgres.
 4. If online and a token exists, pull Node and merge into SQLite, then load memory.
 
-A daemon **node-poll** thread (every 4 s) pulls Node again and reloads the calendar. A **network-watch** thread (every 2 s) only checks NIC up/down for the online chip and toasts.
+A daemon **node-poll** thread (every 4 s) pulls Node again and reloads the calendar. A **network-watch** thread (every 2 s) only checks NIC up/down for the online chip, toasts, and the deleted-account check.
 
 Android is always a client of the same Node. JavaFX is the host when it talks to Node on this machine (`127.0.0.1` / `localhost`) or to the configured creator-host URL. `deviceId` is registry / GC only — it is **not** the host signal.
 
@@ -47,7 +47,7 @@ There are no CRDTs and no extra revision columns. Two ISO instants decide:
 
 | Field | What it covers |
 | --- | --- |
-| `last_updated_at` | Name, duration, type, deadline, start, lifecycle, finish/unfinish |
+| `last_updated_at` | Name, duration, type, deadline, start, lifecycle, finish/unfinish, extras (description) |
 | `placement_updated_at` | Only the placed date/time on the grid |
 
 ### Who wins
@@ -74,7 +74,7 @@ Newer always wins. The host/client flag is only the same-timestamp tie.
 
 Blocked times use the same `preferRemote` on `last_updated_at` (whole row, no split placement clock).
 
-Typewriter pages / lists use the same `preferRemote` on the bundle `last_updated_at`. Images are content-addressed (SHA-256) on Node.
+Typewriter pages / lists use the same `preferRemote` on the bundle `last_updated_at`. Images are content-addressed (SHA-256) on Node under `server/user-files/{username}/diary|pages/`. JavaFX stores page/diary bodies as unwrapped plain text (`TypewriterHtml.storedText`). Node skips `AP1.` ciphertext when sanitizing leftover HTML dumps or clipping titles (do not treat ciphertext as markup).
 
 ### Deletes (tombstones)
 
@@ -84,6 +84,8 @@ Typewriter pages / lists use the same `preferRemote` on the bundle `last_updated
 - **Node** pull: if Node still has an id that was locally tombstoned, the local tombstone is **cleared** and the Node row is merged in. A local-only row not newer than `last_node_sync_at` is dropped + tombstoned (it vanished from Node after the last successful pull).
 
 Tombstone GC: stale ~3 months, abandoned ~12 months (`STALE_MONTHS` / `ABANDONED_MONTHS`).
+
+Account deletion is a **different** tombstone (`TASK.deleted_accounts`). See section 12.
 
 ---
 
@@ -100,15 +102,15 @@ When unchecked: prefs say `remember=false` and `session.txt` is deleted.
 
 **Boot:** `SchedulerApp` calls `restoreSession()`. If remember is on and `session.txt` is present, the login screen is skipped and the main window opens on the **local cache**. This works **offline**. The token is used later when Node is reachable.
 
-Logout (Account, idle, failed challenge, revoke-this-PC) clears `session.txt`. Typewriter is saved on a normal logout, **not** on a failed remember-me challenge (see below).
+Logout (Account, idle, failed challenge, revoke-this-PC, deleted-account wipe) clears `session.txt`. Typewriter is saved on a normal logout, **not** on a failed remember-me challenge (see below).
 
-Idle auto-logout: **100 minutes** without any input on the main scene.
+Idle auto-logout is this-PC only (Account → **Device**). Default **120 minutes** with no mouse or keyboard on the main scene. Combo: **Never**, or **5–180** minutes. Stored as `idleMinutes` in `.scheduler/login.txt` (`0` = never). Idle only signs you out. Refresh does not log you out. Encryption is a separate Security option, not idle or reload.
 
 ---
 
 ## 5. Remember-me random security logout
 
-Opt-in only. Account → **Random security check on Remember-me login**. Stored as `randomChallenge=true` in `.scheduler/login.txt`. Default is **off**.
+Opt-in only. Account → Security → **Random security check on Remember-me login**. Stored as `randomChallenge=true` in `.scheduler/login.txt`. Default is **off**.
 
 On each main-window load, `maybeRememberChallenge()` runs if **all** of these are true:
 
@@ -152,10 +154,10 @@ Email **alone is not enough**. Reset needs:
 
 ### How the token is delivered
 
-1. Node prints the token and question on the host terminal **immediately**, then replies `{ ok: true }`. The login / phone UI **never** auto-fills the token (that used to happen only on the host PC talking to `127.0.0.1`; it is removed).
-2. SMTP runs **after** the HTTP reply so Gmail cannot time out the click. A 12-second greeting timeout caused `Greeting never received` on this network; Node now waits **45 s** and tries Gmail **465** (SSL) first, then **587**.
+1. Node prints the token and question on the host terminal **immediately**, then replies `{ ok: true }`. The login / phone UI **never** auto-fills the token.
+2. SMTP runs **after** the HTTP reply so Gmail cannot time out the click. Node waits **45 s** and tries Gmail **465** (SSL) first, then **587**.
 3. Sender and receiver may be the **same** Gmail. Check Inbox and Spam. Spaces in the 16-character App password are stripped; that is correct.
-4. Clients (Android, a JavaFX install pointed at Tailscale/LAN) only see `{ ok: true }`. They type the token from email or from the host Node terminal.
+4. Clients (Android, a JavaFX install pointed at Tailscale/LAN, the browser UI) only see `{ ok: true }`. They type the token from email or from the host Node terminal.
 5. `/forgot` is rate-limited per username+email for **60 seconds**. A second click in that window does not send a new mail.
 
 ### After a successful reset
@@ -176,16 +178,17 @@ The Account **SMTP** page is shown only when this install talks to Node on **loc
 Save writes:
 
 - `.scheduler/smtp.txt` — `host`, `port`, `user`, `from` (no password line).
-- `.scheduler/smtp.env` — `SMTP_PASS=…` so the already-configured Node can read it on the next restart without waiting for a new Windows login.
-- Windows `setx SMTP_PASS` (and `SMTP_USER` / `SMTP_HOST`) so **new** terminals inherit the user env.
+- `.scheduler/smtp.env` — `SMTP_PASS=…` so Node can read it on the next restart.
+
+The app does **not** call Windows `setx` and does not write user environment variables.
 
 Node `mail.js` load order for the password: process env `SMTP_PASS`, then `smtp.env`, then a leftover `pass=` in `smtp.txt`. Host / user / from: file then `SMTP_*` env.
 
-`setx` does **not** update a Node process that is already running. Restart Node after you save.
+Restart Node after you save so it reloads `smtp.env`. A Node process started before save will not pick up a new file until restart.
 
 Gmail: use an App password, not the Google login password. Same mailbox as `from` and `to` is allowed.
 
-If mail is off or SMTP fails, reset tokens still work — they print in the host terminal for 8 minutes. Restart Node after saving SMTP so it reloads `smtp.env`. A Node process started before save will not see `SMTP_PASS` in its environment.
+If mail is off or SMTP fails, reset tokens still work — they print in the host terminal for 8 minutes.
 
 Android is always a **client**. It must not show the host SMTP page and must not write `SMTP_PASS`.
 
@@ -193,7 +196,7 @@ Android is always a **client**. It must not show the host SMTP page and must not
 
 ## 8. Run Scheduler algorithm
 
-Grid: **30-minute** slots. A column is **06:00 → next calendar morning 05:30** (48 slots). Search horizon is **5 years**.
+Grid: **30-minute** slots. A column is **06:00 → next calendar morning 05:30** (48 slots). Times 00:00–05:30 belong to the **previous** day’s column. Search horizon is **5 years**.
 
 Task types (`Task.state`):
 
@@ -228,13 +231,96 @@ Lifecycle after a clock tick:
 - Placement end `<=` now → `PAST`
 - Else → `ONGOING`
 
-Duration snaps down to whole 30-minute slots (minimum one slot).
+Finish / unfinish is **workflow**, not lifecycle. The description-panel Finish button and CLI `finish` only apply to **placed** tasks. Finishing a parent also finishes its nested events; deleting a parent deletes them.
+
+Duration is stored as **exact minutes** (1–1440). Occupancy on the week grid still **ceils** to 30-minute cells (`occupancySlots`: floor start, ceil end — e.g. 18:36–19:53 occupies 18:30–20:00). Node overlap uses start + duration hours × 60.
+
+Nested events (`parent_id` set, `Task.isQuick()`): not independent tasks. They are never placed on the occupancy grid, never painted as overlay bars, never treated as Fixed/Deadline/Flexible by Run Scheduler, and must lie entirely inside the parent (`AppTimeReference.rangeInside`). Clicks on their time still open the **parent**. They are listed under the parent name as `HH:mm  name  ·  N min` (week caption and Task Information). The description side panel shows **Checklist** first, then **Quick time events**. There is no Type:Fixed on a nested row. Add-task does not pick a parent; only **Add quick event** on a placed parent does.
+
+Leftover unfinished **PAST** work is copied onto the next later placed session with the **same name** (case-insensitive). If none exists yet, the past task gets a hold note and the UI can offer a follow-up Flexible task. Category/subcategory are gone from the model; leftover matching does not use them. Unused SQL columns `category` / `subcategory` may still exist on old DBs (`ALTER ADD COLUMN`) and are not read or written.
 
 A file import row that has **both** a deadline and a fixed start is skipped.
 
 ---
 
-## 9. Files on this PC
+## 8a. JavaFX week grid
+
+`WeekGridBuilder` paints two layers:
+
+1. **Occupancy** — rounded 30-minute cells for **parent** tasks only. Nested events never occupy. Finished tasks use the green stripe. Live occupancy (dark) `#2f92e0`; after the task’s exact end `#5c636c`. Light occupancy live `#c5d8ec`, ended `#9eb4c8`. Empty now/future (dark) paper `#243044`, today empty `#2e3c56`, hover `#3b4c6a`; past empty `#0b0c0e`. Light empty tiles keep cream paper / today / past from `BuiltinThemes.LIGHT`.
+2. **Real-time overlay** — exact-minute translucent bars for **parents only**, plus a start tick. View → **Real-time overlay** (default on, `realtimeOverlay` in `.scheduler/login.txt`). Nested events are **not** drawn as overlay bars. The red “now” line is separate (current week only).
+
+Click: always `system.mainTask(...)`. Nested / cursor-over-nested still opens the parent. Empty future cells open Add task. Right-click on a parent opens Task Information (Y offset 0.45). Drag-over a future empty cell: green border if the drop fits, red if not.
+
+Blocked-times editor: **Every day** (default) vs **Range** (mutually exclusive); **Exception** reveals weekdays and the matching from/to dates. New blocked rows are rejected when they overlap a task or another blocked row of the same kind (`blockedOverlap`: same exception flag, `clockOverlap`, and `daysCanMeet`). Weekdays are ISO 1–7.
+
+Add-task and Task Information have no category fields. Popups for add/info sit slightly above center (`centerInParentOffset` 0.7, 0.45).
+
+Typewriter: `HTMLEditor` is the writing surface. Persist `TypewriterHtml.storedText(...)` — inner writing as plain lines, never the editor’s `<html>` / `contenteditable` dump (`u003chtml` and similar). Counts (lines / words / letters) use that unwrapped text.
+
+---
+
+## 9. Reminders
+
+Device-local. Not synced. Account → **Notifications**.
+
+`.scheduler/login.txt` keys:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `reminders` | on (`true` if missing) | Master switch |
+| `reminderSound` | on | AWT beep with the popup |
+| `reminderLeads` | `0,5` | Minutes before start; `0` = when it starts |
+
+Preset ticks: 0, 5, 10, 30, 60, 120, 1440. Custom minutes 1–20160 (14 days). Empty lead list means no fires even if the master switch is on.
+
+`TaskReminders` polls every **20 s**. For each placed unfinished task and each selected lead, it fires **once** when remaining minutes are in `(lead − 2, lead]` (`lead 0`: `(-2, 0]`). Windows tray balloon (`TrayIcon.displayMessage`) plus in-app banner. Focus Assist can hide the tray balloon; the banner still shows.
+
+Web: `localStorage` `ashoreReminders` / `ashoreReminderLeads` / `ashoreReminderSound`, browser `Notification` (optional `silent`) plus a short beep. Same lead list.
+
+---
+
+## 10. Encrypt data at rest
+
+Optional. Account → Security → **Encrypt data at rest**, confirmed with the account password.
+
+- Class: `org.ashoreprospect.crypto.Vault`. Prefix **`AP1.`**. AES-GCM, PBKDF2 **120k** from **account password + userId**.
+- Files: `.scheduler/vault.txt` and `vault.device` (device wrap so remember-me can unlock without typing the password again).
+- When **on**: existing SQLite / Postgres / Typewriter rows are rewritten sealed; later writes seal on bind / Node JSON. Open on mapRow / fromNode.
+- Login unlocks; remember-me uses `unlockRemembered`; logout `Vault.lock()` because the session ended. Idle logout is the same logout — it does not toggle encryption.
+- The point is that **pgAdmin sees ciphertext**, not the task text. Ids, times, and username stay readable. A logged-in app (browser or JavaFX) always sees plaintext; login keeps a per-session wrap so refresh still decrypts. Typewriter rows in `tw_diary` / `tw_pages` / `tw_lists` exist; titles and bodies are `AP1.` when encryption is on. Empty `tw_*` with only a blob in `typewriter.content` is leftover.
+- Unlock lives in Account → Security → Encrypt data at rest, not on the calendar. Reload does not lock or unlock.
+- Browser: `server/vault.js` can unlock the same `AP1.` payload with the account password on that Security fold. Android does not implement Vault yet — it will see `AP1.` blobs unless it uses the same scheme. Do not invent a second crypto format.
+
+---
+
+## 11. Delete this account
+
+Account → Security → **Delete this account**. Requires the current password, then a confirm dialog.
+
+`POST /me/delete` with `{ "password": "…" }` (Bearer session). Wrong password → `401`. Empty password → `400`.
+
+On success Node, in one transaction:
+
+1. Deletes that user’s Typewriter rows, tasks, blocked times, reset tokens, sessions, then the `users` row.
+2. Inserts `TASK.deleted_accounts(user_id, deleted_at)` (`ON CONFLICT` refreshes `deleted_at`).
+3. Removes `server/user-files/{username}` after the transaction (best-effort).
+
+Unauthenticated `GET /account-status?userId=` returns `{ deleted: true }` **only** if that id is in `deleted_accounts`. Live users and unknown ids return `{ deleted: false }`. Do **not** treat every `401` as deletion (session revoke is not a tombstone).
+
+### Stale / offline clients
+
+A device that was off during deletion keeps its SQLite / browser cache until it next **opens and can reach Node**. Then:
+
+- Desktop: `SchedulerApp.wipeIfAccountDeleted()` on boot, when a real NIC comes up, and from the main window. If deleted: `wipeLocalCacheOnly`, `Vault.eraseLocalKeys()` (deletes `vault.txt` + `vault.device`), logout, login screen.
+- Web: same check on boot, `online`, and `401`. Clears `token`, `ashoreUserId`, in-memory tasks, and vault memory.
+- Android should call the same `GET /account-status?userId=` on open/online and wipe local data if `deleted: true`.
+
+“Clear this PC’s cache” is **not** account deletion: it flushes Typewriter to Node first, then wipes local SQLite/Typewriter and logs out. Node / Postgres stay. A failed remember-me challenge still wipes without that flush.
+
+---
+
+## 12. Files on this PC
 
 Working directory must be the **repo root**.
 
@@ -244,22 +330,34 @@ Working directory must be the **repo root**.
 | `.scheduler/server.txt` | Node URL |
 | `.scheduler/postgres.pw` | Postgres password for Java JDBC |
 | `.scheduler/session.txt` | Remember-me Bearer token |
-| `.scheduler/login.txt` | Remember + random-challenge prefs |
+| `.scheduler/login.txt` | Remember, random-challenge, reminder prefs, `idleMinutes`, `realtimeOverlay` |
 | `.scheduler/theme.txt` | Dark / light |
 | `.scheduler/smtp.txt` | SMTP host/user/from |
 | `.scheduler/smtp.env` | `SMTP_PASS` for Node |
-| `scheduler-device-id.txt` | This install’s device id |
+| `.scheduler/vault.txt` | Encrypt-at-rest wanted + wrapped key |
+| `.scheduler/vault.device` | Device wrap for remember-me unlock |
+| `scheduler-device-id.txt` | This install’s device id (Account → User info, Copy) |
 | `typewriter-images/` | Image cache |
 
-Java does not need env vars if those files exist. Fallbacks: `postgres_pw`, `PGPASSWORD`, `SCHEDULER_NODE`, `SCHEDULER_PG`.
+Java does not need env vars if those files exist. Fallbacks: `postgres_pw`, `PGPASSWORD`, `SCHEDULER_NODE`, `SCHEDULER_PG`. The app does not write `setx`.
 
-Node still needs Postgres credentials in **its** process. After server-pick `setx`, open a **new** terminal and `cd server && node server.js` (`0.0.0.0:3456`).
+Node still needs Postgres credentials in **its** process. After server-pick writes `.scheduler/postgres.pw`, restart Node yourself (`cd server && node server.js`, `0.0.0.0:3456`).
 
 ---
 
-## 10. Run (short)
+## 13. Browser UI
 
-- JDK 17+ and a JavaFX SDK on the module path (`javafx.controls`, `javafx.fxml`).
+Same Node origin (`server/index.html`, `app.js`, `shell.js`, `vault.js`). React SPA chrome: Calendar / Typewriter / Account (User / Security / Notifications / Device).
+
+Has: login/register, week chips, add/delete/finish, blocked times, nested events under the parent name, occupancy + optional real-time overlay, Typewriter (Pages → Diary → Lists), reminder leads + sound, Account Security vault unlock, delete-account, stale-client wipe, idle logout. No category/subcategory. No calendar vault bar.
+
+Does **not** have: auto-scheduler, undo/redo, drag-drop, day/month desktop layouts, Windows tray.
+
+---
+
+## 14. Run (short)
+
+- JDK **21** and JavaFX **23** (`javafx.controls`, `javafx.fxml`, `javafx.web`). Gradle Kotlin DSL; compile in IntelliJ.
 - Entry: `org.ashoreprospect.SchedulerApp`. CLI: `org.ashoreprospect.CliRunner.CLIRunner`.
-- First launch (or missing Postgres password on a non-creator PC) shows server pick; Continue writes `.scheduler/` and `setx postgres_pw`.
-- Host: PostgreSQL database `Scheduler`, then Node as above.
+- First launch (or missing Postgres password on a non-creator PC) shows server pick; Continue writes `.scheduler/server.txt` and `.scheduler/postgres.pw` only — no `setx`.
+- Host: PostgreSQL database `Scheduler`, schema `TASK`, then Node as above. Restart Node yourself after SMTP or route changes.

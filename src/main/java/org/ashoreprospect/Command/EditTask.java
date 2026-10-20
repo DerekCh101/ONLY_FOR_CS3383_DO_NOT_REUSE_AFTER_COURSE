@@ -58,8 +58,6 @@ public class EditTask implements Command {
         task.setDurationHours(s.durationHours);
         task.setDeadLineDate(s.deadlineDate);
         task.setDeadLineTime(s.deadlineTime);
-        task.setCategory(s.category);
-        task.setSubcategory(s.subcategory);
         task.setDescription(s.description);
         task.setDescriptionDone(s.descriptionDone);
         task.touchLastUpdated();
@@ -112,14 +110,9 @@ public class EditTask implements Command {
         int count = task.getDurationSlots();
         if (start < 0 || start + count > AppTimeReference.SLOTS_PER_DAY) return false;
         Task[] slots = day.returnDayGrid();
-        BlockedTimePeriod blocks = sys.getBlockedTime();
         for (int i = 0; i < count; i++) {
             Task existing = slots[start + i];
             if (existing != null && existing != task) return false;
-            if (blocks != null) {
-                java.time.LocalDateTime dt = AppTimeReference.dateTimeForSlot(col, start + i);
-                if (blocks.isBlocked(dt.toLocalDate(), dt.toLocalTime())) return false;
-            }
         }
         return true;
     }
@@ -129,8 +122,6 @@ public class EditTask implements Command {
         public double durationHours;
         public LocalDate deadlineDate;
         public LocalTime deadlineTime;
-        public String category;
-        public String subcategory;
         public String description;
         public boolean descriptionDone;
 
@@ -140,8 +131,6 @@ public class EditTask implements Command {
             s.durationHours = t.getDurationHours();
             s.deadlineDate = t.getDeadLineDate();
             s.deadlineTime = t.getDeadLineTime();
-            s.category = t.getCategory();
-            s.subcategory = t.getSubcategory();
             s.description = t.getDescription();
             s.descriptionDone = t.isDescriptionDone();
             return s;

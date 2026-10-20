@@ -10,6 +10,8 @@ import org.ashoreprospect.TaskManagementSystem;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ClearTask implements Command {
 
@@ -20,6 +22,7 @@ public class ClearTask implements Command {
     private LocalTime savedTime;
     private int savedStartSlot;
     private boolean wasPlaced;
+    private final List<Task> affiliated = new ArrayList<>();
 
     public ClearTask(Task task) {
         this.theSystem = TaskManagementSystem.getInstance();
@@ -38,6 +41,15 @@ public class ClearTask implements Command {
         if (savedDate != null && savedTime != null) {
             savedStartSlot = AppTimeReference.localTimeToSlot(savedTime);
             wasPlaced = true;
+        }
+
+        affiliated.clear();
+        if (!thisTask.isQuick()) affiliated.addAll(theSystem.quicksOf(thisTask));
+        for (Task q : affiliated) {
+            theSystem.getPlacedTasks().remove(q);
+            theSystem.getPendingTasks().remove(q);
+            theSystem.getUnscheduledTasks().remove(q);
+            theSystem.getTaskRepo().dbClearTask(q);
         }
 
         theSystem.getPlacedTasks().remove(thisTask);
@@ -85,6 +97,11 @@ public class ClearTask implements Command {
         }
 
         theSystem.getTaskRepo().dbRestoreTask(thisTask);
+        for (Task q : affiliated) {
+            if (q == null) continue;
+            if (!theSystem.getPlacedTasks().contains(q)) theSystem.getPlacedTasks().add(q);
+            theSystem.getTaskRepo().dbRestoreTask(q);
+        }
 
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);

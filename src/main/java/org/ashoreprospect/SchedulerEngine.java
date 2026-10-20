@@ -1,4 +1,4 @@
-/** Places Flexible tasks into free 30-minute slots around blocked time. */
+/** Places Flexible tasks into free 30-minute slots. Blocked time is visual only. */
 package org.ashoreprospect;
 
 import java.time.LocalDate;
@@ -39,6 +39,7 @@ public class SchedulerEngine {
     private void addIfActive(List<Task> out, List<Task> src) {
         if (src == null) return;
         for (Task task : src) {
+            if (task == null || task.isQuick()) continue;
             if (!isPast(task) && !out.contains(task)) {
                 out.add(task);
             }
@@ -62,6 +63,12 @@ public class SchedulerEngine {
             LocalDate date = task.getPlacedDate();
             LocalTime time = task.getPlacedTime();
             if (date == null || time == null) continue;
+            if (task.isQuick()) {
+                if (!system.getPlacedTasks().contains(task)) {
+                    system.getPlacedTasks().add(task);
+                }
+                continue;
+            }
 
             LocalDate column = AppTimeReference.columnDateFor(date, time);
             daysGrid.putIfAbsent(column, new Day(blockedTime));

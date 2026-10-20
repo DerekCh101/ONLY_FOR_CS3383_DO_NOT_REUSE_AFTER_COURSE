@@ -3,6 +3,7 @@ import { validateTask } from "../HelperMethods.js";
 import { userFromToken, listTasks, upsertTask, deleteTask } from "../db.js";
 import { readBody, send, parseJson, pathname, toYmd, normTime } from "../lib/httpUtil.js";
 import { taskConflict } from "../lib/overlap.js";
+import { revealPayload, hideTask } from "../lib/vaultSession.js";
 
 function clockMs(ymd, hm) {
     const day = toYmd(ymd);
@@ -24,7 +25,15 @@ export async function handleTasks(req, res) {
             return true;
         }
         try {
-            send(res, 200, { tasks: await listTasks(user.id) });
+            const rows = await listTasks(user.id);
+            const tasks = [];
+            const nested = [];
+            for (const t of rows || []) {
+                if (!t) continue;
+                if (t.parent_id || t.parentId) nested.push(t);
+                else tasks.push(t);
+            }
+            send(res, 200, await revealPayload(req, { tasks, nested }));
         } catch (e) {
             send(res, 500, { error: String(e.message || e) });
         }
@@ -90,18 +99,16 @@ export async function handleTasks(req, res) {
                 ).trim() || null,
                 user_id: authUser.id,
             };
-            if (Object.prototype.hasOwnProperty.call(body, "category")) {
-                task.category = body.category;
-            }
-            if (Object.prototype.hasOwnProperty.call(body, "subcategory")) {
-                task.subcategory = body.subcategory;
-            }
             if (Object.prototype.hasOwnProperty.call(body, "description")) {
                 task.description = body.description;
             }
             if (Object.prototype.hasOwnProperty.call(body, "description_done")
                     || Object.prototype.hasOwnProperty.call(body, "descriptionDone")) {
                 task.description_done = body.description_done ?? body.descriptionDone;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, "parent_id")
+                    || Object.prototype.hasOwnProperty.call(body, "parentId")) {
+                task.parent_id = body.parent_id ?? body.parentId;
             }
             const existing = (await listTasks(authUser.id))
                 .find((row) => String(row.id) === String(task.id));
@@ -128,8 +135,9 @@ export async function handleTasks(req, res) {
                 send(res, 409, { error: clash });
                 return true;
             }
+            await hideTask(req, task);
             await upsertTask(task);
-            send(res, 201, task);
+            send(res, 201, (await revealPayload(req, { tasks: [task] })).tasks[0]);
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
         }

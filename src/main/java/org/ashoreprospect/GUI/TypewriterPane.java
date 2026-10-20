@@ -6,7 +6,6 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
-import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
@@ -56,7 +55,7 @@ public class TypewriterPane extends BorderPane {
         }
 
         public TwNote(String id, String title, LocalDate date) {
-            this.id = id;
+            this.id = (id == null || id.isBlank()) ? UUID.randomUUID().toString() : id;
             this.title = title;
             this.date = date;
         }
@@ -78,7 +77,7 @@ public class TypewriterPane extends BorderPane {
         }
 
         public TwFolder(String id, String title) {
-            this.id = id;
+            this.id = (id == null || id.isBlank()) ? UUID.randomUUID().toString() : id;
             this.title = title;
         }
 
@@ -107,7 +106,7 @@ public class TypewriterPane extends BorderPane {
         }
 
         public TwList(String id, String title) {
-            this.id = id;
+            this.id = (id == null || id.isBlank()) ? UUID.randomUUID().toString() : id;
             this.title = title;
         }
 
@@ -150,7 +149,6 @@ public class TypewriterPane extends BorderPane {
     private final TextField addItemField = new TextField();
     private Button addListItemBtn;
     private final HTMLEditor listHtml = new HTMLEditor();
-    private final TextArea listLineNos = new TextArea("1");
     private TwItem currentListItem;
     private final VBox listsNav = new VBox(10);
     private final VBox listsEditor = new VBox(12);
@@ -161,10 +159,10 @@ public class TypewriterPane extends BorderPane {
 
     private final TextField titleField = new TextField();
     private final HTMLEditor htmlBody = new HTMLEditor();
-    private final TextArea lineNos = new TextArea("1");
     private final TextArea bodyArea = new TextArea();
     private final Label dateLabel = new Label();
     private final Label wordCount = new Label();
+    private final Label editorHint = new Label("Select a page, or click New page.");
     private final ArrayDeque<String> twUndo = new ArrayDeque<>();
     private final ArrayDeque<String> twRedo = new ArrayDeque<>();
     private String twBaseline;
@@ -182,6 +180,7 @@ public class TypewriterPane extends BorderPane {
     private javafx.event.EventHandler<KeyEvent> overlayEsc;
 
     private final PauseTransition saveDebounce = new PauseTransition(Duration.millis(400));
+    private final PauseTransition htmlReady = new PauseTransition(Duration.millis(50));
 
     public TypewriterPane() {
         getStyleClass().add("typewriter-root");
@@ -217,8 +216,10 @@ public class TypewriterPane extends BorderPane {
         setCenter(layers);
 
         applyTheme();
-        applyLoaded(TypewriterStore.load(), true);
-        TypewriterStore.syncRemoteInBackground(fresh -> Platform.runLater(() -> applyLoaded(fresh, false)));
+        applyLoaded(TypewriterStore.load(), false);
+        TypewriterStore.syncRemoteInBackground(fresh -> Platform.runLater(() -> {
+            applyLoaded(fresh, blank(fresh));
+        }));
     }
 
     public void applyTheme() {
@@ -232,11 +233,10 @@ public class TypewriterPane extends BorderPane {
         listTitleField.setStyle(twTitleCss());
         bodyArea.setStyle(twBodyCss());
         addItemField.setStyle(twItemCss());
-        lineNos.setStyle(gutterCss());
-        listLineNos.setStyle(gutterCss());
         wordCount.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 12px;");
         paintHtmlSurface(htmlBody);
         paintHtmlSurface(listHtml);
+        if (!isVisible()) return;
         rebuildCalendar();
         rebuildListRows();
         restylePills(this);
@@ -266,12 +266,6 @@ public class TypewriterPane extends BorderPane {
                 + "-fx-text-fill: " + AppTheme.ink() + ";";
     }
 
-    private static String gutterCss() {
-        return "-fx-background-color: " + AppTheme.typewriterRail() + "; -fx-control-inner-background: " + AppTheme.typewriterRail()
-                + "; -fx-font-family: Consolas, 'Courier New', monospace; -fx-font-size: 15px;"
-                + " -fx-text-fill: " + AppTheme.muted() + "; -fx-border-color: transparent;";
-    }
-
     private static String twItemCss() {
         String paper = AppTheme.isDark() ? "#1a222c" : "#fbf7ef";
         return "-fx-background-color: " + paper + "; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 14px; "
@@ -283,9 +277,18 @@ public class TypewriterPane extends BorderPane {
         l.setStyle("-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 13px;");
     }
 
+    private static boolean blank(TypewriterStore.Data data) {
+        return data == null
+                || (data.diary.isEmpty() && data.lists.isEmpty()
+                && data.pagesRoot.children.isEmpty() && data.pagesRoot.notes.isEmpty());
+    }
+
+    public void applyFromNode(TypewriterStore.Data data) {
+        applyLoaded(data, false);
+    }
+
     private void applyLoaded(TypewriterStore.Data data, boolean seedIfEmpty) {
-        if (data.diary.isEmpty() && data.lists.isEmpty()
-                && data.pagesRoot.children.isEmpty() && data.pagesRoot.notes.isEmpty()) {
+        if (blank(data)) {
             if (seedIfEmpty) {
                 seedDefaults();
                 saveAll();
@@ -299,7 +302,18 @@ public class TypewriterPane extends BorderPane {
             rebuildPageTree(data.pagesRoot);
         }
         TypewriterStore.pruneEmptyDiary(diaryPages);
-        showMode(mode);
+        if (mode == Mode.DIARY) {
+            rebuildCalendar();
+            TwNote day = diaryPages.get(diaryDate);
+            if (hasWriting(day)) bindNote(day);
+        } else if (mode == Mode.LISTS) {
+            listNames.getItems().setAll(lists);
+        } else {
+            TreeItem<Object> keep = currentNote == null ? null : findNoteById(pageTree.getRoot(), currentNote.id);
+            TreeItem<Object> pick = keep != null ? keep : findFirstNote(pageTree.getRoot());
+            if (pick != null) pageTree.getSelectionModel().select(pick);
+            else bindNote(null);
+        }
         if (!restoringTw) {
             twUndo.clear();
             twRedo.clear();
@@ -310,7 +324,7 @@ public class TypewriterPane extends BorderPane {
     public void saveAll() {
         TypewriterStore.pruneEmptyDiary(diaryPages);
         TypewriterStore.save(diaryPages, lists, pagesRoot);
-        rebuildCalendar();
+        if (mode == Mode.DIARY) rebuildCalendar();
     }
 
     public TypewriterStore.Data snapshot() {
@@ -414,14 +428,14 @@ public class TypewriterPane extends BorderPane {
                                     Runnable onYes) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: #1c2430;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.cardInk() + ";");
         Label m = new Label(body);
         m.setWrapText(true);
-        m.setStyle("-fx-text-fill: #1c2430;");
+        m.setStyle("-fx-text-fill: " + AppTheme.cardInk() + ";");
         Button yes = new Button(yesText);
         Button no = new Button(noText);
-        no.setStyle("-fx-text-fill: #1c2430; -fx-background-color: #ffffff; -fx-border-color: #1c2430;");
-        yes.setStyle("-fx-text-fill: #1c2430; -fx-background-color: #ffffff; -fx-border-color: #1c2430;");
+        no.setStyle(AppTheme.cardGhostBtnCss());
+        yes.setStyle(AppTheme.cardPrimaryBtnCss());
         HBox buttons = new HBox(10, yes, no);
         box.getChildren().addAll(h, m, buttons);
         showOverlayBox(box);
@@ -435,11 +449,12 @@ public class TypewriterPane extends BorderPane {
     private void showNoticeOverlay(String header, String body) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: #1c2430;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.cardInk() + ";");
         Label m = new Label(body);
         m.setWrapText(true);
-        m.setStyle("-fx-text-fill: #1c2430;");
+        m.setStyle("-fx-text-fill: " + AppTheme.cardInk() + ";");
         Button ok = new Button("Okay");
+        ok.setStyle(AppTheme.cardPrimaryBtnCss());
         box.getChildren().addAll(h, m, ok);
         showOverlayBox(box);
         ok.setOnAction(e -> dismissOverlay());
@@ -448,12 +463,13 @@ public class TypewriterPane extends BorderPane {
     private void showPromptOverlay(String header, String seed, Consumer<String> onOk) {
         VBox box = GuiHelper.createWhiteBox();
         Label h = new Label(header);
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: #1c2430;");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 15px; -fx-text-fill: " + AppTheme.cardInk() + ";");
         TextField field = new TextField(seed == null ? "" : seed);
-        field.setStyle("-fx-background-color: #ffffff; -fx-text-fill: #1c2430; "
-                + "-fx-prompt-text-fill: #8a8378; " + AppTheme.font());
+        field.setStyle(AppTheme.fieldCss());
         Button save = new Button("Save");
         Button cancel = new Button("Cancel");
+        save.setStyle(AppTheme.cardPrimaryBtnCss());
+        cancel.setStyle(AppTheme.cardGhostBtnCss());
         HBox buttons = new HBox(10, save, cancel);
         box.getChildren().addAll(h, field, buttons);
         showOverlayBox(box);
@@ -558,8 +574,9 @@ public class TypewriterPane extends BorderPane {
                 openList(currentList);
             }
         } else {
-            TreeItem<Object> first = findFirstNote(pageTree.getRoot());
-            if (first != null) pageTree.getSelectionModel().select(first);
+            TreeItem<Object> keep = currentNote == null ? null : findNoteById(pageTree.getRoot(), currentNote.id);
+            TreeItem<Object> pick = keep != null ? keep : findFirstNote(pageTree.getRoot());
+            if (pick != null) pageTree.getSelectionModel().select(pick);
             else bindNote(null);
         }
     }
@@ -794,10 +811,14 @@ public class TypewriterPane extends BorderPane {
             String border = isToday ? AppTheme.ink() : AppTheme.muted();
             String bg = selected ? "#1c2430" : AppTheme.paper();
             String fg = selected ? "#fbf7ef" : AppTheme.ink();
-            String weight = has ? "bold" : "normal";
+            String mark = has
+                    ? "-fx-underline: true; -fx-font-weight: bold; -fx-border-width: 0 0 2 0; "
+                    + "-fx-border-color: transparent transparent " + fg + " transparent;"
+                    : "-fx-underline: false; -fx-font-weight: normal; -fx-border-width: 1; "
+                    + "-fx-border-color: " + border + ";";
             cell.setStyle("-fx-background-color: " + bg + "; -fx-text-fill: " + fg
-                    + "; -fx-border-color: " + border + "; -fx-font-weight: " + weight
-                    + "; -fx-background-radius: 6; -fx-border-radius: 6; -fx-padding: 0;");
+                    + "; " + mark
+                    + " -fx-background-radius: 6; -fx-border-radius: 6; -fx-padding: 0;");
             cell.setOnAction(e -> openDiary(date, true));
             int row = (shift + d - 1) / 7 + 1;
             int col = (shift + d - 1) % 7;
@@ -929,16 +950,11 @@ public class TypewriterPane extends BorderPane {
         rowsScroll.setPrefHeight(160);
         rowsScroll.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
 
-        listLineNos.setEditable(false);
-        listLineNos.setFocusTraversable(false);
-        listLineNos.setPrefWidth(44);
-        listLineNos.setWrapText(false);
-        listLineNos.setStyle(gutterCss());
         listHtml.setPrefHeight(200);
         listHtml.setOnKeyReleased(e -> captureListHtml());
         listHtml.setOnMouseReleased(e -> captureListHtml());
         HBox.setHgrow(listHtml, Priority.ALWAYS);
-        wireHtmlEditorGutter(listHtml, listLineNos);
+        wireHtmlEditor(listHtml);
         VBox.setVgrow(listHtml, Priority.ALWAYS);
 
         listsEditor.getChildren().addAll(listTitleField, addRowBox, rowsScroll,
@@ -970,109 +986,42 @@ public class TypewriterPane extends BorderPane {
         currentListItem = item;
         fillingList = true;
         String html = item == null || item.text == null ? "" : item.text;
-        listHtml.setHtmlText(html.isBlank() ? "<html><body></body></html>" : html);
-        Platform.runLater(() -> paintHtmlSurface(listHtml));
-        refreshLineNosInto(listLineNos, html);
+        putHtml(listHtml, html);
+        refreshCounts(html);
         fillingList = false;
-        listHtml.setDisable(item == null);
+        listHtml.setFocusTraversable(item != null);
     }
 
     private void captureListHtml() {
         if (fillingList || currentListItem == null) return;
-        String html = listHtml.getHtmlText();
-        currentListItem.text = html == null ? "" : html;
-        refreshLineNosInto(listLineNos, currentListItem.text);
+        currentListItem.text = TypewriterHtml.storedText(listHtml.getHtmlText());
+        refreshCounts(currentListItem.text);
         touch();
     }
 
-    private void refreshLineNosInto(TextArea target, String html) {
-        if (target == null) return;
-        String plain = htmlToPlain(html);
-        int lines = Math.max(1, plain.split("\\R", -1).length);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 1; i <= lines; i++) {
-            if (i > 1) sb.append('\n');
-            sb.append(i);
-        }
-        if (!sb.toString().equals(target.getText())) target.setText(sb.toString());
+    private void refreshCounts(String html) {
+        String plain = TypewriterHtml.plainText(html);
+        int lines = Math.max(1, plain.isEmpty() ? 1 : plain.split("\\R", -1).length);
         int words = 0;
         String t = plain.trim();
         if (!t.isEmpty()) words = t.split("\\s+").length;
+        int letters = 0;
+        for (int i = 0; i < plain.length(); i++) {
+            if (Character.isLetter(plain.charAt(i))) letters++;
+        }
         wordCount.setText(lines + (lines == 1 ? " line" : " lines")
-                + " · " + words + (words == 1 ? " word" : " words"));
+                + " · " + words + (words == 1 ? " word" : " words")
+                + " · " + letters + (letters == 1 ? " letter" : " letters"));
     }
 
-    private static String htmlToPlain(String html) {
-        if (html == null || html.isBlank()) return "";
-        String s = html
-                .replaceAll("(?i)<script[\\s\\S]*?</script>", "")
-                .replaceAll("(?i)<style[\\s\\S]*?</style>", "")
-                .replaceAll("(?i)<br\\s*/?>", "\n")
-                .replaceAll("(?i)</p>", "\n")
-                .replaceAll("(?i)</div>", "\n")
-                .replaceAll("(?i)</li>", "\n")
-                .replaceAll("(?i)</h[1-6]>", "\n")
-                .replaceAll("(?i)</tr>", "\n")
-                .replaceAll("<[^>]+>", "")
-                .replace("&nbsp;", " ")
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replaceAll("&[a-zA-Z]+;", " ");
-        return s.replaceAll("\\n+$", "");
-    }
-
-    /** Sit the gutter next to the WebView (not the toolbar) and paint the page. */
-    private void wireHtmlEditorGutter(HTMLEditor editor, TextArea nos) {
-        if (editor == null || nos == null) return;
-        Runnable hook = () -> {
-            placeGutterBesidePage(editor, nos);
-            paintHtmlSurface(editor);
-        };
+    private void wireHtmlEditor(HTMLEditor editor) {
+        if (editor == null) return;
+        Runnable hook = () -> paintHtmlSurface(editor);
         editor.skinProperty().addListener((o, a, b) -> Platform.runLater(hook));
         editor.sceneProperty().addListener((o, a, b) -> {
             if (b != null) Platform.runLater(hook);
         });
         Platform.runLater(hook);
-    }
-
-    private void placeGutterBesidePage(HTMLEditor editor, TextArea nos) {
-        WebView wv = findWebView(editor);
-        if (wv == null) return;
-        Parent parent = wv.getParent();
-        if (parent instanceof HBox row && row.getChildren().contains(nos) && row.getChildren().contains(wv)) {
-            return;
-        }
-        if (nos.getParent() instanceof Pane old) old.getChildren().remove(nos);
-        nos.prefHeightProperty().unbind();
-        nos.setMinWidth(36);
-        nos.setPrefWidth(40);
-        nos.setPadding(new Insets(8, 4, 8, 2));
-        nos.setStyle(gutterCss());
-        HBox pair = new HBox(0, nos, wv);
-        HBox.setHgrow(wv, Priority.ALWAYS);
-        if (parent instanceof GridPane grid) {
-            Integer col = GridPane.getColumnIndex(wv);
-            Integer rowIdx = GridPane.getRowIndex(wv);
-            int c = col == null ? 0 : col;
-            int r = rowIdx == null ? 1 : rowIdx;
-            grid.getChildren().remove(wv);
-            GridPane.setHgrow(pair, Priority.ALWAYS);
-            GridPane.setVgrow(pair, Priority.ALWAYS);
-            grid.add(pair, c, r);
-        } else if (parent instanceof BorderPane bp) {
-            bp.setCenter(pair);
-        } else if (parent instanceof Pane pane) {
-            int i = pane.getChildren().indexOf(wv);
-            pane.getChildren().remove(wv);
-            if (i < 0) pane.getChildren().add(pair);
-            else pane.getChildren().add(i, pair);
-        } else {
-            return;
-        }
-        nos.minHeightProperty().bind(wv.heightProperty());
-        nos.prefHeightProperty().bind(wv.heightProperty());
-        watchPage(wv);
     }
 
     private void paintHtmlSurface(HTMLEditor editor) {
@@ -1085,7 +1034,8 @@ public class TypewriterPane extends BorderPane {
             wv.setPageFill(Color.web(bg));
         } catch (Exception ignored) {}
         wv.setStyle("-fx-background-color: " + bg + ";");
-        injectPageTheme(wv.getEngine(), bg, ink);
+        injectPageTheme(wv.getEngine(), bg, ink, AppTheme.muted());
+        ensureBodyEditable(editor);
         watchPage(wv);
     }
 
@@ -1095,28 +1045,76 @@ public class TypewriterPane extends BorderPane {
         WebEngine eng = wv.getEngine();
         eng.getLoadWorker().stateProperty().addListener((o, a, st) -> {
             if (st == Worker.State.SUCCEEDED) {
-                injectPageTheme(eng, AppTheme.paper(), AppTheme.ink());
+                injectPageTheme(eng, AppTheme.paper(), AppTheme.ink(), AppTheme.muted());
+                ensureBodyEditable(wv);
             }
         });
         eng.documentProperty().addListener((o, a, b) ->
-                injectPageTheme(eng, AppTheme.paper(), AppTheme.ink()));
+                injectPageTheme(eng, AppTheme.paper(), AppTheme.ink(), AppTheme.muted()));
     }
 
-    private static void injectPageTheme(WebEngine eng, String bg, String ink) {
+    private static String jsQuote(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    private static void injectPageTheme(WebEngine eng, String bg, String ink, String muted) {
         if (eng == null) return;
         try {
             eng.executeScript(
                     "try{"
-                            + "var bg='" + bg + "',ink='" + ink + "';"
+                            + "var bg='" + jsQuote(bg) + "',ink='" + jsQuote(ink)
+                            + "',muted='" + jsQuote(muted) + "';"
                             + "if(document.documentElement)document.documentElement.style.backgroundColor=bg;"
-                            + "if(document.body){document.body.style.backgroundColor=bg;document.body.style.color=ink;"
-                            + "document.body.style.fontSize='15px';document.body.style.lineHeight='22px';"
+                            + "if(document.body){document.body.contentEditable='true';"
+                            + "document.body.setAttribute('contenteditable','true');"
+                            + "document.body.style.backgroundColor=bg;document.body.style.color=ink;"
+                            + "document.body.style.fontSize='15px';document.body.style.lineHeight='1.45';"
                             + "document.body.style.fontFamily='Segoe UI, Helvetica Neue, Arial, sans-serif';"
-                            + "document.body.style.margin='8px';}"
+                            + "document.body.style.margin='0';document.body.style.padding='8px 12px 8px 44px';"
+                            + "document.body.style.position='relative';}"
                             + "var s=document.getElementById('ashore-tw-theme');"
                             + "if(!s && document.head){s=document.createElement('style');s.id='ashore-tw-theme';document.head.appendChild(s);}"
-                            + "if(s)s.textContent='html,body{background:'+bg+' !important;color:'+ink+' !important;}"
-                            + "body{font-size:15px;line-height:22px;margin:8px;}';"
+                            + "if(s)s.textContent='html,body{background:'+bg+' !important;color:'+ink+' !important;}'"
+                            + "+'body{font-size:15px;line-height:1.45;margin:0;padding:8px 12px 8px 44px;position:relative;}'"
+                            + "+'p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre{margin:0 !important;padding:0 !important;"
+                            + "line-height:normal !important;min-height:1.45em;}'"
+                            + "+'#ashore-ln{position:absolute;left:0;top:0;width:36px;pointer-events:none;user-select:none;"
+                            + "font:13px Consolas,Courier New,monospace;color:'+muted+';text-align:right;overflow:hidden;}'"
+                            + "+'#ashore-ln span{position:absolute;right:8px;left:0;display:flex;align-items:flex-start;"
+                            + "justify-content:flex-end;padding-top:2px;box-sizing:border-box;overflow:hidden;}';"
+                            + "window.ashorePaintLn=function(){"
+                            + "if(!document.body)return 1;"
+                            + "var g=document.getElementById('ashore-ln');"
+                            + "if(!g){g=document.createElement('div');g.id='ashore-ln';"
+                            + "g.setAttribute('contenteditable','false');document.body.appendChild(g);}"
+                            + "var html='';var n=0;"
+                            + "try{var bodyRect=document.body.getBoundingClientRect();"
+                            + "var range=document.createRange();range.selectNodeContents(document.body);"
+                            + "var rects=range.getClientRects();var last=-999;"
+                            + "for(var i=0;i<rects.length;i++){var r=rects[i];if(r.height<4)continue;"
+                            + "if((r.left-bodyRect.left)<40&&r.width<48)continue;"
+                            + "if(Math.abs(r.top-last)<4)continue;"
+                            + "n++;last=r.top;var top=Math.max(0,r.top-bodyRect.top);"
+                            + "var h=Math.max(16,r.height);"
+                            + "html+='<span style=\"top:'+top+'px;height:'+h+'px;\">'+n+'</span>';}"
+                            + "}catch(err){}"
+                            + "if(n<1){n=1;html='<span style=\"top:8px;height:22px;\">1</span>';}"
+                            + "if(g.innerHTML!==html)g.innerHTML=html;window.__ashoreLineCount=n;return n;};"
+            + "window.ashorePaintLnSoon=function(){if(window.__ashoreLnT)clearTimeout(window.__ashoreLnT);"
+            + "window.__ashoreLnT=setTimeout(window.ashorePaintLn,50);};"
+            + "window.ashorePaintLn();"
+            + "if(!window.__ashoreLnWatch){window.__ashoreLnWatch=true;"
+            + "document.addEventListener('input',window.ashorePaintLnSoon);"
+            + "document.addEventListener('keyup',window.ashorePaintLnSoon);"
+            + "document.addEventListener('keydown',function(e){"
+            + "if(e&&(e.key==='Enter'||e.keyCode===13))window.ashorePaintLnSoon();});"
+            + "new MutationObserver(function(ms){var paint=false;"
+            + "for(var i=0;i<ms.length;i++){var t=ms[i].target;"
+            + "if(t&&(t.id==='ashore-ln'||(t.parentElement&&t.parentElement.id==='ashore-ln')))continue;"
+            + "paint=true;break;}"
+            + "if(paint)window.ashorePaintLnSoon();"
+            + "}).observe(document.documentElement,{childList:true,subtree:true,characterData:true});}"
                             + "}catch(e){}"
             );
         } catch (Exception ignored) {}
@@ -1255,7 +1253,6 @@ public class TypewriterPane extends BorderPane {
                 return;
             }
             currentNote.title = b;
-            if (mode == Mode.PAGES) pageTree.refresh();
             if (mode == Mode.DIARY) rebuildCalendar();
             touch();
         });
@@ -1267,11 +1264,6 @@ public class TypewriterPane extends BorderPane {
         bodyArea.setStyle(twBodyCss());
         bodyArea.setVisible(false);
         bodyArea.setManaged(false);
-        lineNos.setEditable(false);
-        lineNos.setFocusTraversable(false);
-        lineNos.setPrefWidth(44);
-        lineNos.setWrapText(false);
-        lineNos.setStyle(gutterCss());
         htmlBody.setPrefHeight(280);
         htmlBody.setOnKeyReleased(e -> captureHtml());
         htmlBody.setOnMouseReleased(e -> captureHtml());
@@ -1284,24 +1276,35 @@ public class TypewriterPane extends BorderPane {
         photos.setAlignment(Pos.CENTER_LEFT);
 
         HBox.setHgrow(htmlBody, Priority.ALWAYS);
-        wireHtmlEditorGutter(htmlBody, lineNos);
+        wireHtmlEditor(htmlBody);
         VBox.setVgrow(htmlBody, Priority.ALWAYS);
-        Label fmtHint = new Label("Toolbar: bold, italic, size, color, headings. Line numbers on the left.");
+        editorHint.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 13px;");
+        editorHint.setWrapText(true);
+        StackPane pageBox = new StackPane(htmlBody, editorHint);
+        StackPane.setAlignment(editorHint, Pos.CENTER);
+        VBox.setVgrow(pageBox, Priority.ALWAYS);
+        Label fmtHint = new Label("Toolbar: bold, italic, size, color, headings. Line numbers on the left of the page.");
         fmtHint.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 11px;");
-        wordCount.setText("0 lines · 0 words");
+        wordCount.setText("0 lines · 0 words · 0 letters");
         wordCount.setStyle("-fx-text-fill: " + AppTheme.muted() + "; -fx-font-size: 12px;");
-        noteEditor.getChildren().addAll(titleField, dateLabel, fmtHint, htmlBody, wordCount, photos);
+        noteEditor.getChildren().addAll(titleField, dateLabel, fmtHint, pageBox, wordCount, photos);
         noteEditor.setPadding(new Insets(28, 36, 24, 28));
     }
 
     private void bindNote(TwNote note) {
+        if (note != null && currentNote == note) {
+            syncEditorChrome();
+            ensureBodyEditable(htmlBody);
+            return;
+        }
+        if (currentNote != null && !fillingEditor) captureHtml();
         currentNote = note;
         fillingEditor = true;
         titleField.setText(note == null || note.title == null ? "" : note.title);
         String html = note == null || note.body == null ? "" : note.body;
-        htmlBody.setHtmlText(html.isBlank() ? "<html><body></body></html>" : html);
-        Platform.runLater(() -> paintHtmlSurface(htmlBody));
-        refreshLineNos(html);
+        if (note != null) note.body = TypewriterHtml.storedText(html);
+        putHtml(htmlBody, note == null ? "" : note.body);
+        refreshCounts(note == null ? "" : note.body);
         if (note == null) {
             dateLabel.setText("");
         } else if (note.date != null) {
@@ -1310,23 +1313,74 @@ public class TypewriterPane extends BorderPane {
             dateLabel.setText("Loose page");
         }
         fillingEditor = false;
-        titleField.setDisable(note == null);
-        htmlBody.setDisable(note == null);
+        syncEditorChrome();
         rebuildPhotos();
+    }
+
+    private void syncEditorChrome() {
+        boolean on = currentNote != null;
+        titleField.setDisable(!on);
+        editorHint.setText(mode == Mode.DIARY
+                ? "Pick a written day, or create this date."
+                : "Select a page, or click New page.");
+        editorHint.setVisible(!on);
+        editorHint.setManaged(!on);
+        editorHint.setMouseTransparent(on);
+        htmlBody.setDisable(false);
+        htmlBody.setMouseTransparent(false);
+        htmlBody.setFocusTraversable(true);
+        if (attachBtn != null) attachBtn.setDisable(!on);
+    }
+
+    private void putHtml(HTMLEditor editor, String html) {
+        if (editor == null) return;
+        String inner = TypewriterHtml.htmlForEditor(html);
+        editor.setDisable(false);
+        editor.setMouseTransparent(false);
+        editor.setHtmlText("<html><head></head><body contenteditable=\"true\">" + inner + "</body></html>");
+        Runnable ready = () -> {
+            paintHtmlSurface(editor);
+            ensureBodyEditable(editor);
+        };
+        Platform.runLater(ready);
+        htmlReady.stop();
+        htmlReady.setOnFinished(e -> ready.run());
+        htmlReady.playFromStart();
+    }
+
+    private void ensureBodyEditable(HTMLEditor editor) {
+        if (editor == null) return;
+        editor.setDisable(false);
+        editor.setMouseTransparent(false);
+        ensureBodyEditable(findWebView(editor));
+    }
+
+    private void ensureBodyEditable(WebView wv) {
+        if (wv == null) return;
+        wv.setDisable(false);
+        wv.setMouseTransparent(false);
+        try {
+            wv.getEngine().executeScript(
+                    "if(document.body){"
+                            + "document.body.contentEditable='true';"
+                            + "document.body.setAttribute('contenteditable','true');"
+                            + "var kids=document.body.childNodes,has=false;"
+                            + "for(var i=0;i<kids.length;i++){"
+                            + "var n=kids[i];if(n.id==='ashore-ln')continue;"
+                            + "if(n.nodeType===3&&n.nodeValue&&n.nodeValue.replace(/\\s/g,'').length){has=true;break;}"
+                            + "if(n.nodeType===1){has=true;break;}}"
+                            + "if(!has){var p=document.createElement('p');p.innerHTML='<br>';document.body.appendChild(p);}"
+                            + "}"
+            );
+        } catch (Exception ignored) {}
     }
 
     private void captureHtml() {
         if (fillingEditor || currentNote == null) return;
-        String html = htmlBody.getHtmlText();
-        String raw = html == null ? "" : html;
+        String raw = TypewriterHtml.storedText(htmlBody.getHtmlText());
         currentNote.body = raw.length() > 100000 ? raw.substring(0, 100000) : raw;
-        refreshLineNos(currentNote.body);
-        if (mode == Mode.DIARY) rebuildCalendar();
+        refreshCounts(currentNote.body);
         touch();
-    }
-
-    private void refreshLineNos(String html) {
-        refreshLineNosInto(lineNos, html);
     }
 
     private TwFolder folderOf(TreeItem<Object> item) {
@@ -1349,6 +1403,10 @@ public class TypewriterPane extends BorderPane {
         parent.getChildren().add(created);
         parent.setExpanded(true);
         pageTree.getSelectionModel().select(created);
+        Platform.runLater(() -> {
+            bindNote(note);
+            titleField.requestFocus();
+        });
         touch();
     }
 
@@ -1396,7 +1454,13 @@ public class TypewriterPane extends BorderPane {
                         "This note already has 20 images.").showAndWait();
                 break;
             }
-            currentNote.images.add(file);
+            try {
+                currentNote.images.add(ImageMetaStrip.copyStripped(file));
+            } catch (Exception ex) {
+                new Alert(Alert.AlertType.WARNING,
+                        "Could not attach “" + file.getName() + "”: metadata wipe failed.")
+                        .showAndWait();
+            }
         }
         rebuildPhotos();
         touch();
@@ -1486,6 +1550,16 @@ public class TypewriterPane extends BorderPane {
         overlay.widthProperty().addListener((o, a, b) -> applySize.run());
         overlay.heightProperty().addListener((o, a, b) -> applySize.run());
         Platform.runLater(applySize);
+    }
+
+    private TreeItem<Object> findNoteById(TreeItem<Object> item, String id) {
+        if (item == null || id == null) return null;
+        if (item.getValue() instanceof TwNote n && id.equals(n.id)) return item;
+        for (TreeItem<Object> c : item.getChildren()) {
+            TreeItem<Object> found = findNoteById(c, id);
+            if (found != null) return found;
+        }
+        return null;
     }
 
     private TreeItem<Object> findFirstNote(TreeItem<Object> item) {

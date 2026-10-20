@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 const { Pool } = pg;
 
 pg.types.setTypeParser(1082, (v) => (v == null ? null : String(v).slice(0, 10)));
-pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v)));
+pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v).slice(0, 8)));
+pg.types.setTypeParser(1266, (v) => (v == null ? null : String(v).slice(0, 8)));
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -115,6 +116,27 @@ function toYmd(v) {
     return m ? m[1] + "-" + m[2] + "-" + m[3] : "";
 }
 
+function normClock(v) {
+    const s = String(v ?? "").trim();
+    const m = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return s || null;
+    const pad = (n) => String(n).padStart(2, "0");
+    return pad(m[1]) + ":" + pad(m[2]) + ":" + pad(m[3] || "00");
+}
+
+function normBlockedRow(row) {
+    if (!row) return row;
+    const wd = row.weekday;
+    const n = wd == null || wd === "" ? null : Number(wd);
+    const rawEx = row.is_exception ?? row.isException;
+    row.specific_date = toYmd(row.specific_date || row.specificDate) || null;
+    row.start_time = normClock(row.start_time || row.startTime);
+    row.end_time = normClock(row.end_time || row.endTime);
+    row.weekday = n == null || !Number.isFinite(n) ? null : (n === 0 ? 7 : n);
+    row.is_exception = rawEx === true || rawEx === "t" || rawEx === "true" || rawEx === 1 || rawEx === "1";
+    return row;
+}
+
 function clipListRow(list) {
     if (!list || typeof list !== "object") return list;
     if (!Array.isArray(list.items) || list.items.length <= 500) return list;
@@ -191,6 +213,7 @@ export async function ensureSchema() {
     await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS session_id TEXT`);
     await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
     await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS device TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS vault_wrap TEXT`);
     await query(`
         UPDATE ${SCHEMA}.sessions
         SET session_id = token
@@ -222,6 +245,10 @@ export async function ensureSchema() {
     await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS subcategory TEXT`);
     await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description TEXT`);
     await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description_done BOOLEAN NOT NULL DEFAULT FALSE`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS parent_id TEXT`);
+    try {
+        await query(`ALTER TABLE ${SCHEMA}.tasks ALTER COLUMN duration TYPE DOUBLE PRECISION USING duration::double precision`);
+    } catch { /* already float or not postgres */ }
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.blocked (
             id TEXT PRIMARY KEY,
@@ -297,6 +324,12 @@ export async function ensureSchema() {
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.tw_meta (
             user_id VARCHAR(36) PRIMARY KEY,
             last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.deleted_accounts (
+            user_id TEXT PRIMARY KEY,
+            deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     `);
 }
@@ -387,6 +420,53 @@ export async function deleteSessionsForUser(userId, keepToken) {
     );
 }
 
+export async function isAccountDeleted(userId) {
+    if (!userId) return false;
+    const r = await query(
+        `SELECT 1 FROM ${SCHEMA}.deleted_accounts WHERE user_id = $1`,
+        [String(userId)]
+    );
+    return r.rowCount > 0;
+}
+
+/** Server-side wipe: rows, sessions, then tombstone so stale clients can clear themselves. */
+export async function deleteAccountFully(userId) {
+    const uid = String(userId || "");
+    if (!uid) throw new Error("user id required");
+    const user = await findUserById(uid);
+    const username = user && user.username ? user.username : "";
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM ${SCHEMA}.tw_list_items WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_lists WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_pages WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_diary WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_images WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_meta WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tasks WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.blocked WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.reset_tokens WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.users WHERE id::text = $1`, [uid]);
+        await client.query(
+            `INSERT INTO ${SCHEMA}.deleted_accounts(user_id) VALUES ($1)
+             ON CONFLICT (user_id) DO UPDATE SET deleted_at = now()`,
+            [uid]
+        );
+        await client.query("COMMIT");
+    } catch (e) {
+        try {
+            await client.query("ROLLBACK");
+        } catch (_) {}
+        throw e;
+    } finally {
+        client.release();
+    }
+    return username;
+}
+
 export async function createResetToken(userId) {
     const token = randomBytes(24).toString("hex");
     await query(
@@ -421,6 +501,47 @@ export async function createUser(id, username, passwordHash, email, question, an
         [id, str(username), passwordHash, str(email).toLowerCase(), str(question), answerHash]
     );
     return r.rows[0];
+}
+
+export async function setSessionVaultWrap(token, wrap) {
+    await query(
+        `UPDATE ${SCHEMA}.sessions SET vault_wrap = $2 WHERE token::text = $1`,
+        [String(token), wrap || null]
+    );
+}
+
+export async function getSessionVault(token) {
+    if (!token) return null;
+    const r = await query(
+        `SELECT user_id::text AS uid, vault_wrap FROM ${SCHEMA}.sessions WHERE token::text = $1`,
+        [String(token)]
+    );
+    return r.rows[0] || null;
+}
+
+export async function userHasSealedData(userId) {
+    const uid = String(userId);
+    const r = await query(
+        `SELECT EXISTS (
+            SELECT 1 FROM ${SCHEMA}.tasks WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(description, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.blocked WHERE user_id::text = $1 AND title LIKE 'AP1.%'
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.typewriter WHERE user_id::text = $1
+                AND (content LIKE 'AP1.%' OR content LIKE '%AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_pages WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(body, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_diary WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(body, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_lists WHERE user_id::text = $1 AND title LIKE 'AP1.%'
+        ) AS hit`,
+        [uid]
+    );
+    return !!(r.rows[0] && r.rows[0].hit === true);
 }
 
 export async function createSession(userId, device) {
@@ -498,10 +619,9 @@ export async function listTasks(userId) {
              workflow,
              last_updated_at,
              placement_updated_at,
-             category,
-             subcategory,
              description,
-             description_done
+             description_done,
+             parent_id
          FROM ${SCHEMA}.tasks
          WHERE user_id::text = $1
          ORDER BY placed_date NULLS LAST, placed_time NULLS LAST, title`,
@@ -518,8 +638,8 @@ export async function upsertTask(task) {
         `INSERT INTO ${SCHEMA}.tasks(
             id, user_id, title, duration, state, placed_date, placed_time,
             deadline_date, deadline_time, lifecycle, workflow, last_updated_at, placement_updated_at,
-            category, subcategory, description, description_done
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,''),COALESCE($15,''),COALESCE($16,''),COALESCE($17,FALSE))
+            description, description_done, parent_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,''),COALESCE($15,FALSE),$16)
              ON CONFLICT (id) DO UPDATE SET
             title = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.title ELSE ${SCHEMA}.tasks.title END,
             duration = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.duration ELSE ${SCHEMA}.tasks.duration END,
@@ -532,10 +652,9 @@ export async function upsertTask(task) {
             placed_date = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_date ELSE ${SCHEMA}.tasks.placed_date END,
             placed_time = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_time ELSE ${SCHEMA}.tasks.placed_time END,
             placement_updated_at = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placement_updated_at ELSE ${SCHEMA}.tasks.placement_updated_at END,
-            category = CASE WHEN $14 IS NULL THEN ${SCHEMA}.tasks.category WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $14 ELSE ${SCHEMA}.tasks.category END,
-            subcategory = CASE WHEN $15 IS NULL THEN ${SCHEMA}.tasks.subcategory WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $15 ELSE ${SCHEMA}.tasks.subcategory END,
-            description = CASE WHEN $16 IS NULL THEN ${SCHEMA}.tasks.description WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $16 ELSE ${SCHEMA}.tasks.description END,
-            description_done = CASE WHEN $17 IS NULL THEN ${SCHEMA}.tasks.description_done WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $17 ELSE ${SCHEMA}.tasks.description_done END
+            description = CASE WHEN $14 IS NULL THEN ${SCHEMA}.tasks.description WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $14 ELSE ${SCHEMA}.tasks.description END,
+            description_done = CASE WHEN $15 IS NULL THEN ${SCHEMA}.tasks.description_done WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $15 ELSE ${SCHEMA}.tasks.description_done END,
+            parent_id = CASE WHEN $16 IS NULL THEN ${SCHEMA}.tasks.parent_id WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $16 ELSE ${SCHEMA}.tasks.parent_id END
                                  WHERE ${SCHEMA}.tasks.user_id::text = $2`,
         [
             id,
@@ -551,10 +670,9 @@ export async function upsertTask(task) {
             str(first(task, ["workflow"])) || "UNFINISHED",
             str(first(task, ["last_updated_at", "lastUpdatedAt"])) || new Date().toISOString(),
             str(first(task, ["placement_updated_at", "placementUpdatedAt"])) || new Date().toISOString(),
-            extraText(task, ["category"]),
-            extraText(task, ["subcategory"]),
             extraText(task, ["description"]),
-            extraBool(task, ["description_done", "descriptionDone"])
+            extraBool(task, ["description_done", "descriptionDone"]),
+            extraText(task, ["parent_id", "parentId"])
         ]
     );
     return task;
@@ -575,7 +693,7 @@ export async function listBlocked(userId) {
          ORDER BY start_time NULLS LAST, specific_date NULLS LAST`,
         [String(userId)]
     );
-    return r.rows;
+    return r.rows.map(normBlockedRow);
 }
 
 export async function upsertBlocked(row) {
@@ -731,9 +849,9 @@ async function saveStructured(userId, bundle, at) {
 
     let pi = 0;
     for (const page of bundle.pages || []) {
-        if (!page || page.kind === "folder") continue;
-        const id = str(page.id);
+        const id = str(page && page.id);
         if (!id) continue;
+        const kind = str(page.kind) || "note";
         await query(
             `INSERT INTO ${SCHEMA}.tw_pages(id, user_id, parent_id, kind, title, body, images, pos)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -741,8 +859,8 @@ async function saveStructured(userId, bundle, at) {
                 id,
                 uid,
                 str(page.parent_id) || "root",
-                str(page.kind) || "note",
-                str(page.title) || "page",
+                kind,
+                str(page.title) || (kind === "folder" ? "folder" : "page"),
                 String(page.body || ""),
                 imageText(page),
                 page.pos == null ? pi : Number(page.pos)
@@ -808,7 +926,8 @@ export async function upsertTypewriter(userId, content, lastUpdatedAt) {
         if (!r.rowCount) {
             return getTypewriter(userId);
         }
-        await saveStructured(userId, { diary: [], lists: [], pages: [] }, incoming);
+        // Legacy whole-bundle AP1. blob. Do not empty tw_diary / tw_pages / tw_lists —
+        // Node cannot split that into rows. New writes send JSON with AP1. per field.
         return { content: String(content), last_updated_at: incoming };
     }
     const bundle = parseBundle(content);

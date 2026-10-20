@@ -103,18 +103,58 @@ public final class AppTimeReference {
     }
 
     public static double normalizeDurationHours(double durationHours) {
-        double stepped = Math.round(durationHours * 2.0) / 2.0;
-        if (stepped < 0.5) stepped = 0.5;
-        return stepped;
+        return minutesToHours(hoursToMinutes(durationHours));
     }
 
+    /** Exact minutes (1–24h). Grid occupancy still rounds to 30-minute cells. */
     public static int hoursToMinutes(double durationHours) {
-        return (int) Math.round(normalizeDurationHours(durationHours) * 60.0);
+        int m = (int) Math.round(durationHours * 60.0);
+        if (m < 1) m = 1;
+        if (m > MINUTES_PER_DAY) m = MINUTES_PER_DAY;
+        return m;
+    }
+
+    public static int clampMinutes(int durationMinutes) {
+        if (durationMinutes < 1) return 1;
+        if (durationMinutes > MINUTES_PER_DAY) return MINUTES_PER_DAY;
+        return durationMinutes;
     }
 
     public static int minutesToSlots(int durationMinutes) {
-        int slots = durationMinutes / MINUTES_PER_SLOT;
+        int slots = (clampMinutes(durationMinutes) + MINUTES_PER_SLOT - 1) / MINUTES_PER_SLOT;
         return Math.max(1, slots);
+    }
+
+    /** Grid occupancy: floor start to a slot, ceil the end. 18:36–19:53 → 18:30–20:00. */
+    public static int occupancySlots(LocalTime start, int durationMinutes) {
+        if (start == null) return minutesToSlots(durationMinutes);
+        int startRel = relativeMinutes(start);
+        int endRel = startRel + clampMinutes(durationMinutes);
+        int startSlot = startRel / MINUTES_PER_SLOT;
+        int endSlot = (endRel + MINUTES_PER_SLOT - 1) / MINUTES_PER_SLOT;
+        if (endRel % MINUTES_PER_SLOT == 0) endSlot = endRel / MINUTES_PER_SLOT;
+        int n = endSlot - startSlot;
+        return Math.max(1, n);
+    }
+
+    /** True when [qDate,qTime,qMins] lies entirely inside [pDate,pTime,pMins]. */
+    public static boolean rangeInside(LocalDate pDate, LocalTime pTime, int pMins,
+                                      LocalDate qDate, LocalTime qTime, int qMins) {
+        if (pDate == null || pTime == null || qDate == null || qTime == null) return false;
+        if (pMins < 1 || qMins < 1) return false;
+        LocalDateTime p0 = LocalDateTime.of(pDate, pTime);
+        LocalDateTime p1 = p0.plusMinutes(pMins);
+        LocalDateTime q0 = LocalDateTime.of(qDate, qTime);
+        LocalDateTime q1 = q0.plusMinutes(qMins);
+        return !q0.isBefore(p0) && !q1.isAfter(p1);
+    }
+
+    public static int relativeMinutes(LocalTime time) {
+        int totalMinutes = time.getHour() * 60 + time.getMinute();
+        if (totalMinutes < GRID_START_MINUTES) {
+            return (MINUTES_PER_DAY - GRID_START_MINUTES) + totalMinutes;
+        }
+        return totalMinutes - GRID_START_MINUTES;
     }
 
     public static int minutesToSlots(double durationMinutes) {

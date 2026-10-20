@@ -71,6 +71,7 @@ public class SqliteTaskRepository {
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN subcategory TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN description TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN description_done INTEGER NOT NULL DEFAULT 0"); } catch (SQLException ignored) {}
+            try { st.executeUpdate("ALTER TABLE tasks ADD COLUMN parent_id TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN title TEXT"); } catch (SQLException ignored) {}
             try { st.executeUpdate("ALTER TABLE sync_deletes ADD COLUMN user_id TEXT"); } catch (SQLException ignored) {}
 
@@ -196,16 +197,16 @@ public class SqliteTaskRepository {
     private void upsertExtras(Task task) throws SQLException {
         String sql = """
             UPDATE tasks SET
-                category = ?, subcategory = ?, description = ?, description_done = ?
+                description = ?, description_done = ?, parent_id = ?
             WHERE id = ?
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, Vault.seal(task.getCategory()));
-            ps.setString(2, Vault.seal(task.getSubcategory()));
-            ps.setString(3, Vault.seal(task.getDescription()));
-            ps.setInt(4, task.isDescriptionDone() ? 1 : 0);
-            ps.setString(5, task.getID());
+            ps.setString(1, Vault.seal(task.getDescription()));
+            ps.setInt(2, task.isDescriptionDone() ? 1 : 0);
+            String parent = task.getParentId();
+            ps.setString(3, (parent == null || parent.isBlank()) ? null : parent);
+            ps.setString(4, task.getID());
             ps.executeUpdate();
         }
     }
@@ -623,10 +624,9 @@ public class SqliteTaskRepository {
     }
 
     private static void applyExtras(Task task, ResultSet rs) {
-        try { task.setCategory(rs.getString("category")); } catch (SQLException ignored) {}
-        try { task.setSubcategory(rs.getString("subcategory")); } catch (SQLException ignored) {}
         try { task.setDescription(rs.getString("description")); } catch (SQLException ignored) {}
         try { task.setDescriptionDone(rs.getInt("description_done") != 0); } catch (SQLException ignored) {}
+        try { task.setParentId(rs.getString("parent_id")); } catch (SQLException ignored) {}
     }
 
     private void bindBlocked(PreparedStatement ps, BlockedTime b) throws SQLException {
@@ -668,8 +668,8 @@ public class SqliteTaskRepository {
     }
 
     private static int toWeekdayInt(Object weekday) {
-        if (weekday instanceof Integer i) return i;
-        if (weekday instanceof java.time.DayOfWeek d) return d.getValue() % 7;
+        if (weekday instanceof Integer i) return i == 0 ? 7 : i;
+        if (weekday instanceof java.time.DayOfWeek d) return d.getValue();
         return Integer.parseInt(weekday.toString());
     }
 

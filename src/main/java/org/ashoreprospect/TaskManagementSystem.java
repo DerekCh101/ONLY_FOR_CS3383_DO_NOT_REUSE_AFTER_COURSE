@@ -4,6 +4,7 @@ package org.ashoreprospect;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import javafx.application.Platform;
 import org.ashoreprospect.CliRunner.CLIRunner;
 import org.ashoreprospect.Command.*;
 import org.ashoreprospect.GUI.SchedulerController;
+import org.ashoreprospect.GUI.TypewriterStore;
 import org.ashoreprospect.db.TaskRepository;
 import org.ashoreprospect.net.Api;
 
@@ -31,8 +33,6 @@ public class TaskManagementSystem {
     private FetchPopOutTask popupTask;
     private TaskRepository repo;
     private volatile boolean pollRunning;
-    private final List<Task> pendingCarryOrphans = new ArrayList<>();
-    private final java.util.Set<String> carryPrompted = new java.util.HashSet<>();
 
     private TaskManagementSystem() {
         System.out.println("System Created - with RunSchedulerCommand");
@@ -88,16 +88,41 @@ public class TaskManagementSystem {
         return unscheduledTasks;
     }
 
-    public void offerCarryOrphan(Task past) {
-        if (past == null || past.getID() == null) return;
-        if (!carryPrompted.add(past.getID())) return;
-        pendingCarryOrphans.add(past);
+    /** Nested timed bits belong to a parent; they are not independent tasks. */
+    public Task mainTask(Task t) {
+        if (t == null || !t.isQuick()) return t;
+        String pid = t.getParentId();
+        if (pid == null || pid.isBlank()) return t;
+        Task found = findById(placedTasks, pid);
+        if (found == null) found = findById(unscheduledTasks, pid);
+        if (found == null) found = findById(pendingTasks, pid);
+        return found == null ? t : found;
     }
 
-    public List<Task> takeCarryOrphans() {
-        List<Task> out = new ArrayList<>(pendingCarryOrphans);
-        pendingCarryOrphans.clear();
+    public List<Task> quicksOf(Task parent) {
+        List<Task> out = new ArrayList<>();
+        if (parent == null || parent.getID() == null || parent.isQuick()) return out;
+        String id = parent.getID();
+        for (Task t : placedTasks) {
+            if (t != null && id.equals(t.getParentId())) out.add(t);
+        }
+        out.sort((a, b) -> {
+            LocalTime ta = a.getPlacedTime();
+            LocalTime tb = b.getPlacedTime();
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return ta.compareTo(tb);
+        });
         return out;
+    }
+
+    private static Task findById(List<Task> list, String id) {
+        if (list == null || id == null) return null;
+        for (Task t : list) {
+            if (t != null && id.equals(t.getID())) return t;
+        }
+        return null;
     }
 
     public BlockedTimePeriod getBlockedTime() {
@@ -154,9 +179,22 @@ public class TaskManagementSystem {
                     continue;
                 }
                 try {
-                    if (repo.pullFromNode()) {
-                        repo.reloadFromSqlite(this);
-                        refreshGUI();
+                    boolean cal = repo.pullFromNode();
+                    TypewriterStore.Data tw = TypewriterStore.pullIfRemoteNewer();
+                    if (cal || tw != null) {
+                        Platform.runLater(() -> {
+                            try {
+                                if (cal) {
+                                    repo.reloadFromSqlite(this);
+                                    refreshGUI();
+                                }
+                                if (tw != null && guiController != null) {
+                                    guiController.applyTypewriterFromNode(tw);
+                                }
+                            } catch (Exception e) {
+                                System.err.println("node poll reload: " + e.getMessage());
+                            }
+                        });
                     }
                 } catch (Exception e) {
                     System.err.println("node poll: " + e.getMessage());
@@ -171,17 +209,17 @@ public class TaskManagementSystem {
         ArrayList<Task> toSchedule = new ArrayList<>();
 
         for (Task t : new ArrayList<>(placedTasks)) {
-            if (!t.isFixedTime()) {
+            if (t != null && !t.isQuick() && !t.isFixedTime()) {
                 toSchedule.add(t);
             }
         }
         for (Task t : new ArrayList<>(pendingTasks)) {
-            if (!t.isFixedTime() && !toSchedule.contains(t)) {
+            if (t != null && !t.isQuick() && !t.isFixedTime() && !toSchedule.contains(t)) {
                 toSchedule.add(t);
             }
         }
         for (Task t : new ArrayList<>(unscheduledTasks)) {
-            if (!t.isFixedTime() && !toSchedule.contains(t)) {
+            if (t != null && !t.isQuick() && !t.isFixedTime() && !toSchedule.contains(t)) {
                 toSchedule.add(t);
             }
         }
@@ -213,6 +251,12 @@ public class TaskManagementSystem {
     public void refreshGUI() {
         if (guiController != null) {
             Platform.runLater(() -> guiController.refresh());
+        }
+    }
+
+    public void applyIdleLimit() {
+        if (guiController != null) {
+            Platform.runLater(guiController::applyIdleLimit);
         }
     }
 

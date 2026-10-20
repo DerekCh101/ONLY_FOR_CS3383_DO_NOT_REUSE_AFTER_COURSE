@@ -10,7 +10,9 @@ import {
 } from "../db.js";
 import { readBody, send, parseJson, pathname, reqUrl, isSha256 } from "../lib/httpUtil.js";
 import { saveUserImage } from "../lib/userFiles.js";
+import { stripImageMeta } from "../lib/stripImageMeta.js";
 import { sanitizeTypewriterContent } from "../lib/sanitizeHtml.js";
+import { revealPayload, hideTypewriter } from "../lib/vaultSession.js";
 
 /** New image writes per user in a rolling minute. Existing hashes do not count. */
 const imageWriteTimes = new Map();
@@ -40,7 +42,11 @@ export async function handleTypewriter(req, res) {
             return true;
         }
         try {
-            send(res, 200, await getTypewriter(user.id));
+            const payload = await revealPayload(req, await getTypewriter(user.id));
+            if (payload && typeof payload.content === "string" && !payload.content.startsWith("AP1.")) {
+                payload.content = sanitizeTypewriterContent(payload.content);
+            }
+            send(res, 200, payload);
         } catch (e) {
             console.error("GET /typewriter", e);
             send(res, 500, { error: String(e.message || e) });
@@ -57,9 +63,18 @@ export async function handleTypewriter(req, res) {
         try {
             const raw = await readBody(req);
             const body = parseJson(raw);
-            const content = sanitizeTypewriterContent(body.content == null ? "" : String(body.content));
+            const incoming = body.content == null ? "" : String(body.content);
+            let previous = "";
+            try {
+                const cur = await revealPayload(req, await getTypewriter(user.id));
+                if (cur && typeof cur.content === "string" && !cur.content.startsWith("AP1.")) {
+                    previous = cur.content;
+                }
+            } catch { /* keep incoming */ }
+            const cleaned = sanitizeTypewriterContent(incoming, previous);
+            const content = await hideTypewriter(req, cleaned);
             const last = String(body.last_updated_at ?? body.lastUpdatedAt ?? new Date().toISOString());
-            send(res, 200, await upsertTypewriter(user.id, content, last));
+            send(res, 200, await revealPayload(req, await upsertTypewriter(user.id, content, last)));
         } catch (e) {
             console.error("POST /typewriter", e);
             send(res, 400, { error: String(e.message || e) });
@@ -124,14 +139,6 @@ export async function handleTypewriter(req, res) {
                 send(res, 400, { error: "sha256 required" });
                 return true;
             }
-            if (await hasTypewriterImage(user.id, sha)) {
-                send(res, 200, { ok: true, existed: true, sha256: sha });
-                return true;
-            }
-            if (tooManyNewImages(user.id)) {
-                send(res, 429, { error: "too many image uploads, wait a minute" });
-                return true;
-            }
             if (!body.data) {
                 send(res, 400, { error: "data required" });
                 return true;
@@ -146,20 +153,40 @@ export async function handleTypewriter(req, res) {
                 send(res, 413, { error: "image too large (8 MB max)" });
                 return true;
             }
-            const got = createHash("sha256").update(buf).digest("hex");
-            if (got !== sha) {
-                send(res, 400, { error: "sha mismatch" });
+            const cleaned = stripImageMeta(buf, name, mime);
+            if (!cleaned.bytes || cleaned.bytes.length < 24
+                    || cleaned.mime === "application/octet-stream") {
+                send(res, 400, { error: "could not strip image metadata" });
+                return true;
+            }
+            const cleanSha = createHash("sha256").update(cleaned.bytes).digest("hex");
+            if (await hasTypewriterImage(user.id, cleanSha)) {
+                send(res, 200, {
+                    ok: true, existed: true, sha256: cleanSha,
+                    name: cleaned.name, mime: cleaned.mime
+                });
+                return true;
+            }
+            if (tooManyNewImages(user.id)) {
+                send(res, 429, { error: "too many image uploads, wait a minute" });
+                return true;
+            }
+            if (cleaned.bytes.length > 8 * 1024 * 1024) {
+                send(res, 413, { error: "image too large (8 MB max)" });
                 return true;
             }
             try {
-                await saveUserImage(user.username, kind, sha, buf, name, mime);
+                await saveUserImage(user.username, kind, cleanSha, cleaned.bytes, cleaned.name, cleaned.mime);
             } catch (diskErr) {
                 console.error("user image folder write", diskErr);
                 send(res, 400, { error: String(diskErr.message || diskErr) });
                 return true;
             }
-            await putTypewriterImage(user.id, sha, name, mime, buf);
-            send(res, 200, { ok: true, existed: false, sha256: sha });
+            await putTypewriterImage(user.id, cleanSha, cleaned.name, cleaned.mime, cleaned.bytes);
+            send(res, 200, {
+                ok: true, existed: false, sha256: cleanSha,
+                name: cleaned.name, mime: cleaned.mime
+            });
         } catch (e) {
             console.error("POST /typewriter/images", e);
             send(res, 400, { error: String(e.message || e) });

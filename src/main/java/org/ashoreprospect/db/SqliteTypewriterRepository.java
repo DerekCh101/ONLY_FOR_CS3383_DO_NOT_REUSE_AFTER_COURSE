@@ -90,7 +90,13 @@ public class SqliteTypewriterRepository {
                 if (!rs.next()) return null;
                 String s = rs.getString(1);
                 if (s == null || s.isBlank()) return null;
-                return Instant.parse(s);
+                Instant parsed = TaskRepository.normalizeInstant(s);
+                if (parsed != null) return parsed;
+                try {
+                    return Instant.parse(s);
+                } catch (Exception e) {
+                    return null;
+                }
             }
         }
     }
@@ -147,7 +153,16 @@ public class SqliteTypewriterRepository {
                            Map<LocalDate, TypewriterPane.TwNote> diary,
                            List<TypewriterPane.TwList> lists,
                            TypewriterPane.TwFolder pagesRoot) throws SQLException {
+        replaceAll(uid, diary, lists, pagesRoot, Instant.now());
+    }
+
+    public void replaceAll(String uid,
+                           Map<LocalDate, TypewriterPane.TwNote> diary,
+                           List<TypewriterPane.TwList> lists,
+                           TypewriterPane.TwFolder pagesRoot,
+                           Instant lastUpdated) throws SQLException {
         if (uid == null || uid.isBlank()) return;
+        Instant at = lastUpdated != null ? lastUpdated : Instant.now();
         try (Connection conn = connect()) {
             conn.setAutoCommit(false);
             wipeUser(conn, uid);
@@ -196,7 +211,7 @@ public class SqliteTypewriterRepository {
                     ON CONFLICT(user_id) DO UPDATE SET last_updated_at = excluded.last_updated_at
                     """)) {
                 ps.setString(1, uid);
-                ps.setString(2, Instant.now().toString());
+                ps.setString(2, at.toString());
                 ps.executeUpdate();
             }
             conn.commit();

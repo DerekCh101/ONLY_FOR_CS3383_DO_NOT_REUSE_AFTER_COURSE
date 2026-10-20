@@ -19,6 +19,7 @@ public class Day {
         this.overloadFlag = false;
     }
 
+    /** Blocked time is visual only — it does not collide with tasks. */
     public boolean canPlace(Task task, LocalDate columnDate, int slotIndex,
                             boolean ignoreBlocked, boolean ignoreOverload) {
         int slotCount = Math.max(1, task.getDurationSlots());
@@ -34,6 +35,9 @@ public class Day {
         if (!ignoreOverload && overloadFlag) {
             return false;
         }
+        if (!ignoreBlocked) {
+            // Blocked time is shading only; tasks may sit on it.
+        }
 
         for (int i = 0; i < slotCount; i++) {
             int slot = slotIndex + i;
@@ -41,18 +45,13 @@ public class Day {
                     && !task.getID().equals(todayTaskGrid[slot].getID())) {
                 return false;
             }
-            if (!ignoreBlocked && blockedTime != null) {
-                LocalDateTime dt = AppTimeReference.dateTimeForSlot(columnDate, slot);
-                if (blockedTime.isBlocked(dt.toLocalDate(), dt.toLocalTime())) {
-                    return false;
-                }
-            }
         }
         return true;
     }
 
     public void placeTask(int slotIndex, Task task) {
-        if (task == null || slotIndex < 0 || slotIndex >= todayTaskGrid.length) return;
+        if (task == null || task.isQuick()) return;
+        if (slotIndex < 0 || slotIndex >= todayTaskGrid.length) return;
         int slotCount = task.getDurationSlots();
         if (slotCount < 1) slotCount = 1;
         if (slotIndex + slotCount > todayTaskGrid.length) {

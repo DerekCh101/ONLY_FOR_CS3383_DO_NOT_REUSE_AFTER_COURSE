@@ -33,11 +33,22 @@ public class SchedulerApp extends Application {
         stage = primaryStage;
         WindowFrame.install(stage);
         NetworkWatch.start();
+        NetworkWatch.addListener(online -> {
+            if (!online) return;
+            Platform.runLater(() -> {
+                if (wipeIfAccountDeleted()) returnToLogin();
+            });
+        });
         if (Api.INSTANCE.restoreSession()) {
+            if (wipeIfAccountDeleted()) {
+                showLogin();
+                return;
+            }
             org.ashoreprospect.crypto.Vault.unlockRemembered(Api.INSTANCE.getUserId());
             showMain();
             return;
         }
+        wipeIfAccountDeleted();
         if (needServerPick()) {
             showServerPick();
         } else {
@@ -51,7 +62,30 @@ public class SchedulerApp extends Application {
         return Endpoints.postgresPassword().isBlank();
     }
 
+    /**
+     * If the server says this user id was deleted, wipe the local cache.
+     * Offline devices do this the next time they can reach Node.
+     */
+    public static boolean wipeIfAccountDeleted() {
+        String id = Api.INSTANCE.getUserId();
+        if (id == null || id.isBlank()) {
+            id = org.ashoreprospect.db.TaskRepository.peekCachedUserId();
+        }
+        if (id == null || id.isBlank()) return false;
+        if (!NetworkWatch.isOnline()) return false;
+        if (!Api.INSTANCE.isAccountDeleted(id)) return false;
+        try {
+            TaskManagementSystem.getInstance().getTaskRepo().wipeLocalCacheOnly();
+        } catch (Exception e) {
+            System.err.println("deleted-account wipe failed: " + e.getMessage());
+        }
+        org.ashoreprospect.crypto.Vault.eraseLocalKeys();
+        Api.INSTANCE.logout();
+        return true;
+    }
+
     public static void returnToLogin() {
+        org.ashoreprospect.GUI.TaskReminders.stop();
         Api.INSTANCE.logout();
         org.ashoreprospect.crypto.Vault.lock();
         resetPostgres();
@@ -107,15 +141,29 @@ public class SchedulerApp extends Application {
     private static void showBootScene(String text) {
         ProgressIndicator spin = new ProgressIndicator();
         spin.setMaxSize(48, 48);
+        spin.getStyleClass().add("boot-spin");
+        spin.setStyle("-fx-background-color: transparent; -fx-control-inner-background: transparent;");
+        spin.skinProperty().addListener((o, a, b) -> Platform.runLater(() -> stripBootSpinPlate(spin)));
         Label msg = new Label(text);
         msg.setStyle("-fx-text-fill: white; -fx-font-size: 15px;");
         VBox box = new VBox(16, spin, msg);
         box.setAlignment(Pos.CENTER);
         box.setStyle("-fx-background-color: #1c2430;");
         setStageRoot(box);
+        box.setStyle("-fx-background-color: #1c2430;");
+        Platform.runLater(() -> stripBootSpinPlate(spin));
         stage.setTitle("Ashore Prospect");
         WindowFrame.snapWorkArea();
         stage.show();
+    }
+
+    private static void stripBootSpinPlate(ProgressIndicator spin) {
+        spin.applyCss();
+        spin.layout();
+        for (String sel : new String[]{".indicator", ".spinner", ".percentage", ".progress"}) {
+            var n = spin.lookup(sel);
+            if (n != null) n.setStyle("-fx-background-color: transparent;");
+        }
     }
 
     private static void loadMain() {
@@ -151,7 +199,22 @@ public class SchedulerApp extends Application {
         ));
     }
 
+    /** In-window popup reminder (task start). */
+    public static void notifyUser(String title, String body) {
+        String line = (title == null || title.isBlank() ? "" : title + " — ")
+                + (body == null ? "" : body);
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> showToast(line, false, 7));
+        } else {
+            showToast(line, false, 7);
+        }
+    }
+
     private static void showToast(String msg, boolean bad) {
+        showToast(msg, bad, 2.6);
+    }
+
+    private static void showToast(String msg, boolean bad, double seconds) {
         if (stage == null || stage.getScene() == null) return;
         Parent root = stage.getScene().getRoot();
         StackPane stack = root instanceof StackPane s
@@ -159,6 +222,8 @@ public class SchedulerApp extends Application {
                 : org.ashoreprospect.GUI.WindowFrame.frame();
         if (stack == null) return;
         Label toast = new Label(msg);
+        toast.setWrapText(true);
+        toast.setMaxWidth(420);
         toast.setStyle(
                 (bad
                         ? "-fx-background-color: #8b1e1e; -fx-text-fill: #f3eee4;"
@@ -169,7 +234,7 @@ public class SchedulerApp extends Application {
         StackPane.setAlignment(toast, Pos.BOTTOM_CENTER);
         StackPane.setMargin(toast, new Insets(0, 0, 28, 0));
         stack.getChildren().add(toast);
-        PauseTransition hide = new PauseTransition(Duration.seconds(2.6));
+        PauseTransition hide = new PauseTransition(Duration.seconds(seconds));
         hide.setOnFinished(e -> stack.getChildren().remove(toast));
         hide.play();
     }

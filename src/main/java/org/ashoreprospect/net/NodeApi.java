@@ -90,7 +90,9 @@ public class NodeApi {
 
     public List<Map<String, String>> getTasks() throws Exception {
         String json = request("GET", "/tasks", null, true, READ_MS);
-        return objectsIn(json, "tasks");
+        List<Map<String, String>> out = objectsIn(json, "tasks");
+        out.addAll(objectsIn(json, "nested"));
+        return out;
     }
 
     public List<Map<String, String>> getBlocked() throws Exception {
@@ -113,7 +115,7 @@ public class NodeApi {
     public boolean typewriterImageExists(String sha) throws Exception {
         if (sha == null || sha.isBlank()) return false;
         try {
-            String json = request("GET", "/typewriter/images/" + sha + "?meta=1", null, true, READ_MS);
+            String json = request("GET", "/typewriter/images/" + sha + "?meta=1", null, true, IMAGE_READ_MS);
             String exists = extract(json, "exists");
             String got = extract(json, "sha256");
             return "true".equalsIgnoreCase(exists) || sha.equalsIgnoreCase(got);
@@ -179,6 +181,22 @@ public class NodeApi {
 
     public Map<String, String> getMe() throws Exception {
         return firstObject(request("GET", "/me", null, true, READ_MS));
+    }
+
+    public Map<String, String> deleteAccount(String password) throws Exception {
+        String body = "{\"password\":\"" + escape(password == null ? "" : password) + "\"}";
+        return firstObject(request("POST", "/me/delete", body, true, AUTH_READ_MS));
+    }
+
+    public boolean isAccountDeleted(String userId) {
+        if (userId == null || userId.isBlank()) return false;
+        try {
+            String q = java.net.URLEncoder.encode(userId.trim(), StandardCharsets.UTF_8);
+            String json = request("GET", "/account-status?userId=" + q, null, false, READ_MS);
+            return "true".equalsIgnoreCase(first(extract(json, "deleted")));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public Map<String, String> saveEmail(String email) throws Exception {
@@ -351,6 +369,9 @@ public class NodeApi {
         if (pw && (low.contains("min 8") || low.contains("too short"))) {
             return "New password must be at least 8 characters.";
         }
+        if (path != null && path.contains("/me/delete") && code == 401) {
+            return "Password is wrong.";
+        }
         if (code == 401 && (low.contains("login") || low.isBlank())) {
             return "Your login expired. Sign in again, then retry.";
         }
@@ -411,17 +432,20 @@ public class NodeApi {
 
     private static List<Map<String, String>> objectsIn(String json, String arrayKey) {
         List<Map<String, String>> out = new ArrayList<>();
-        if (json == null) return out;
+        if (json == null || arrayKey == null) return out;
         String needle = "\"" + arrayKey + "\"";
         int keyAt = json.indexOf(needle);
-        int bracket = json.indexOf('[', keyAt < 0 ? 0 : keyAt);
+        if (keyAt < 0) return out;
+        int bracket = json.indexOf('[', keyAt + needle.length());
         if (bracket < 0) return out;
+        int end = matchingBracket(json, bracket);
+        if (end < 0) end = json.length();
         int i = bracket + 1;
-        while (i < json.length()) {
+        while (i < end) {
             int open = json.indexOf('{', i);
-            if (open < 0) break;
+            if (open < 0 || open >= end) break;
             int close = matchingBrace(json, open);
-            if (close < 0) break;
+            if (close < 0 || close >= end) break;
             out.add(fieldsOf(json.substring(open, close + 1)));
             i = close + 1;
         }
@@ -510,6 +534,14 @@ public class NodeApi {
     }
 
     private static int matchingBrace(String s, int open) {
+        return matchingPair(s, open, '{', '}');
+    }
+
+    private static int matchingBracket(String s, int open) {
+        return matchingPair(s, open, '[', ']');
+    }
+
+    private static int matchingPair(String s, int open, char a, char b) {
         int depth = 0;
         boolean inStr = false;
         for (int i = open; i < s.length(); i++) {
@@ -523,8 +555,8 @@ public class NodeApi {
                 continue;
             }
             if (inStr) continue;
-            if (ch == '{') depth++;
-            else if (ch == '}') {
+            if (ch == a) depth++;
+            else if (ch == b) {
                 depth--;
                 if (depth == 0) return i;
             }

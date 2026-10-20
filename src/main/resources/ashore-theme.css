@@ -11,6 +11,12 @@
     -fx-text-fill: -ashore-ink;
 }
 
+.ashore-root .dialog-card {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-border-color: -ashore-line;
+}
+
 .ashore-root .dialog-card,
 .ashore-root .dialog-card .label {
     -fx-text-fill: -ashore-card-ink;
@@ -307,6 +313,39 @@
     -fx-cursor: default;
 }
 
+.ashore-root .account-page .accordion {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 10 2 10 2;
+    -fx-border-color: transparent transparent -ashore-line transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title > .text {
+    -fx-fill: -ashore-ink;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title > .arrow-button .arrow {
+    -fx-background-color: -ashore-ink;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 8 2 14 8;
+}
+
+.ashore-root .account-page .accordion > .titled-pane:focused > .title {
+    -fx-background-color: transparent;
+}
+
 .ashore-root .split-pane {
     -fx-background-color: -ashore-bg;
 }
@@ -407,4 +446,15 @@
 
 .separator:horizontal .line {
     -fx-border-color: -ashore-line transparent transparent transparent;
+}
+
+.ashore-root .boot-spin,
+.ashore-root .boot-spin .indicator,
+.ashore-root .boot-spin .spinner,
+.ashore-root .boot-spin .percentage,
+.ashore-root .boot-spin:indeterminate .spinner {
+    -fx-background-color: transparent;
+    -fx-control-inner-background: transparent;
+    -fx-box-border: transparent;
+    -fx-inner-border: transparent;
 }

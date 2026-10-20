@@ -67,6 +67,20 @@ public final class Vault {
         }
     }
 
+    /** Drop local vault files after the account is gone so this PC does not keep the old key. */
+    public static void eraseLocalKeys() {
+        synchronized (LOCK) {
+            wanted = false;
+            dek = null;
+            userId = null;
+            try {
+                Files.deleteIfExists(FILE);
+                Files.deleteIfExists(DEVICE);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     public static void unlockWithPassword(String uid, String password) {
         if (uid == null || uid.isBlank() || password == null || password.isBlank()) return;
         synchronized (LOCK) {
@@ -192,8 +206,6 @@ public final class Vault {
     public static void openTask(Task t) {
         if (t == null) return;
         t.setTaskName(open(t.getTaskName()));
-        t.setCategory(open(t.getCategory()));
-        t.setSubcategory(open(t.getSubcategory()));
         t.setDescription(open(t.getDescription()));
     }
 

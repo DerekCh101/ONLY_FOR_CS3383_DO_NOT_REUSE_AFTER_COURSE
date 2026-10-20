@@ -1,5 +1,5 @@
 /** Per-user upload folder for Typewriter images. */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join, basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,4 +50,15 @@ export async function saveUserImage(username, kind, sha, buf, origName, mime) {
     await mkdir(dir, { recursive: true });
     await writeFile(dest, buf);
     return dest;
+}
+
+/** Remove server/user-files/{username} after account deletion. */
+export async function removeUserFiles(username) {
+    const user = safeUsername(username);
+    const dir = resolve(ROOT, user);
+    const rootResolved = resolve(ROOT) + sep;
+    if (!dir.startsWith(rootResolved)) {
+        throw new Error("path escaped user-files");
+    }
+    await rm(dir, { recursive: true, force: true });
 }

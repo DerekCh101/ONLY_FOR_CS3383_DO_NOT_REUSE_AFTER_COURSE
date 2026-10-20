@@ -87,7 +87,8 @@ public final class TypewriterStore {
     }
 
     private static PostgresTypewriterRepository pg() {
-        if (!NetworkWatch.isOnline() || Endpoints.isCreatorHost()) {
+        // Host JavaFX does not JDBC-write Typewriter. Node owns Postgres there.
+        if (!NetworkWatch.isOnline() || Endpoints.isHostDevice()) {
             postgresAvailable = false;
             return null;
         }
@@ -124,7 +125,7 @@ public final class TypewriterStore {
 
     public static boolean hasContent(TypewriterPane.TwNote n) {
         if (n == null) return false;
-        if (n.body != null && !n.body.isBlank()) return true;
+        if (n.body != null && !TypewriterHtml.plainText(n.body).isBlank()) return true;
         return n.images != null && !n.images.isEmpty();
     }
 
@@ -161,20 +162,66 @@ public final class TypewriterStore {
 
     /** Node/Postgres after SQLite so the Typewriter tab never freezes the UI. */
     public static void syncRemoteInBackground(Consumer<Data> onRemoteNewer) {
-        if (!NetworkWatch.isOnline()) return;
         String uid = currentUserId();
-        if (uid == null || uid.isBlank()) return;
-        remoteIo.execute(() -> {
+        if (uid == null || uid.isBlank()) {
+            if (onRemoteNewer != null) onRemoteNewer.accept(new Data());
+            return;
+        }
+        if (!NetworkWatch.isOnline()) {
             try {
                 Data localData = sqlite.fetchAll(uid);
                 pruneEmptyDiary(localData.diary);
+                if (onRemoteNewer != null) onRemoteNewer.accept(localData);
+            } catch (Exception e) {
+                if (onRemoteNewer != null) onRemoteNewer.accept(new Data());
+            }
+            return;
+        }
+        remoteIo.execute(() -> {
+            Data localData = new Data();
+            try {
+                localData = sqlite.fetchAll(uid);
+                pruneEmptyDiary(localData.diary);
                 Instant local = sqlite.lastUpdated(uid);
                 Data newer = pullRemote(uid, localData, local);
-                if (newer != null && onRemoteNewer != null) onRemoteNewer.accept(newer);
+                if (onRemoteNewer != null) {
+                    onRemoteNewer.accept(newer != null ? newer : localData);
+                }
             } catch (Exception e) {
                 System.out.println("Typewriter remote sync failed: " + e.getMessage());
+                if (onRemoteNewer != null) onRemoteNewer.accept(localData);
             }
         });
+    }
+
+    private static String lastTwRemoteStamp;
+
+    /** Idle poll: pull only when Node stamp is strictly newer. Never POST. Never write Postgres. */
+    public static Data pullIfRemoteNewer() {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank() || !nodeReady() || !NetworkWatch.isOnline()) return null;
+        try {
+            Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
+            String stamp = first(remoteRow, "last_updated_at", "lastUpdatedAt");
+            if (stamp != null && stamp.equals(lastTwRemoteStamp)) return null;
+            Instant remoteTs = TaskRepository.normalizeInstant(stamp);
+            Instant local = sqlite.lastUpdated(uid);
+            if (remoteTs == null
+                    || (local != null && remoteTs.toEpochMilli() <= local.toEpochMilli())) {
+                lastTwRemoteStamp = stamp;
+                return null;
+            }
+            String remoteContent = first(remoteRow, "content");
+            if (Vault.sealed(remoteContent) && !Vault.unlocked()) return null;
+            Data remoteData = parseBundle(remoteContent);
+            pruneEmptyDiary(remoteData.diary);
+            sqlite.replaceAll(uid, remoteData.diary, remoteData.lists, remoteData.pagesRoot, remoteTs);
+            lastTwRemoteStamp = stamp;
+            System.out.println("Typewriter pulled from Node");
+            return sqlite.fetchAll(uid);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static Data pullRemote(String uid, Data localData, Instant local) throws Exception {
@@ -198,7 +245,7 @@ public final class TypewriterStore {
                 if (!isEmpty(localData)
                         && (remoteTs == null || !TaskRepository.preferRemote(local, remoteTs))) {
                     Api.INSTANCE.postTypewriter(
-                            Vault.seal(toBundle(localData)),
+                            toBundle(localData),
                             local != null ? local.toString() : Instant.now().toString()
                     );
                 }
@@ -298,7 +345,7 @@ public final class TypewriterStore {
             try {
                 Instant local = sqlite.lastUpdated(uid);
                 Api.INSTANCE.postTypewriter(
-                        Vault.seal(toBundle(data)),
+                        toBundle(data),
                         local != null ? local.toString() : Instant.now().toString()
                 );
             } catch (Exception ex) {
@@ -430,13 +477,13 @@ public final class TypewriterStore {
         for (TypewriterPane.TwNote n : data.diary.values()) {
             if (n == null) continue;
             n.title = Vault.open(n.title);
-            n.body = Vault.open(n.body);
+            n.body = TypewriterHtml.storedText(Vault.open(n.body));
         }
         for (TypewriterPane.TwList list : data.lists) {
             if (list == null) continue;
             list.title = Vault.open(list.title);
             for (TypewriterPane.TwItem item : list.items) {
-                if (item != null) item.text = Vault.open(item.text);
+                if (item != null) item.text = TypewriterHtml.storedText(Vault.open(item.text));
             }
         }
         openFolder(data.pagesRoot);
@@ -448,7 +495,7 @@ public final class TypewriterStore {
         for (TypewriterPane.TwFolder child : folder.children) openFolder(child);
         for (TypewriterPane.TwNote note : folder.notes) {
             note.title = Vault.open(note.title);
-            note.body = Vault.open(note.body);
+            note.body = TypewriterHtml.storedText(Vault.open(note.body));
         }
     }
 
@@ -489,14 +536,14 @@ public final class TypewriterStore {
             first = false;
             sb.append("{");
             field(sb, "id", list.id, true);
-            field(sb, "title", list.title, false);
+            secret(sb, "title", list.title, false);
             sb.append(",\"items\":[");
             boolean firstItem = true;
             for (TypewriterPane.TwItem item : list.items) {
                 if (!firstItem) sb.append(',');
                 firstItem = false;
                 sb.append("{");
-                field(sb, "text", item.text, true);
+                secret(sb, "text", TypewriterHtml.storedText(item.text), true);
                 sb.append(",\"done\":").append(item.done ? "true" : "false");
                 sb.append('}');
             }
@@ -514,8 +561,8 @@ public final class TypewriterStore {
         sb.append("{");
         field(sb, "date", date == null ? "" : date.toString(), true);
         field(sb, "id", n.id, false);
-        field(sb, "title", n.title, false);
-        field(sb, "body", n.body, false);
+        secret(sb, "title", n.title, false);
+        secret(sb, "body", TypewriterHtml.storedText(n.body), false);
         sb.append(",\"images\":").append(imagesToJson(n, "diary"));
         sb.append('}');
     }
@@ -530,8 +577,8 @@ public final class TypewriterStore {
             field(sb, "id", child.id, true);
             field(sb, "parent_id", parentId, false);
             field(sb, "kind", "folder", false);
-            field(sb, "title", child.title, false);
-            field(sb, "body", "", false);
+            secret(sb, "title", child.title, false);
+            secret(sb, "body", "", false);
             sb.append(",\"images\":[]");
             sb.append(",\"pos\":").append(pos[0]++);
             sb.append('}');
@@ -544,8 +591,8 @@ public final class TypewriterStore {
             field(sb, "id", note.id, true);
             field(sb, "parent_id", parentId, false);
             field(sb, "kind", "note", false);
-            field(sb, "title", note.title, false);
-            field(sb, "body", note.body, false);
+            secret(sb, "title", note.title, false);
+            secret(sb, "body", TypewriterHtml.storedText(note.body), false);
             sb.append(",\"images\":").append(imagesToJson(note, "pages"));
             sb.append(",\"pos\":").append(pos[0]++);
             sb.append('}');
@@ -559,17 +606,29 @@ public final class TypewriterStore {
             int n = 0;
             for (File f : note.images) {
                 if (n >= 20) break;
-                byte[] bytes = readBytes(f);
-                if (bytes == null) continue;
+                byte[] raw = readBytes(f);
+                if (raw == null) continue;
+                ImageMetaStrip.Result clean;
+                try {
+                    clean = ImageMetaStrip.strip(raw, f.getName());
+                } catch (Exception ex) {
+                    System.out.println("Typewriter image strip failed: " + f.getName()
+                            + " " + ex.getMessage());
+                    continue;
+                }
+                byte[] bytes = clean.bytes;
                 String sha = sha256Hex(bytes);
-                String imgName = clipImageName(f.getName());
-                if (!skipNewImagePush && !pushImage(sha, imgName, bytes, kind)) {
-                    skipNewImagePush = true;
+                String imgName = clipImageName(clean.name);
+                String storedSha = sha;
+                if (!skipNewImagePush) {
+                    String pushed = pushImage(sha, imgName, bytes, kind);
+                    if (pushed == null) skipNewImagePush = true;
+                    else storedSha = pushed;
                 }
                 if (!first) sb.append(',');
                 first = false;
                 sb.append("{");
-                field(sb, "id", sha, true);
+                field(sb, "id", storedSha, true);
                 field(sb, "name", imgName, false);
                 field(sb, "added_at", java.time.Instant.ofEpochMilli(f.lastModified()).toString(), false);
                 sb.append('}');
@@ -631,27 +690,44 @@ public final class TypewriterStore {
         }
     }
 
-    /** @return false if Node asked us to stop new uploads for a minute */
-    private static boolean pushImage(String sha, String name, byte[] bytes, String kind) {
-        if (!nodeReady() || sha == null || bytes == null) return true;
+    /** @return stored sha, or null if Node asked us to stop new uploads for a minute */
+    private static String pushImage(String sha, String name, byte[] bytes, String kind) {
+        if (!nodeReady() || sha == null || bytes == null) return sha;
         try {
             IMAGE_DIR.mkdirs();
             File cached = cacheFile(sha, name);
             if (!cached.isFile()) {
                 Files.write(cached.toPath(), bytes);
             }
-            if (Api.INSTANCE.typewriterImageExists(sha)) {
-                System.out.println("Typewriter image already on Node: " + sha);
-                return true;
+            boolean onNode = false;
+            try {
+                onNode = Api.INSTANCE.typewriterImageExists(sha);
+            } catch (Exception ex) {
+                System.out.println("Typewriter image exists check failed: " + ex.getMessage());
             }
-            Api.INSTANCE.postTypewriterImage(sha, name, Base64.getEncoder().encodeToString(bytes),
-                    kind, null);
-            System.out.println("Typewriter image uploaded: " + sha);
-            return true;
+            if (onNode) {
+                System.out.println("Typewriter image already on Node: " + sha);
+                return sha;
+            }
+            String mime = name != null && name.toLowerCase().endsWith(".jpg") ? "image/jpeg"
+                    : name != null && name.toLowerCase().endsWith(".gif") ? "image/gif"
+                    : name != null && name.toLowerCase().endsWith(".webp") ? "image/webp"
+                    : "image/png";
+            Map<String, String> posted = Api.INSTANCE.postTypewriterImage(sha, name,
+                    Base64.getEncoder().encodeToString(bytes), kind, mime);
+            String got = first(posted, "sha256", "sha", "id");
+            String stored = got != null && !got.isBlank() ? got.toLowerCase() : sha;
+            if (!stored.equalsIgnoreCase(sha)) {
+                File dest = cacheFile(stored, name);
+                if (!dest.isFile()) Files.write(dest.toPath(), bytes);
+            }
+            System.out.println("Typewriter image uploaded: " + stored);
+            return stored;
         } catch (Exception e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
             System.out.println("Typewriter image push failed: " + msg);
-            return msg.toLowerCase().contains("too many") || msg.contains("Wait a minute");
+            if (msg.toLowerCase().contains("too many") || msg.contains("Wait a minute")) return null;
+            return sha;
         }
     }
 
@@ -725,7 +801,7 @@ public final class TypewriterStore {
             if (day == null) continue;
             TypewriterPane.TwNote note = new TypewriterPane.TwNote(
                     nz(extract(obj, "id")), nz(extract(obj, "title")), day);
-            note.body = nz(extract(obj, "body"));
+            note.body = TypewriterHtml.storedText(nz(extract(obj, "body")));
             applyImageField(note, imageSlice(obj));
             if (hasContent(note)) data.diary.put(day, note);
         }
@@ -733,7 +809,8 @@ public final class TypewriterStore {
             TypewriterPane.TwList list = new TypewriterPane.TwList(
                     nz(extract(obj, "id")), nz(extract(obj, "title")));
             for (String itemObj : objectsIn(obj, "items")) {
-                TypewriterPane.TwItem item = new TypewriterPane.TwItem(nz(extract(itemObj, "text")));
+                TypewriterPane.TwItem item = new TypewriterPane.TwItem(
+                        TypewriterHtml.storedText(nz(extract(itemObj, "text"))));
                 String done = extract(itemObj, "done");
                 item.done = "true".equalsIgnoreCase(done) || "1".equals(done);
                 list.items.add(item);
@@ -752,7 +829,7 @@ public final class TypewriterStore {
                 folders.put(id, new TypewriterPane.TwFolder(id, nz(extract(obj, "title"))));
             } else {
                 TypewriterPane.TwNote note = new TypewriterPane.TwNote(id, nz(extract(obj, "title")), null);
-                note.body = nz(extract(obj, "body"));
+                note.body = TypewriterHtml.storedText(nz(extract(obj, "body")));
                 applyImageField(note, imageSlice(obj));
                 notes.add(new Object[]{id, note});
             }
@@ -808,6 +885,10 @@ public final class TypewriterStore {
         sb.append('"').append(key).append('"').append(':');
         if (value == null) sb.append("null");
         else sb.append('"').append(escape(value)).append('"');
+    }
+
+    private static void secret(StringBuilder sb, String key, String value, boolean first) {
+        field(sb, key, Vault.seal(value == null ? "" : value), first);
     }
 
     private static String escape(String s) {

@@ -42,26 +42,25 @@ public final class SecurityChallenge {
         VBox box = GuiHelper.createWhiteBox();
         box.setMaxWidth(420);
         Label h = new Label("Confirm it is you");
-        h.setStyle("-fx-font-weight: bold; -fx-font-size: 16px; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-text-fill: "
-                + AppTheme.ink() + ";");
+        h.setStyle("-fx-font-weight: bold; -fx-font-size: 16px; " + AppTheme.font()
+                + "-fx-text-fill: " + AppTheme.cardInk() + ";");
         Label q = new Label(question);
         q.setWrapText(true);
-        q.setStyle("-fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; -fx-font-size: 13px; -fx-text-fill: "
-                + AppTheme.ink() + ";");
+        q.setStyle(AppTheme.font() + "-fx-font-size: 13px; -fx-text-fill: " + AppTheme.cardInk() + ";");
         PasswordField ans = new PasswordField();
         ans.setPromptText("Your answer");
         ans.setStyle(AppTheme.fieldCss());
         Label err = new Label();
-        err.setStyle("-fx-text-fill: #8b1e1e;");
+        err.setStyle("-fx-text-fill: #c45c4a;");
         Button ok = new Button("Continue");
-        ok.setStyle("-fx-background-color: #1c2430; -fx-text-fill: #f3eee4; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        ok.setStyle(AppTheme.cardPrimaryBtnCss());
         Button cancel = new Button("Logout");
-        cancel.setStyle("-fx-background-color: transparent; -fx-text-fill: " + AppTheme.ink()
-                + "; -fx-font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;");
+        cancel.setStyle(AppTheme.cardGhostBtnCss());
         ok.setDefaultButton(true);
         VBox inner = new VBox(10, h, q, ans, err, ok, cancel);
         inner.setPadding(new Insets(4));
         box.getChildren().add(inner);
+        GuiHelper.paintInk(box);
         dim.getChildren().add(box);
         StackPane.setAlignment(box, Pos.CENTER);
         root.getChildren().add(dim);

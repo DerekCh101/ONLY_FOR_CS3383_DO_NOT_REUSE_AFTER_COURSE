@@ -40,8 +40,10 @@
                     <MenuButton fx:id="menuView" text="View" styleClass="ghost-menu" mnemonicParsing="false">
                         <items>
                             <MenuItem fx:id="menuWeek" text="Weekly View" />
+                            <MenuItem fx:id="menuDay" text="Daily View" />
                             <MenuItem fx:id="menuMonth" text="Monthly View" />
                             <MenuItem fx:id="menuThisWeek" text="Jump to current week" />
+                            <MenuItem fx:id="menuToday" text="Jump to today" />
                             <MenuItem fx:id="menuThisMonth" text="Jump to current month" />
                         </items>
                     </MenuButton>
@@ -86,13 +88,14 @@
                         <Button fx:id="btnNext" text="Next Week" />
                         <Button fx:id="btnJumpNow" mnemonicParsing="false" text="Jump to this week" />
                         <Region HBox.hgrow="ALWAYS" />
+                        <Button fx:id="btnDayView" mnemonicParsing="false" text="Daily View" />
                         <Button fx:id="btnMonthView" mnemonicParsing="false" text="Monthly View" />
                         <Button fx:id="btnAction" text="Action" mnemonicParsing="false">
                             <contextMenu>
                                 <ContextMenu>
                                     <items>
                                         <MenuItem fx:id="menuAddTask" text="Add Task" />
-                                        <MenuItem fx:id="menuUnscheduled" text="View unscheduled tasks" />
+                                        <MenuItem fx:id="menuUnscheduled" text="View task list" />
                                         <MenuItem fx:id="menuBlocked" text="Blocked times" />
                                         <MenuItem fx:id="btnImport" text="Import From Files" />
                                         <MenuItem fx:id="btnRun" text="Run Scheduler" />
@@ -110,7 +113,7 @@
                             <Pane fx:id="prevPane" styleClass="grid-edge" />
                         </left>
                         <center>
-                            <ScrollPane fx:id="gridScroll" fitToHeight="true" fitToWidth="true">
+                            <ScrollPane fx:id="gridScroll" fitToHeight="false" fitToWidth="true">
                                 <GridPane fx:id="grid" hgap="1" vgap="1" />
                             </ScrollPane>
                         </center>
@@ -154,7 +157,9 @@
                         <Label fx:id="sidePanel" wrapText="true" style="-fx-font-weight: bold;"
                                text="Task description" />
                         <Label fx:id="descMeta" wrapText="true" text="Left-click a task to see it here." />
-                        <ScrollPane fitToWidth="true" prefHeight="220" hbarPolicy="NEVER">
+                        <Label fx:id="descListHead" wrapText="true" visible="false" managed="false"
+                               text="Checklist" />
+                        <ScrollPane fitToWidth="true" prefHeight="160" hbarPolicy="NEVER">
                             <VBox fx:id="descList" spacing="6" />
                         </ScrollPane>
                         <HBox spacing="6" alignment="CENTER_LEFT">
@@ -162,7 +167,13 @@
                                        disable="true" />
                             <Button fx:id="descAddBtn" text="Add" disable="true" mnemonicParsing="false" />
                         </HBox>
-                        <Button fx:id="descSave" text="Save description" disable="true" mnemonicParsing="false" />
+                        <Label fx:id="descQuicksHead" wrapText="true" visible="false" managed="false"
+                               text="Quick time events" />
+                        <VBox fx:id="descQuicks" spacing="4" />
+                        <HBox spacing="6" alignment="CENTER_LEFT">
+                            <Button fx:id="descFinish" text="Finish" disable="true" mnemonicParsing="false" />
+                            <Button fx:id="descSave" text="Save description" disable="true" mnemonicParsing="false" />
+                        </HBox>
                     </VBox>
                 </SplitPane>
             </StackPane>
