@@ -35,6 +35,21 @@ function emptyBundle() {
     return { diary: [], lists: [], pages: [] };
 }
 
+const ASHORE_PASSWORD_HINT =
+    "Password needs 8+ characters, upper and lower case, a number, and a symbol.";
+
+function ashorePasswordReject(raw) {
+    const s = String(raw ?? "");
+    if (s.length < 8) return ASHORE_PASSWORD_HINT;
+    if (!/[a-z]/.test(s)) return ASHORE_PASSWORD_HINT;
+    if (!/[A-Z]/.test(s)) return ASHORE_PASSWORD_HINT;
+    if (!/[0-9]/.test(s)) return ASHORE_PASSWORD_HINT;
+    if (!/[^A-Za-z0-9]/.test(s)) return ASHORE_PASSWORD_HINT;
+    return null;
+}
+window.ashorePasswordReject = ashorePasswordReject;
+window.ASHORE_PASSWORD_HINT = ASHORE_PASSWORD_HINT;
+
 function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -2736,6 +2751,12 @@ async function doLogin(register) {
     try {
         const payload = { username, password };
         if (register) {
+            const weak = ashorePasswordReject(password);
+            if (weak) {
+                showErr(weak);
+                toast(weak, true);
+                return;
+            }
             payload.email = ((document.getElementById("email") || {}).value || "").trim();
             payload.question = ((document.getElementById("question") || {}).value || "").trim();
             payload.answer = ((document.getElementById("answer") || {}).value || "").trim();
@@ -3304,12 +3325,23 @@ function wipeLocalWeb() {
     if (window.AshoreVault && window.AshoreVault.eraseLocal) window.AshoreVault.eraseLocal();
     else if (window.AshoreVault) window.AshoreVault.lock();
     setToken("");
-    localStorage.removeItem("ashoreUserId");
-    localStorage.removeItem("ashoreUsername");
+    const keep = { ashoreTheme: true };
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (k === "token" || (k.startsWith("ashore") && !keep[k])) {
+            localStorage.removeItem(k);
+        }
+    }
+    try { sessionStorage.removeItem("ashoreIdleAt"); } catch (_) {}
     allTasks = [];
     allBlocked = [];
     twBundle = emptyBundle();
     twOpen = null;
+    lastTwSent = "";
+    selectedTaskId = "";
+    reuseTaskId = "";
+    pendingQuickParent = "";
     if (app) app.style.display = "none";
     if (auth) auth.style.display = "block";
 }

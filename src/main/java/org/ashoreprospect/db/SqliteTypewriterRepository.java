@@ -225,6 +225,17 @@ public class SqliteTypewriterRepository {
         }
     }
 
+    public void wipeAll() throws SQLException {
+        try (Connection conn = connect();
+             Statement st = conn.createStatement()) {
+            st.execute("DELETE FROM tw_list_items");
+            st.execute("DELETE FROM tw_lists");
+            st.execute("DELETE FROM tw_pages");
+            st.execute("DELETE FROM tw_diary");
+            st.execute("DELETE FROM tw_meta");
+        }
+    }
+
     private static void wipeUser(Connection conn, String uid) throws SQLException {
         try (PreparedStatement a = conn.prepareStatement("DELETE FROM tw_diary WHERE user_id = ?");
              PreparedStatement b = conn.prepareStatement("DELETE FROM tw_list_items WHERE user_id = ?");

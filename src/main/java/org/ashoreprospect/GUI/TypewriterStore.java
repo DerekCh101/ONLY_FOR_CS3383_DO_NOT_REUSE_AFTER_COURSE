@@ -70,8 +70,12 @@ public final class TypewriterStore {
 
     public static void wipeCurrentUser() {
         String uid = currentUserId();
+        if (uid == null || uid.isBlank()) {
+            uid = org.ashoreprospect.db.TaskRepository.peekCachedUserId();
+        }
         try {
             if (uid != null && !uid.isBlank()) sqlite.wipeUser(uid);
+            sqlite.wipeAll();
         } catch (Exception e) {
             System.err.println("wipe typewriter cache failed: " + e.getMessage());
         }

@@ -288,7 +288,8 @@ public class SchedulerController {
                 typewriterPane = null;
             }
             accountPane = new AccountPane(this::logout, this::flushThenWipeCacheAndLogout, name -> paintUser(),
-                    () -> typewriterPane == null ? TypewriterStore.load() : typewriterPane.snapshot());
+                    () -> typewriterPane == null ? TypewriterStore.load() : typewriterPane.snapshot(),
+                    this::wipeCacheAndLogout);
             accountPane.setVisible(false);
             accountPane.setManaged(false);
             if (mainStack != null) mainStack.getChildren().add(accountPane);

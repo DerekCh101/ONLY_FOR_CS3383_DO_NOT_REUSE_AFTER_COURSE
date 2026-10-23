@@ -144,6 +144,12 @@ function SecurityPage() {
             setMsg("New passwords do not match.");
             return;
         }
+        const reject = window.ashorePasswordReject;
+        const weak = typeof reject === "function" ? reject(n1) : null;
+        if (weak) {
+            setMsg(weak);
+            return;
+        }
         setMsg("Working…");
         try {
             const r = await api.send("POST", "/me/password", { oldPassword: oldP, newPassword: n1 });
@@ -238,7 +244,7 @@ function SecurityPage() {
         <${Fold} label="Change password">
             <form className="acct-form" onSubmit=${changePassword}>
                 <input type="password" placeholder="current password" value=${oldP} onChange=${(e) => setOldP(e.target.value)} />
-                <input type="password" placeholder="new password (min 8)" value=${n1} onChange=${(e) => setN1(e.target.value)} />
+                <input type="password" placeholder="new password (8+, A-z, number, symbol)" value=${n1} onChange=${(e) => setN1(e.target.value)} />
                 <input type="password" placeholder="repeat new password" value=${n2} onChange=${(e) => setN2(e.target.value)} />
                 <button type="submit">Change password</button>
             </form>

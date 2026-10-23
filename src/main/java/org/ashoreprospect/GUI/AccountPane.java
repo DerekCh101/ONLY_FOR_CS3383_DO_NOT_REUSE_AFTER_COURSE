@@ -29,6 +29,7 @@ import org.ashoreprospect.net.Api;
 import org.ashoreprospect.net.Endpoints;
 import org.ashoreprospect.net.LocalSession;
 import org.ashoreprospect.net.NetworkWatch;
+import org.ashoreprospect.net.PasswordRules;
 import org.ashoreprospect.net.SmtpSettings;
 
 import java.util.ArrayList;
@@ -48,6 +49,7 @@ public final class AccountPane extends BorderPane {
 
     private final Runnable onLogout;
     private final Runnable onWipeAndLogout;
+    private final Runnable onAccountDeleted;
     private final Consumer<String> onUsernameChanged;
     private final Supplier<TypewriterStore.Data> typewriterSnap;
     private final Label title = new Label("Account");
@@ -63,13 +65,19 @@ public final class AccountPane extends BorderPane {
     private List<Map<String, String>> sessions = new ArrayList<>();
 
     public AccountPane(Runnable onLogout, Runnable onWipeAndLogout, Consumer<String> onUsernameChanged) {
-        this(onLogout, onWipeAndLogout, onUsernameChanged, null);
+        this(onLogout, onWipeAndLogout, onUsernameChanged, null, null);
     }
 
     public AccountPane(Runnable onLogout, Runnable onWipeAndLogout, Consumer<String> onUsernameChanged,
                        Supplier<TypewriterStore.Data> typewriterSnap) {
+        this(onLogout, onWipeAndLogout, onUsernameChanged, typewriterSnap, null);
+    }
+
+    public AccountPane(Runnable onLogout, Runnable onWipeAndLogout, Consumer<String> onUsernameChanged,
+                       Supplier<TypewriterStore.Data> typewriterSnap, Runnable onAccountDeleted) {
         this.onLogout = onLogout;
         this.onWipeAndLogout = onWipeAndLogout;
+        this.onAccountDeleted = onAccountDeleted != null ? onAccountDeleted : onWipeAndLogout;
         this.onUsernameChanged = onUsernameChanged;
         this.typewriterSnap = typewriterSnap;
         getStyleClass().add("account-page");
@@ -284,7 +292,7 @@ public final class AccountPane extends BorderPane {
         PasswordField oldP = new PasswordField();
         oldP.setPromptText("current password");
         PasswordField n1 = new PasswordField();
-        n1.setPromptText("new password (min 8)");
+        n1.setPromptText("new password (8+, A-z, number, symbol)");
         PasswordField n2 = new PasswordField();
         n2.setPromptText("repeat new password");
         Label status = status();
@@ -292,6 +300,11 @@ public final class AccountPane extends BorderPane {
         save.setOnAction(e -> {
             if (!n1.getText().equals(n2.getText())) {
                 status.setText("New passwords do not match.");
+                return;
+            }
+            String weak = PasswordRules.reject(n1.getText());
+            if (weak != null) {
+                status.setText(weak);
                 return;
             }
             TypewriterStore.Data snap = typewriterSnap == null ? null : typewriterSnap.get();
@@ -311,7 +324,8 @@ public final class AccountPane extends BorderPane {
                         : "Password changed. Other sessions were signed out.";
             });
         });
-        return new VBox(10, muted("Other devices will have to log in again. This PC stays signed in."),
+        return new VBox(10, muted("Other devices will have to log in again. This PC stays signed in. "
+                        + PasswordRules.HINT),
                 oldP, n1, n2, saveRow(save), status);
     }
 
@@ -671,8 +685,11 @@ public final class AccountPane extends BorderPane {
                 runIo(go, status, () -> {
                     Api.INSTANCE.deleteAccount(pw.getText());
                     Vault.eraseLocalKeys();
+                    try {
+                        TaskManagementSystem.getInstance().getTaskRepo().wipeLocalCacheOnly();
+                    } catch (Exception ignored) {}
                     Platform.runLater(() -> {
-                        if (onWipeAndLogout != null) onWipeAndLogout.run();
+                        if (onAccountDeleted != null) onAccountDeleted.run();
                     });
                     return "Account deleted.";
                 });

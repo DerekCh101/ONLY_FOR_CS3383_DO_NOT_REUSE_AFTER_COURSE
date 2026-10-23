@@ -150,8 +150,9 @@ public final class Vault {
 
     public static void rekey(String uid, String oldPassword, String newPassword) throws Exception {
         if (!wanted) return;
-        if (newPassword == null || newPassword.length() < 8) {
-            throw new IllegalArgumentException("New password too short.");
+        String weak = org.ashoreprospect.net.PasswordRules.reject(newPassword);
+        if (weak != null) {
+            throw new IllegalArgumentException(weak);
         }
         synchronized (LOCK) {
             SecretKey oldKey = derive(uid, oldPassword);

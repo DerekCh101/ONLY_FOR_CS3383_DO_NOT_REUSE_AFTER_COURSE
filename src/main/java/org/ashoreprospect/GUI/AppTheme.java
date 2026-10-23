@@ -1,6 +1,7 @@
 /** Paints the current ThemePack onto the main scene and popups. */
 package org.ashoreprospect.GUI;
 
+import javafx.css.Styleable;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
@@ -93,24 +94,35 @@ public final class AppTheme {
         current.decorate(root);
     }
 
-    /** Popup menus are a different scene — they must get the same tokens. */
+    /**
+     * Popup menus are a different scene. Do not put -ashore-* tokens on
+     * {@code setStyle} — JavaFX types those as String and ClassCasts them
+     * when CSS asks for a Paint. Light/dark colors live in ashore-theme.css.
+     */
     public static void applyPopup(ContextMenu menu) {
         if (menu == null) return;
-        String tokens = palette().tokenStyle();
-        menu.setStyle(tokens);
-        menu.getStyleClass().removeAll("theme-light", "theme-dark", "ashore-root");
-        if (!menu.getStyleClass().contains("ashore-popup")) {
-            menu.getStyleClass().add("ashore-popup");
-        }
-        menu.getStyleClass().add(isDark() ? "theme-dark" : "theme-light");
+        markPopup(menu);
+        menu.setStyle(null);
         Runnable paintScene = () -> {
             Scene scene = menu.getScene();
             if (scene == null) return;
             ensureCss(scene);
-            if (scene.getRoot() != null) scene.getRoot().setStyle(tokens);
+            if (scene.getRoot() != null) {
+                markPopup(scene.getRoot());
+                scene.getRoot().setStyle(null);
+            }
         };
         paintScene.run();
         javafx.application.Platform.runLater(paintScene);
+    }
+
+    private static void markPopup(Styleable node) {
+        if (node == null) return;
+        node.getStyleClass().removeAll("theme-light", "theme-dark", "ashore-root");
+        if (!node.getStyleClass().contains("ashore-popup")) {
+            node.getStyleClass().add("ashore-popup");
+        }
+        node.getStyleClass().add(isDark() ? "theme-dark" : "theme-light");
     }
 
     public static void hookPopups(Parent tree) {
@@ -268,7 +280,8 @@ public final class AppTheme {
                 Parent r = w.getScene().getRoot();
                 if (r != null) {
                     ensureCss(w.getScene());
-                    r.setStyle(palette().tokenStyle());
+                    markPopup(r);
+                    r.setStyle(null);
                 }
                 continue;
             }

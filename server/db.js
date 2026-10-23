@@ -429,6 +429,16 @@ export async function isAccountDeleted(userId) {
     return r.rowCount > 0;
 }
 
+/** Ignore missing tables that Java JDBC created but Node schema never did. */
+async function tryDelete(client, sql, params) {
+    try {
+        await client.query(sql, params);
+    } catch (e) {
+        if (e && e.code === "42P01") return;
+        throw e;
+    }
+}
+
 /** Server-side wipe: rows, sessions, then tombstone so stale clients can clear themselves. */
 export async function deleteAccountFully(userId) {
     const uid = String(userId || "");
@@ -447,6 +457,13 @@ export async function deleteAccountFully(userId) {
         await client.query(`DELETE FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`, [uid]);
         await client.query(`DELETE FROM ${SCHEMA}.tasks WHERE user_id::text = $1`, [uid]);
         await client.query(`DELETE FROM ${SCHEMA}.blocked WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client,
+            `DELETE FROM ${SCHEMA}.sync_deletes_blocked WHERE id IN (
+                SELECT id FROM ${SCHEMA}.blocked_times WHERE user_id::text = $1)`,
+            [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.blocked_times WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.sync_deletes WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.devices WHERE user_id::text = $1`, [uid]);
         await client.query(`DELETE FROM ${SCHEMA}.reset_tokens WHERE user_id::text = $1`, [uid]);
         await client.query(`DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1`, [uid]);
         await client.query(`DELETE FROM ${SCHEMA}.users WHERE id::text = $1`, [uid]);

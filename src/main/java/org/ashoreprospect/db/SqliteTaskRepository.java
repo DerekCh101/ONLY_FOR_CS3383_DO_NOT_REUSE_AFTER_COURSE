@@ -134,7 +134,7 @@ public class SqliteTaskRepository {
             st.execute("DELETE FROM sync_deletes");
             st.execute("DELETE FROM blocked_times");
             st.execute("DELETE FROM sync_deletes_blocked");
-            st.execute("DELETE FROM sync_meta WHERE key IN ('last_postgres_sync_at','last_delete_sync_at')");
+            st.execute("DELETE FROM sync_meta");
         }
     }
 

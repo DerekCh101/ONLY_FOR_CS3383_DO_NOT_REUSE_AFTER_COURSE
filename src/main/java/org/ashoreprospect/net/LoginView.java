@@ -103,10 +103,11 @@ public class LoginView {
         Label title = heading("Create account");
         Label hint = muted(
                 "Email and a security question are required. Without both, "
-                        + "Forgot password cannot recover the account."
+                        + "Forgot password cannot recover the account. "
+                        + PasswordRules.HINT
         );
         TextField user = field("username");
-        PasswordField pass = secret("password (min 8)");
+        PasswordField pass = secret("password (8+, A-z, number, symbol)");
         TextField email = field("email");
         TextField question = field("security question (your own words, min 8)");
         PasswordField answer = secret("security answer (min 4)");
@@ -142,7 +143,7 @@ public class LoginView {
         question.setWrapText(true);
         TextField token = field("reset token from email / host console");
         PasswordField answer = secret("security answer");
-        PasswordField np = secret("new password (min 8)");
+        PasswordField np = secret("new password (8+, A-z, number, symbol)");
         Label err = error();
         Button send = new Button("Email me a token");
         Button apply = new Button("Reset with token + answer");
@@ -176,6 +177,11 @@ public class LoginView {
         });
         apply.setOnAction(e -> {
             err.setText("");
+            String weak = PasswordRules.reject(np.getText());
+            if (weak != null) {
+                err.setText(weak);
+                return;
+            }
             apply.setDisable(true);
             apply.setText("Working…");
             Thread t = new Thread(() -> {
@@ -227,6 +233,11 @@ public class LoginView {
         err.setText("");
         if (blank(user) || blank(password) || blank(email) || blank(question) || blank(answer)) {
             err.setText("Username, password, email, security question, and answer are all required.");
+            return;
+        }
+        String weak = PasswordRules.reject(password);
+        if (weak != null) {
+            err.setText(weak);
             return;
         }
         create.setDisable(true);

@@ -413,13 +413,29 @@
     -fx-opacity: 0.85;
 }
 
-/* Popups are a separate scene: AppTheme paints the same tokens on .ashore-popup / .context-menu */
+/*
+ * Popup scenes do not inherit scene-root tokens. Looked-up colors MUST be
+ * defined in this stylesheet (Paint), not via Node.setStyle (String) —
+ * otherwise JavaFX ClassCasts String → Paint on -fx-background-color.
+ */
 .context-menu,
 .ashore-popup {
+    -ashore-panel: #fbf7ef;
+    -ashore-ink: #1c2430;
+    -ashore-hover: #ffccdd;
+    -ashore-line: #e0d6c6;
     -fx-background-color: -ashore-panel;
     -fx-background-radius: 8;
     -fx-padding: 6 0;
     -fx-opacity: 1;
+}
+
+.context-menu.theme-dark,
+.ashore-popup.theme-dark {
+    -ashore-panel: #1c1e22;
+    -ashore-ink: #e6e8ea;
+    -ashore-hover: #3b4c6a;
+    -ashore-line: #2e3238;
 }
 
 .menu-item {

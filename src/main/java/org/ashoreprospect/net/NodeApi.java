@@ -366,8 +366,9 @@ public class NodeApi {
         if (pw && (low.contains("current password") || (code == 401 && low.contains("wrong")))) {
             return "Current password is wrong.";
         }
-        if (pw && (low.contains("min 8") || low.contains("too short"))) {
-            return "New password must be at least 8 characters.";
+        if (pw && (low.contains("min 8") || low.contains("too short")
+                || low.contains("upper") || low.contains("symbol") || low.contains("8+"))) {
+            return PasswordRules.HINT;
         }
         if (path != null && path.contains("/me/delete") && code == 401) {
             return "Password is wrong.";

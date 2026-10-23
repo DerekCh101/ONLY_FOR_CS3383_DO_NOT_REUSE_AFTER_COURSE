@@ -26,6 +26,7 @@ import { removeUserFiles } from "../lib/userFiles.js";
 import { readBody, send, parseJson, pathname, reqUrl } from "../lib/httpUtil.js";
 import { derive, wrapSessionKey } from "../lib/vaultCrypto.js";
 import { rememberVault, forgetVault, forgetVaultUser, vaultToken } from "../lib/vaultSession.js";
+import { passwordReject } from "../lib/passwordRules.js";
 
 const forgotWait = new Map();
 
@@ -106,8 +107,9 @@ export async function handleAuth(req, res) {
                 send(res, 400, { error: "username max 40 characters" });
                 return true;
             }
-            if (password.length < 8) {
-                send(res, 400, { error: "password min 8 characters" });
+            const weak = passwordReject(password);
+            if (weak) {
+                send(res, 400, { error: weak });
                 return true;
             }
             if (!email.includes("@") || !email.includes(".")) {
@@ -384,8 +386,9 @@ export async function handleAuth(req, res) {
             const body = parseJson(await readBody(req));
             const oldPassword = String(body.oldPassword ?? body.password ?? "").trim();
             const newPassword = String(body.newPassword ?? "").trim();
-            if (newPassword.length < 8) {
-                send(res, 400, { error: "new password min 8 characters" });
+            const weak = passwordReject(newPassword);
+            if (weak) {
+                send(res, 400, { error: weak });
                 return true;
             }
             const user = await findUserById(me.id);
@@ -481,8 +484,9 @@ export async function handleAuth(req, res) {
             const token = String(body.token ?? body.resetToken ?? "").trim();
             const answer = body.answer ?? body.securityAnswer ?? "";
             const newPassword = String(body.newPassword ?? "").trim();
-            if (newPassword.length < 8) {
-                send(res, 400, { error: "new password min 8 characters" });
+            const weak = passwordReject(newPassword);
+            if (weak) {
+                send(res, 400, { error: weak });
                 return true;
             }
             const row = await takeResetToken(token);
