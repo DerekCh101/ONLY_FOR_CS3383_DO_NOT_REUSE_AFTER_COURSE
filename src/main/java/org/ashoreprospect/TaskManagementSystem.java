@@ -170,7 +170,7 @@ public class TaskManagementSystem {
         Thread t = new Thread(() -> {
             while (pollRunning) {
                 try {
-                    Thread.sleep(4000);
+                    Thread.sleep(30_000);
                 } catch (InterruptedException e) {
                     break;
                 }

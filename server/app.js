@@ -1253,9 +1253,10 @@ let idleBumpBound = false;
 
 function idleMinutesPref() {
     const raw = localStorage.getItem(IDLE_MIN_KEY);
+    if (raw == null || raw === "") return 0;
     if (raw === "0") return 0;
     const n = Number(raw);
-    if (!Number.isFinite(n)) return 120;
+    if (!Number.isFinite(n)) return 0;
     if (n <= 0) return 0;
     return Math.max(5, Math.min(180, n));
 }

@@ -176,8 +176,13 @@ public final class AccountPane extends BorderPane {
         sessionsPane.expandedProperty().addListener((o, a, on) -> {
             if (Boolean.TRUE.equals(on)) loadSessionsInto(sessionsSlot);
         });
-        Accordion folds = new Accordion(
-                fold("Encrypt data at rest", encryptBox()),
+        Accordion folds = new Accordion();
+        // Encrypt is for Postgres / pgAdmin on the host, not a client-side lock.
+        // Clients unlock automatically on login; only the host toggles sealing.
+        if (Endpoints.isHostDevice()) {
+            folds.getPanes().add(fold("Encrypt data at rest", encryptBox()));
+        }
+        folds.getPanes().addAll(
                 fold("Change password", passwordForm()),
                 fold("Security question", securityForm()),
                 sessionsPane,
@@ -221,7 +226,7 @@ public final class AccountPane extends BorderPane {
         section = Section.DEVICE;
         title.setText("Device");
         VBox box = new VBox(14,
-                muted("This PC only. Idle logout only signs you out after no mouse or keyboard. Default 120 minutes. Refresh does not log you out. Encryption is a separate Security option."),
+                muted("This PC only. Idle logout signs you out after no mouse or keyboard. Default is Never. Refresh does not log you out."),
                 idlePanel(),
                 heading("Appearance"),
                 themeRow());
@@ -498,33 +503,22 @@ public final class AccountPane extends BorderPane {
         box.setSelected(Vault.wanted());
         box.setStyle(AppTheme.font() + "-fx-font-size: 13px; -fx-text-fill: " + AppTheme.ink() + ";");
         Label hint = muted(Vault.wanted()
-                ? (Vault.unlocked()
-                ? "On — Postgres stores AP1. ciphertext so pgAdmin cannot read titles, descriptions, or Typewriter. This PC can still read them while you are signed in. Idle logout and refresh do not change this option."
-                : "On — pgAdmin still sees ciphertext. Enter the account password here to read it on this PC. Idle logout only signs you out.")
-                : "Off. Turn on so pgAdmin cannot read task text. Uses your account password. Not related to idle logout or refresh.");
+                ? "On — Postgres / pgAdmin stores ciphertext. Logged-in apps (this host and every client) show plaintext after login. Not a client lock."
+                : "Off. Turn on so pgAdmin on this host cannot read task text. Clients decrypt automatically when they sign in.");
         PasswordField pw = new PasswordField();
         pw.setPromptText("Account password");
         Label status = status();
-        Button apply = primary(Vault.wanted() && !Vault.unlocked() ? "Unlock" : "Apply");
+        Button apply = primary("Apply");
         apply.setOnAction(e -> {
             boolean turnOn = box.isSelected();
             TypewriterStore.Data snap = typewriterSnap == null ? null : typewriterSnap.get();
             runIo(apply, status, () -> {
                 String uid = Api.INSTANCE.getUserId();
                 if (turnOn) {
-                    if (Vault.wanted() && !Vault.unlocked()) {
-                        Vault.unlockWithPassword(uid, pw.getText());
-                        if (!Vault.unlocked()) {
-                            throw new IllegalArgumentException("Could not unlock. Check the password.");
-                        }
-                        TaskManagementSystem.getInstance().rewriteEncryptedStores();
-                        persistVaultStores(snap);
-                        return "Unlocked. Data is readable on this PC.";
-                    }
                     Vault.enable(uid, pw.getText());
                     TaskManagementSystem.getInstance().rewriteEncryptedStores();
                     persistVaultStores(snap);
-                    return "Encryption on. Existing data rewritten. New writes are encrypted.";
+                    return "Encryption on. Existing data rewritten. New writes are encrypted for pgAdmin.";
                 }
                 Vault.disable(uid, pw.getText());
                 TaskManagementSystem.getInstance().rewriteEncryptedStores();
@@ -640,14 +634,16 @@ public final class AccountPane extends BorderPane {
                 try {
                     LocalSession.setIdleMinutes(Integer.parseInt(v.replace(" minutes", "").trim()));
                 } catch (Exception ignored) {
-                    LocalSession.setIdleMinutes(120);
+                    LocalSession.setIdleMinutes(0);
                 }
             }
             try {
                 TaskManagementSystem.getInstance().applyIdleLimit();
             } catch (Exception ignored) {}
         });
-        VBox wrap = new VBox(8, new Label("Idle logout"), idle);
+        Label conflict = muted(
+                "May conflict with Remember login — idle signs you out, while Remember keeps the next launch signed in.");
+        VBox wrap = new VBox(8, new Label("Idle logout"), idle, conflict);
         wrap.setPadding(new Insets(6, 2, 6, 2));
         return wrap;
     }
@@ -706,8 +702,9 @@ public final class AccountPane extends BorderPane {
         box.setSelected(LocalSession.wantRandomChallenge());
         box.setStyle(AppTheme.font() + "-fx-font-size: 13px; -fx-text-fill: " + AppTheme.ink() + ";");
         box.selectedProperty().addListener((o, a, on) -> LocalSession.setRandomChallenge(on));
-        HBox row = new HBox(box);
-        row.setAlignment(Pos.CENTER_LEFT);
+        Label conflict = muted(
+                "Remember login may conflict with idle logout — idle can sign you out while Remember would keep you in.");
+        VBox row = new VBox(6, box, conflict);
         row.setPadding(new Insets(6, 2, 6, 2));
         return row;
     }

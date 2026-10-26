@@ -110,13 +110,13 @@ public final class LocalSession {
     }
 
     /**
-     * Idle logout minutes on this device. 0 = never. Default 120. Allowed 5–180 when not never.
+     * Idle logout minutes on this device. 0 = never. Default never. Allowed 5–180 when not never.
      */
     public static int idleMinutes() {
         Properties p = loadPrefs();
-        if (p == null) return 120;
-        String raw = p.getProperty("idleMinutes", "120").trim();
-        if ("never".equalsIgnoreCase(raw) || "0".equals(raw)) return 0;
+        if (p == null) return 0;
+        String raw = p.getProperty("idleMinutes", "0").trim();
+        if ("never".equalsIgnoreCase(raw) || "0".equals(raw) || raw.isBlank()) return 0;
         try {
             int n = Integer.parseInt(raw);
             if (n <= 0) return 0;
@@ -124,7 +124,7 @@ public final class LocalSession {
             if (n > 180) return 180;
             return n;
         } catch (NumberFormatException e) {
-            return 120;
+            return 0;
         }
     }
 

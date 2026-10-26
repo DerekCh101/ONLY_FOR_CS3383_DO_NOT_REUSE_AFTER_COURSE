@@ -1047,10 +1047,13 @@ public class TypewriterPane extends BorderPane {
             if (st == Worker.State.SUCCEEDED) {
                 injectPageTheme(eng, AppTheme.paper(), AppTheme.ink(), AppTheme.muted());
                 ensureBodyEditable(wv);
+                restoreDocScroll(wv);
             }
         });
-        eng.documentProperty().addListener((o, a, b) ->
-                injectPageTheme(eng, AppTheme.paper(), AppTheme.ink(), AppTheme.muted()));
+        eng.documentProperty().addListener((o, a, b) -> {
+            injectPageTheme(eng, AppTheme.paper(), AppTheme.ink(), AppTheme.muted());
+            restoreDocScroll(wv);
+        });
     }
 
     private static String jsQuote(String s) {
@@ -1312,14 +1315,30 @@ public class TypewriterPane extends BorderPane {
             ensureBodyEditable(htmlBody);
             return;
         }
+        boolean sameId = note != null && currentNote != null
+                && note.id != null && note.id.equals(currentNote.id);
         if (currentNote != null && !fillingEditor) captureHtml();
+        String html = note == null || note.body == null ? "" : note.body;
+        if (note != null) note.body = TypewriterHtml.storedText(html);
+        String body = note == null ? "" : note.body;
+        // Host pull replaces TwNote instances; skip full reload when markup is unchanged.
+        if (sameId && TypewriterHtml.storedText(currentNote.body)
+                .equals(TypewriterHtml.storedText(body))) {
+            currentNote = note;
+            fillingEditor = true;
+            titleField.setText(note.title == null ? "" : note.title);
+            if (note.date != null) dateLabel.setText(note.date.toString());
+            else dateLabel.setText("Loose page");
+            fillingEditor = false;
+            syncEditorChrome();
+            rebuildPhotos();
+            return;
+        }
         currentNote = note;
         fillingEditor = true;
         titleField.setText(note == null || note.title == null ? "" : note.title);
-        String html = note == null || note.body == null ? "" : note.body;
-        if (note != null) note.body = TypewriterHtml.storedText(html);
-        putHtml(htmlBody, note == null ? "" : note.body);
-        refreshCounts(note == null ? "" : note.body);
+        putHtml(htmlBody, body, sameId);
+        refreshCounts(body);
         if (note == null) {
             dateLabel.setText("");
         } else if (note.date != null) {
@@ -1348,7 +1367,19 @@ public class TypewriterPane extends BorderPane {
     }
 
     private void putHtml(HTMLEditor editor, String html) {
+        putHtml(editor, html, false);
+    }
+
+    private void putHtml(HTMLEditor editor, String html, boolean keepScroll) {
         if (editor == null) return;
+        WebView wv = findWebView(editor);
+        if (keepScroll && wv != null) {
+            wv.getProperties().put("ashore-keep-sx", readDocScroll(wv.getEngine(), false));
+            wv.getProperties().put("ashore-keep-sy", readDocScroll(wv.getEngine(), true));
+        } else if (wv != null) {
+            wv.getProperties().remove("ashore-keep-sx");
+            wv.getProperties().remove("ashore-keep-sy");
+        }
         String inner = TypewriterHtml.htmlForEditor(html);
         editor.setDisable(false);
         editor.setMouseTransparent(false);
@@ -1356,11 +1387,42 @@ public class TypewriterPane extends BorderPane {
         Runnable ready = () -> {
             paintHtmlSurface(editor);
             ensureBodyEditable(editor);
+            restoreDocScroll(findWebView(editor));
         };
         Platform.runLater(ready);
         htmlReady.stop();
         htmlReady.setOnFinished(e -> ready.run());
         htmlReady.playFromStart();
+        if (keepScroll) {
+            PauseTransition again = new PauseTransition(Duration.millis(140));
+            again.setOnFinished(e -> restoreDocScroll(findWebView(editor)));
+            again.playFromStart();
+        }
+    }
+
+    private static int readDocScroll(WebEngine eng, boolean vertical) {
+        if (eng == null) return 0;
+        try {
+            String expr = vertical
+                    ? "(window.pageYOffset||document.documentElement.scrollTop||document.body.scrollTop||0)|0"
+                    : "(window.pageXOffset||document.documentElement.scrollLeft||document.body.scrollLeft||0)|0";
+            Object v = eng.executeScript(expr);
+            if (v instanceof Number n) return n.intValue();
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    private static void restoreDocScroll(WebView wv) {
+        if (wv == null) return;
+        Object ox = wv.getProperties().get("ashore-keep-sx");
+        Object oy = wv.getProperties().get("ashore-keep-sy");
+        if (!(ox instanceof Number) || !(oy instanceof Number)) return;
+        int x = ((Number) ox).intValue();
+        int y = ((Number) oy).intValue();
+        if (x <= 0 && y <= 0) return;
+        try {
+            wv.getEngine().executeScript("try{window.scrollTo(" + x + "," + y + ");}catch(e){}");
+        } catch (Exception ignored) {}
     }
 
     private void ensureBodyEditable(HTMLEditor editor) {

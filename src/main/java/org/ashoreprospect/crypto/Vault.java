@@ -81,15 +81,23 @@ public final class Vault {
         }
     }
 
+    /**
+     * Always derive the DEK from the login password so AP1. titles from Node
+     * decrypt on every device. {@code wanted} only controls whether new writes
+     * are sealed for pgAdmin — it must not leave ciphertext on screen after login.
+     */
     public static void unlockWithPassword(String uid, String password) {
         if (uid == null || uid.isBlank() || password == null || password.isBlank()) return;
         synchronized (LOCK) {
             loadFile();
             userId = uid;
-            if (!wanted) return;
             dek = derive(uid, password);
-            if (!canaryOk()) dek = null;
-            else writeFile(uid, true);
+            if (!canaryOk()) {
+                dek = null;
+                return;
+            }
+            // Keep a device wrap so remember-me can open sealed rows next launch.
+            writeFile(uid, wanted);
         }
     }
 
@@ -98,7 +106,6 @@ public final class Vault {
         synchronized (LOCK) {
             loadFile();
             userId = uid;
-            if (!wanted) return;
             String wrap = readMap().get("deviceWrap");
             if (wrap == null || wrap.isBlank()) return;
             try {
@@ -109,6 +116,15 @@ public final class Vault {
                 dek = null;
                 System.out.println("Vault remember-me unwrap failed");
             }
+        }
+    }
+
+    /** Account already stores AP1. — keep sealing new writes so Postgres stays opaque. */
+    public static void noteSealedRemote() {
+        synchronized (LOCK) {
+            if (dek == null || wanted) return;
+            wanted = true;
+            writeFile(userId, true);
         }
     }
 
@@ -198,7 +214,9 @@ public final class Vault {
             System.arraycopy(all, IV_LEN, ct, 0, ct.length);
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
             c.init(Cipher.DECRYPT_MODE, dek, new GCMParameterSpec(GCM_TAG_BITS, iv));
-            return new String(c.doFinal(ct), StandardCharsets.UTF_8);
+            String plain = new String(c.doFinal(ct), StandardCharsets.UTF_8);
+            noteSealedRemote();
+            return plain;
         } catch (Exception e) {
             return value;
         }
@@ -263,11 +281,23 @@ public final class Vault {
     private static void writeFile(String uid, boolean on) {
         try {
             Files.createDirectories(FILE.getParent());
+            // Always wrap the DEK when unlocked so remember-me can decrypt AP1. next time,
+            // even if this PC has not toggled "Encrypt at rest" yet.
             String wrap = "";
-            if (on && dek != null) {
+            if (dek != null) {
                 wrap = wrap(deviceKey(), dek.getEncoded());
             }
-            String canary = (on && dek != null) ? seal("ashore") : "";
+            String canary = "";
+            if (dek != null) {
+                boolean wasWanted = wanted;
+                wanted = true;
+                try {
+                    canary = seal("ashore");
+                } finally {
+                    wanted = wasWanted;
+                }
+            }
+            wanted = on;
             String body = "enabled=" + (on ? "true" : "false") + "\n"
                     + "user=" + (uid == null ? "" : uid) + "\n"
                     + "iter=" + ITER + "\n"

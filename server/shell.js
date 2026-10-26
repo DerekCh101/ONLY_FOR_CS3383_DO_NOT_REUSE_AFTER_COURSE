@@ -233,12 +233,12 @@ function SecurityPage() {
         <p className="hint">${msg || "Open a row to edit it."}</p>
         <${Fold} label="Encrypt data at rest">
             <p className="hint">${encrypted
-                ? "On — Postgres / pgAdmin stores AP1. ciphertext. While you are logged in, this browser shows titles and notes in plaintext."
-                : "Off. Turn this on from the desktop Security options so pgAdmin cannot read task text. Logged-in apps still show plaintext."}</p>
+                ? "On for Postgres / pgAdmin only. Login already decrypts titles here — this is not a client lock. Use Unlock only if something still looks like AP1. text."
+                : "Off. Turn this on from the host desktop Security options so pgAdmin cannot read task text. Clients decrypt automatically when they sign in."}</p>
             <form className="acct-form" onSubmit=${unlock}>
                 <input type="password" placeholder="Account password" value=${vaultPw}
                     onChange=${(e) => setVaultPw(e.target.value)} />
-                <button type="submit">Unlock encrypted data</button>
+                <button type="submit">Unlock if still ciphertext</button>
             </form>
         <//>
         <${Fold} label="Change password">
@@ -285,7 +285,7 @@ const IDLE_CHOICES = [0, 5, 10, 15, 30, 45, 60, 90, 120, 150, 180];
 
 function DevicePage() {
     const api = window.AshoreApp;
-    const [idle, setIdle] = useState(api && api.idleMinutes ? api.idleMinutes() : 120);
+    const [idle, setIdle] = useState(api && api.idleMinutes ? api.idleMinutes() : 0);
     const [dark, setDark] = useState(api && api.wantDark ? api.wantDark() : false);
 
     function changeIdle(ev) {
@@ -301,13 +301,14 @@ function DevicePage() {
     }
 
     return html`<div>
-        <p className="hint">This browser only. Idle logout only signs you out after no pointer or keyboard. Default 120 minutes. Refresh does not log you out. Encryption is a separate Security option.</p>
+        <p className="hint">This browser only. Idle logout signs you out after no pointer or keyboard. Default is Never. Refresh does not log you out.</p>
         <${Field} label="Idle logout">
             <select value=${String(idle)} onChange=${changeIdle}>
                 ${IDLE_CHOICES.map((n) => html`<option key=${n} value=${String(n)}>
                     ${n === 0 ? "Never" : n + " minutes"}
                 </option>`)}
             </select>
+            <p className="hint">May conflict with staying signed in — idle signs you out after quiet time.</p>
         <//>
         <${Field} label="Appearance">
             <label className="chk">

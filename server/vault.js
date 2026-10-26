@@ -83,6 +83,7 @@
                 key,
                 ct
             );
+            wanted = true;
             return new TextDecoder().decode(pt);
         } catch (_) {
             return value;

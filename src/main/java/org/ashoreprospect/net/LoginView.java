@@ -72,7 +72,9 @@ public class LoginView {
         CheckBox remember = new CheckBox("Remember login");
         remember.setSelected(LocalSession.wantRemember());
         remember.setStyle("-fx-text-fill: " + AppTheme.cardInk() + "; -fx-font-size: 13px; " + AppTheme.font());
-        Label rememberHint = muted("Checked: next launch skips this screen and opens the local cache, even offline.");
+        Label rememberHint = muted(
+                "Checked: next launch skips this screen and opens the local cache, even offline. "
+                        + "May conflict with idle logout — idle can sign you out while Remember would keep you in.");
 
         Label err = error();
         Button login = new Button("Login");
