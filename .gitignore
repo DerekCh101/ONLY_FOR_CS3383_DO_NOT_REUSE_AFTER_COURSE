@@ -38,3 +38,6 @@ db.properties
 .env
 .env.*
 *.pw
+
+#vsc
+.vscode/
