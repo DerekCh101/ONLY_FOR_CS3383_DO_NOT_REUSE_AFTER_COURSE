@@ -120,6 +120,14 @@ To also delete the PostgreSQL data volume:
 docker compose down -v
 ```
 
+## GitHub Actions
+
+The workflow in `.github/workflows/ci-release-deploy.yml` runs the Gradle and optional Node tests on every pull request, then builds Linux, Windows, and macOS distributions. A tag such as `v0.1.1` publishes the JARs and ZIP/TAR distributions as a GitHub release and publishes the server image to GitHub Container Registry.
+
+The server deployment job is disabled by default. To enable it, create the repository variable `DEPLOY_ENABLED=true` and these secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, `DEPLOY_REGISTRY_USERNAME`, and `DEPLOY_REGISTRY_TOKEN`. The target host needs Docker Engine and Docker Compose v2. The deployment uses the published tagged image and the existing PostgreSQL service.
+
+Local Compose runs still build the server from `server/Dockerfile`. To use a published image manually, set `SERVER_IMAGE`, for example `SERVER_IMAGE=ghcr.io/OWNER/scheduler-server:v0.1.1 docker compose up -d`.
+
 The default Docker database settings are:
 
 ```text
