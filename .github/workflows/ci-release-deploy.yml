@@ -71,9 +71,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: distributions-${{ matrix.os }}
-          path: |
-            build/libs/*.jar
-            build/distributions/*
+          path: build/distributions/*
+          if-no-files-found: error
+
+      - name: Upload canonical JARs
+        if: matrix.os == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-jars
+          path: build/libs/*.jar
           if-no-files-found: error
 
   server-test:
