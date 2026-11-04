@@ -172,12 +172,25 @@ jobs:
           path: release-assets
           merge-multiple: false
 
+      - name: Prepare uniquely named release assets
+        shell: bash
+        run: |
+          mkdir release-assets-upload
+          while IFS= read -r -d '' asset; do
+            relative_path="${asset#release-assets/}"
+            platform="${relative_path%%/*}"
+            filename="$(basename "$asset")"
+            cp "$asset" "release-assets-upload/${platform}-${filename}"
+          done < <(find release-assets -type f -print0)
+
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           generate_release_notes: true
-          files: release-assets/**/*
+          files: |
+            release-assets-upload/*
+          fail_on_unmatched_files: true
 
   deploy:
     name: Deploy server container
