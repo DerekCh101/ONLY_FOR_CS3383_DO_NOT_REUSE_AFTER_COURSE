@@ -163,6 +163,12 @@ public class SqliteTaskRepository {
     }
 
     public void upsert(Task task) throws SQLException {
+        try (Connection conn = connect()) {
+            upsert(conn, task);
+        }
+    }
+
+    void upsert(Connection conn, Task task) throws SQLException {
         String sql = """
             INSERT INTO tasks (
                 id, title, duration, state,
@@ -173,35 +179,39 @@ public class SqliteTaskRepository {
                 user_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                duration = excluded.duration,
-                state = excluded.state,
-                placed_date = excluded.placed_date,
-                placed_time = excluded.placed_time,
-                deadline_date = excluded.deadline_date,
-                deadline_time = excluded.deadline_time,
-                lifecycle = excluded.lifecycle,
-                workflow = excluded.workflow,
-                placement_updated_at = excluded.placement_updated_at,
-                last_updated_at = excluded.last_updated_at,
+                title = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.title ELSE tasks.title END,
+                duration = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.duration ELSE tasks.duration END,
+                state = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.state ELSE tasks.state END,
+                deadline_date = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.deadline_date ELSE tasks.deadline_date END,
+                deadline_time = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.deadline_time ELSE tasks.deadline_time END,
+                lifecycle = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.lifecycle ELSE tasks.lifecycle END,
+                workflow = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.workflow ELSE tasks.workflow END,
+                last_updated_at = CASE WHEN excluded.last_updated_at >= COALESCE(tasks.last_updated_at, excluded.last_updated_at) THEN excluded.last_updated_at ELSE tasks.last_updated_at END,
+                placed_date = CASE WHEN excluded.placement_updated_at >= COALESCE(tasks.placement_updated_at, excluded.placement_updated_at) THEN excluded.placed_date ELSE tasks.placed_date END,
+                placed_time = CASE WHEN excluded.placement_updated_at >= COALESCE(tasks.placement_updated_at, excluded.placement_updated_at) THEN excluded.placed_time ELSE tasks.placed_time END,
+                placement_updated_at = CASE WHEN excluded.placement_updated_at >= COALESCE(tasks.placement_updated_at, excluded.placement_updated_at) THEN excluded.placement_updated_at ELSE tasks.placement_updated_at END,
                 user_id = excluded.user_id
             """;
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             bind(ps, task);
             ps.executeUpdate();
         }
-        upsertExtras(task);
+        upsertExtras(conn, task);
     }
 
     private void upsertExtras(Task task) throws SQLException {
+        try (Connection conn = connect()) {
+            upsertExtras(conn, task);
+        }
+    }
+
+    private void upsertExtras(Connection conn, Task task) throws SQLException {
         String sql = """
             UPDATE tasks SET
                 description = ?, description_done = ?, parent_id = ?
             WHERE id = ?
             """;
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, Vault.seal(task.getDescription()));
             ps.setInt(2, task.isDescriptionDone() ? 1 : 0);
             String parent = task.getParentId();
@@ -225,12 +235,17 @@ public class SqliteTaskRepository {
     }
 
     public void deleteTaskRow(String taskId) throws SQLException {
+        try (Connection conn = connect()) {
+            deleteTaskRow(conn, taskId);
+        }
+    }
+
+    void deleteTaskRow(Connection conn, String taskId) throws SQLException {
         String uid = currentUserId();
         String sql = (uid == null || uid.isBlank())
                 ? "DELETE FROM tasks WHERE id = ?"
                 : "DELETE FROM tasks WHERE id = ? AND (user_id = ? OR user_id IS NULL)";
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, taskId);
             if (uid != null && !uid.isBlank()) ps.setString(2, uid);
             int n = ps.executeUpdate();
@@ -239,15 +254,26 @@ public class SqliteTaskRepository {
     }
 
     public void unrecordDelete(String taskId) throws SQLException {
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM sync_deletes WHERE id = ?")) {
+        try (Connection conn = connect()) {
+            unrecordDelete(conn, taskId);
+        }
+    }
+
+    void unrecordDelete(Connection conn, String taskId) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "DELETE FROM sync_deletes WHERE id = ?")) {
             ps.setString(1, taskId);
             ps.executeUpdate();
         }
     }
 
     public void recordDelete(String taskId, Instant deletedAt, String title) throws SQLException {
+        try (Connection conn = connect()) {
+            recordDelete(conn, taskId, deletedAt, title);
+        }
+    }
+
+    void recordDelete(Connection conn, String taskId, Instant deletedAt, String title) throws SQLException {
         String sql = """
             INSERT INTO sync_deletes(id, deleted_at, title, user_id) VALUES(?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
@@ -258,8 +284,7 @@ public class SqliteTaskRepository {
                 title = COALESCE(excluded.title, sync_deletes.title),
                 user_id = COALESCE(excluded.user_id, sync_deletes.user_id)
             """;
-        try (Connection conn = connect();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, taskId);
             ps.setString(2, deletedAt.toString());
             ps.setString(3, (title != null && !title.isBlank()) ? title : null);
@@ -281,11 +306,49 @@ public class SqliteTaskRepository {
     }
 
     public void deleteAllTasksAndLogEach() throws SQLException {
-        List<Task> all = fetchAll();
+        deleteTasksAndLog(fetchAll());
+    }
+
+    /** One SQLite transaction: tombstone + delete every id. Empty list is a no-op. */
+    public void deleteTasksAndLog(List<Task> tasks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
         Instant when = Instant.now();
-        for (Task t : all) {
-            deleteTaskRow(t.getID());
-            recordDelete(t.getID(), when, t.getTaskName());
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try {
+                for (Task t : tasks) {
+                    if (t == null || t.getID() == null) continue;
+                    deleteTaskRow(conn, t.getID());
+                    recordDelete(conn, t.getID(), when, t.getTaskName());
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    /** One SQLite transaction: drop tombstones and upsert the snapshot. */
+    public void restoreTasks(List<Task> tasks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try {
+                for (Task t : tasks) {
+                    if (t == null || t.getID() == null) continue;
+                    unrecordDelete(conn, t.getID());
+                    upsert(conn, t);
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
         }
     }
 
@@ -429,6 +492,8 @@ public class SqliteTaskRepository {
                 last_updated_at = excluded.last_updated_at,
                 user_id = excluded.user_id,
                 is_exception = excluded.is_exception
+            WHERE blocked_times.last_updated_at IS NULL
+               OR excluded.last_updated_at >= blocked_times.last_updated_at
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {

@@ -69,10 +69,19 @@ public class NodeApi {
     }
 
     public void logout() {
+        logout(true);
+    }
+
+    /** Idle logout: drop RAM session, keep remember-me file so the next launch can sign in. */
+    public void logoutKeepRemembered() {
+        logout(false);
+    }
+
+    private void logout(boolean forgetRemembered) {
         token = null;
         userId = null;
         username = null;
-        LocalSession.clear();
+        if (forgetRemembered) LocalSession.clear();
         Vault.lock();
     }
 

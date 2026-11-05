@@ -22,6 +22,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import org.ashoreprospect.AppVersion;
 import org.ashoreprospect.TaskManagementSystem;
 import org.ashoreprospect.crypto.Vault;
 import org.ashoreprospect.db.DeviceConfig;
@@ -154,6 +155,7 @@ public final class AccountPane extends BorderPane {
         Label emailNow = muted("Email: loading…");
         fillMeLabel(emailNow, "email", "Email: ");
         VBox box = new VBox(14,
+                muted("Ashore Prospect " + AppVersion.LABEL),
                 muted("Signed in as " + user),
                 deviceRow(),
                 emailNow,
@@ -371,7 +373,7 @@ public final class AccountPane extends BorderPane {
             SmtpSettings.save(host.getText(), port.getText(), user.getText(),
                     pass.getText(), from.getText());
             if (SmtpSettings.configured()) {
-                return "Saved. App password is SMTP_PASS (Windows env). Restart Node. Tokens last 8 minutes.";
+                return "Saved as SMTP_PASS in OS user env. Restart Node. Tokens last 8 minutes.";
             }
             return "Need Gmail address and App password.";
         }));
@@ -390,7 +392,7 @@ public final class AccountPane extends BorderPane {
                 muted("Gmail App password (16 characters, spaces optional). Not your Google login."),
                 muted("1) Turn on 2-Step Verification: myaccount.google.com → Security → 2-Step Verification."),
                 muted("2) Then open myaccount.google.com/apppasswords (it will not appear until 2-Step is on)."),
-                muted("3) Create one named Ashore, paste it here. The app stores it as SMTP_PASS."),
+                muted("3) Create one named Ashore, paste it here. Stored as OS env SMTP_PASS, not in the project folder."),
                 muted("Sender and receiver may be the same Gmail. Check Spam if it is."),
                 muted("The host Node terminal always prints the token and the security question, "
                         + "even when mail is on. Token expires in 8 minutes."),
@@ -642,7 +644,7 @@ public final class AccountPane extends BorderPane {
             } catch (Exception ignored) {}
         });
         Label conflict = muted(
-                "May conflict with Remember login — idle signs you out, while Remember keeps the next launch signed in.");
+                "Idle returns to login. Remember login still signs in on the next launch.");
         VBox wrap = new VBox(8, new Label("Idle logout"), idle, conflict);
         wrap.setPadding(new Insets(6, 2, 6, 2));
         return wrap;
@@ -703,7 +705,7 @@ public final class AccountPane extends BorderPane {
         box.setStyle(AppTheme.font() + "-fx-font-size: 13px; -fx-text-fill: " + AppTheme.ink() + ";");
         box.selectedProperty().addListener((o, a, on) -> LocalSession.setRandomChallenge(on));
         Label conflict = muted(
-                "Remember login may conflict with idle logout — idle can sign you out while Remember would keep you in.");
+                "Idle returns to login. Remember login still signs in on the next launch.");
         VBox row = new VBox(6, box, conflict);
         row.setPadding(new Insets(6, 2, 6, 2));
         return row;

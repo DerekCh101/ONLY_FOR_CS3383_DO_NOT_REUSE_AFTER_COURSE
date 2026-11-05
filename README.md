@@ -24,7 +24,7 @@ JavaFX calendar and Typewriter notes. Offline-first on this PC, optional multi-d
 - Optional random security check after a remember-me auto-login
 - Register requires email + security question (needed to recover)
 - Forgot password: token + security question are sent together; token lasts 8 minutes
-- Host-only SMTP page: App password is stored in `.scheduler/smtp.env` as `SMTP_PASS` (not Windows `setx`)
+- Host-only SMTP page: App password is stored as OS env `SMTP_PASS` (Windows `setx`, Linux user env — not in the project folder)
 - Custom title bar: fill the desktop work area (taskbar stays); drag the top bar to move
 - Dark / light theme
 - Online / offline chip; work continues from the local SQLite cache when the net is down

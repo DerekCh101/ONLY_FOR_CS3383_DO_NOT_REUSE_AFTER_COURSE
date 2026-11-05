@@ -833,7 +833,7 @@ public class SchedulerController {
     private void attachIdleWatch(javafx.scene.Scene scene) {
         if (idleTimer == null) {
             idleTimer = new PauseTransition(Duration.minutes(120));
-            idleTimer.setOnFinished(e -> Platform.runLater(this::logout));
+            idleTimer.setOnFinished(e -> Platform.runLater(this::idleLogout));
         }
         scene.addEventFilter(InputEvent.ANY, e -> bumpIdle());
         bumpIdle();
@@ -854,7 +854,15 @@ public class SchedulerController {
         idleTimer.playFromStart();
     }
 
+    private void idleLogout() {
+        logout(false);
+    }
+
     private void logout() {
+        logout(true);
+    }
+
+    private void logout(boolean forgetRemembered) {
         if (loggingOut) return;
         loggingOut = true;
         if (idleTimer != null) idleTimer.stop();
@@ -863,7 +871,7 @@ public class SchedulerController {
             nowLineClock = null;
         }
         if (typewriterPane != null && !skipSaveOnLogout) typewriterPane.saveAll();
-        SchedulerApp.returnToLogin();
+        SchedulerApp.returnToLogin(forgetRemembered);
     }
 
     private void startNowLineClock() {

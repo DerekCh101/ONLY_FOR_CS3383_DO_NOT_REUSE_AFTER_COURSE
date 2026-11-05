@@ -47,6 +47,9 @@ public final class ServerPickView extends VBox {
         Label kicker = new Label("SERVER");
         kicker.setStyle("-fx-text-fill: #6b6358; -fx-font-size: 11px;" + FONT);
 
+        Label ver = new Label("Ashore Prospect " + org.ashoreprospect.AppVersion.LABEL);
+        ver.setStyle("-fx-text-fill: #6b6358; -fx-font-size: 12px;" + FONT);
+
         Label title = new Label("Where should this copy talk?");
         title.setWrapText(true);
         title.setStyle("-fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #1c2430;" + FONT);
@@ -92,9 +95,9 @@ public final class ServerPickView extends VBox {
         pwField.setStyle(fieldStyle());
 
         Label pwHint = hint(
-                "Type the password you already use for Postgres user postgres.\n"
-                        + "It is saved only in .scheduler/postgres.pw (not Windows setx).\n"
-                        + "Not used if you pick the creator's server."
+                "Host only. Type the password you already use for Postgres user postgres.\n"
+                        + "Saved as OS env postgres_pw (Windows setx, Linux user env) — not in this project folder.\n"
+                        + "Clients talk HTTP to Node. They do not enter postgres_pw."
         );
 
         Label dataNote = new Label(
@@ -117,14 +120,15 @@ public final class ServerPickView extends VBox {
 
         Runnable updateFields = () -> {
             boolean remote = other.isSelected();
-            boolean selfHost = thisPc.isSelected() || other.isSelected();
+            boolean host = thisPc.isSelected();
+            boolean selfHost = host || remote;
             setShown(need, selfHost);
             setShown(hostIp, remote);
             setShown(custom, remote);
             custom.setDisable(!remote);
-            setShown(pwLabel, selfHost);
-            setShown(pwField, selfHost);
-            setShown(pwHint, selfHost);
+            setShown(pwLabel, host);
+            setShown(pwField, host);
+            setShown(pwHint, host);
         };
         creator.selectedProperty().addListener((o, a, b) -> updateFields.run());
         thisPc.selectedProperty().addListener((o, a, b) -> updateFields.run());
@@ -165,7 +169,7 @@ public final class ServerPickView extends VBox {
                     return;
                 }
             }
-            if (thisPc.isSelected() || other.isSelected()) {
+            if (thisPc.isSelected()) {
                 String pw = pwField.getText() == null ? "" : pwField.getText().trim();
                 if (pw.isBlank()) {
                     err.setText("Enter postgres_pw.");
@@ -188,7 +192,7 @@ public final class ServerPickView extends VBox {
         VBox otherBlock = block(other, otherHint);
 
         card.getChildren().addAll(
-                kicker, title, current,
+                kicker, ver, title, current,
                 creatorBlock,
                 thisBlock,
                 otherBlock,

@@ -62,6 +62,7 @@ public class LoginView {
     private VBox buildLoginCard(Runnable onOk, Runnable showRegister, Runnable showReset) {
         Label kicker = muted("ACCOUNT");
         Label title = heading("Sign in");
+        Label ver = muted("Ashore Prospect " + org.ashoreprospect.AppVersion.LABEL);
         Label where = muted(Endpoints.nodeBase());
 
         TextField user = field("username");
@@ -92,7 +93,7 @@ public class LoginView {
         changeServer.setOnAction(e -> showServerPick());
 
         VBox card = card(
-                kicker, title, where, user, pass, remember, rememberHint,
+                kicker, title, ver, where, user, pass, remember, rememberHint,
                 login, register, forgot, changeServer, err
         );
 

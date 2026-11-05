@@ -1,0 +1,22 @@
+# Never copy host-built modules: they contain Windows/macOS binaries.
+node_modules
+
+# Local secrets and machine-specific files.
+.scheduler
+.env
+.env.*
+config.yml
+data.json
+
+# Uploaded images live in a Docker volume, not in the image.
+user-files
+
+# Windows-only helper, useless in Linux containers.
+cloudflared-windows-amd64.exe
+
+# Editor / OS noise.
+.git
+.gitignore
+*.log
+.DS_Store
+Thumbs.db

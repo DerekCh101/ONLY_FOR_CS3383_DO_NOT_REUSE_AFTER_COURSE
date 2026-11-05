@@ -9,9 +9,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Host-only SMTP. Host/user/from live in {@code .scheduler/smtp.txt}.
- * The App password is written to {@code .scheduler/smtp.env} so Node can read it.
- * No Windows {@code setx} / registry write (Kaspersky flags that).
+ * Host-only SMTP. Host/user/from/pass live in OS user env
+ * ({@code SMTP_HOST}, {@code SMTP_PORT}, {@code SMTP_USER}, {@code SMTP_FROM}, {@code SMTP_PASS}).
+ * Windows uses {@code setx}; Linux/Windows also write a user-config {@code user.env}
+ * outside the git repo so Node can read it. Leftover {@code .scheduler/smtp.*} is read once.
  */
 public final class SmtpSettings {
 
@@ -31,18 +32,57 @@ public final class SmtpSettings {
     }
 
     public static boolean hasPass() {
-        if (!blank(System.getenv("SMTP_PASS"))) return true;
-        String fromEnvFile = readEnvKey("SMTP_PASS");
-        return !blank(fromEnvFile) || !blank(load().get("pass"));
+        return !blank(passValue());
     }
 
     public static Map<String, String> load() {
+        Map<String, String> file = loadLegacyFile();
         Map<String, String> out = new LinkedHashMap<>();
-        out.put("host", "smtp.gmail.com");
-        out.put("port", "587");
-        out.put("user", "");
-        out.put("pass", "");
-        out.put("from", "");
+        out.put("host", first(OsEnv.get("SMTP_HOST"), file.get("host"), "smtp.gmail.com"));
+        out.put("port", first(OsEnv.get("SMTP_PORT"), file.get("port"), "587"));
+        out.put("user", first(OsEnv.get("SMTP_USER"), file.get("user"), ""));
+        out.put("pass", passValue());
+        out.put("from", first(OsEnv.get("SMTP_FROM"), file.get("from"), ""));
+        return out;
+    }
+
+    public static void save(String host, String port, String user, String pass, String from)
+            throws IOException {
+        String h = nz(host).isBlank() ? "smtp.gmail.com" : nz(host);
+        String po = nz(port).isBlank() ? "587" : nz(port);
+        String u = nz(user);
+        String f = nz(from).isBlank() ? u : nz(from);
+        String pw = nz(pass).replaceAll("\\s+", "");
+        if (pw.isBlank()) pw = passValue().replaceAll("\\s+", "");
+        OsEnv.persist("SMTP_HOST", h);
+        OsEnv.persist("SMTP_PORT", po);
+        OsEnv.persist("SMTP_USER", u);
+        OsEnv.persist("SMTP_FROM", f);
+        if (!pw.isBlank()) OsEnv.persist("SMTP_PASS", pw);
+        Files.deleteIfExists(file());
+        Files.deleteIfExists(envFile());
+    }
+
+    public static void clear() throws IOException {
+        OsEnv.clear("SMTP_HOST");
+        OsEnv.clear("SMTP_PORT");
+        OsEnv.clear("SMTP_USER");
+        OsEnv.clear("SMTP_FROM");
+        OsEnv.clear("SMTP_PASS");
+        Files.deleteIfExists(file());
+        Files.deleteIfExists(envFile());
+    }
+
+    private static String passValue() {
+        String env = OsEnv.get("SMTP_PASS");
+        if (!blank(env)) return env.replaceAll("\\s+", "");
+        String leftover = readLegacyEnvKey("SMTP_PASS");
+        if (!blank(leftover)) return leftover.replaceAll("\\s+", "");
+        return nz(loadLegacyFile().get("pass")).replaceAll("\\s+", "");
+    }
+
+    private static Map<String, String> loadLegacyFile() {
+        Map<String, String> out = new LinkedHashMap<>();
         Path p = file();
         if (!Files.isRegularFile(p)) return out;
         try {
@@ -58,32 +98,7 @@ public final class SmtpSettings {
         return out;
     }
 
-    public static void save(String host, String port, String user, String pass, String from)
-            throws IOException {
-        Files.createDirectories(file().getParent());
-        String h = nz(host).isBlank() ? "smtp.gmail.com" : nz(host);
-        String po = nz(port).isBlank() ? "587" : nz(port);
-        String u = nz(user);
-        String f = nz(from).isBlank() ? u : nz(from);
-        String pw = nz(pass).replaceAll("\\s+", "");
-        if (pw.isBlank()) {
-            pw = nz(readEnvKey("SMTP_PASS")).replaceAll("\\s+", "");
-            if (pw.isBlank()) pw = nz(System.getenv("SMTP_PASS")).replaceAll("\\s+", "");
-        }
-        Files.writeString(file(),
-                "host=" + h + "\nport=" + po + "\nuser=" + u + "\nfrom=" + f + "\n",
-                StandardCharsets.UTF_8);
-        if (!pw.isBlank()) {
-            Files.writeString(envFile(), "SMTP_PASS=" + pw + "\n", StandardCharsets.UTF_8);
-        }
-    }
-
-    public static void clear() throws IOException {
-        Files.deleteIfExists(file());
-        Files.deleteIfExists(envFile());
-    }
-
-    private static String readEnvKey(String key) {
+    private static String readLegacyEnvKey(String key) {
         Path p = envFile();
         if (!Files.isRegularFile(p)) return "";
         try {
@@ -93,6 +108,13 @@ public final class SmtpSettings {
                 return s.substring(key.length() + 1).trim();
             }
         } catch (IOException ignored) {
+        }
+        return "";
+    }
+
+    private static String first(String... vals) {
+        for (String v : vals) {
+            if (!blank(v)) return v.trim();
         }
         return "";
     }

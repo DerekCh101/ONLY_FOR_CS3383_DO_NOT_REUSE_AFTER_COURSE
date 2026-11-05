@@ -293,17 +293,17 @@ public class PostgresTaskRepository {
                 user_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
-                title = EXCLUDED.title,
-                duration = EXCLUDED.duration,
-                state = EXCLUDED.state,
-                placed_date = EXCLUDED.placed_date,
-                placed_time = EXCLUDED.placed_time,
-                deadline_date = EXCLUDED.deadline_date,
-                deadline_time = EXCLUDED.deadline_time,
-                lifecycle = EXCLUDED.lifecycle,
-                workflow = EXCLUDED.workflow,
-                placement_updated_at = EXCLUDED.placement_updated_at,
-                last_updated_at = EXCLUDED.last_updated_at,
+                title = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.title ELSE TASK.tasks.title END,
+                duration = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.duration ELSE TASK.tasks.duration END,
+                state = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.state ELSE TASK.tasks.state END,
+                deadline_date = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.deadline_date ELSE TASK.tasks.deadline_date END,
+                deadline_time = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.deadline_time ELSE TASK.tasks.deadline_time END,
+                lifecycle = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.lifecycle ELSE TASK.tasks.lifecycle END,
+                workflow = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.workflow ELSE TASK.tasks.workflow END,
+                last_updated_at = CASE WHEN EXCLUDED.last_updated_at >= COALESCE(TASK.tasks.last_updated_at, EXCLUDED.last_updated_at) THEN EXCLUDED.last_updated_at ELSE TASK.tasks.last_updated_at END,
+                placed_date = CASE WHEN EXCLUDED.placement_updated_at >= COALESCE(TASK.tasks.placement_updated_at, EXCLUDED.placement_updated_at) THEN EXCLUDED.placed_date ELSE TASK.tasks.placed_date END,
+                placed_time = CASE WHEN EXCLUDED.placement_updated_at >= COALESCE(TASK.tasks.placement_updated_at, EXCLUDED.placement_updated_at) THEN EXCLUDED.placed_time ELSE TASK.tasks.placed_time END,
+                placement_updated_at = CASE WHEN EXCLUDED.placement_updated_at >= COALESCE(TASK.tasks.placement_updated_at, EXCLUDED.placement_updated_at) THEN EXCLUDED.placement_updated_at ELSE TASK.tasks.placement_updated_at END,
                 user_id = EXCLUDED.user_id
             WHERE TASK.tasks.user_id IS NULL
                OR TASK.tasks.user_id = EXCLUDED.user_id
@@ -481,6 +481,8 @@ public class PostgresTaskRepository {
                 last_updated_at = EXCLUDED.last_updated_at,
                 user_id = EXCLUDED.user_id,
                 is_exception = EXCLUDED.is_exception
+            WHERE TASK.blocked_times.last_updated_at IS NULL
+               OR EXCLUDED.last_updated_at >= TASK.blocked_times.last_updated_at
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {

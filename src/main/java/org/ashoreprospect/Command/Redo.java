@@ -15,7 +15,11 @@ public class Redo extends RecordedCommand {
     }
 
     @Override
-    public boolean execute() throws SQLException{
+    public boolean execute() throws SQLException {
+        if (RecordedCommand.getRedoList().isEmpty()) {
+            System.out.println("Nothing to redo.");
+            return false;
+        }
         RecordedCommand.getRedoList().getLast().redo();
         return true;
     }

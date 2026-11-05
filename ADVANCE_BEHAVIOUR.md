@@ -2,7 +2,7 @@
 
 Exact rules for Ashore Prospect. The main [README](README.md) only lists features. This file is the source of truth for how those features actually behave.
 
-Do not put mailbox passwords in chat or in git. `.scheduler/` is gitignored. Do not write Windows `setx` / user env from the app.
+Do not put mailbox passwords in chat or in git. Secrets go in OS user environment, not the project folder. Windows uses `setx`; Linux writes `~/.config/ashore-prospect/user.env`.
 
 ---
 
@@ -175,16 +175,14 @@ Security question: min 8 characters; answer min 4 after normalize; hash bcrypt 1
 
 The Account **SMTP** page is shown only when this install talks to Node on **localhost**. Clients do not see it.
 
-Save writes:
+Save writes OS user env (not the git working tree):
 
-- `.scheduler/smtp.txt` — `host`, `port`, `user`, `from` (no password line).
-- `.scheduler/smtp.env` — `SMTP_PASS=…` so Node can read it on the next restart.
+- Windows: `setx` for `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `SMTP_PASS`, plus `%APPDATA%\ashore-prospect\user.env` so Node can read without a logoff.
+- Linux: `~/.config/ashore-prospect/user.env` (or `$XDG_CONFIG_HOME/ashore-prospect/user.env`).
 
-The app does **not** call Windows `setx` and does not write user environment variables.
+Node `mail.js` load order: process env, then that user-config file, then leftover `.scheduler/smtp.env` / `smtp.txt` if they still exist from older builds.
 
-Node `mail.js` load order for the password: process env `SMTP_PASS`, then `smtp.env`, then a leftover `pass=` in `smtp.txt`. Host / user / from: file then `SMTP_*` env.
-
-Restart Node after you save so it reloads `smtp.env`. A Node process started before save will not pick up a new file until restart.
+Restart Node after you save so it reloads env. A Node process started before save will not pick up a new value until restart.
 
 Gmail: use an App password, not the Google login password. Same mailbox as `from` and `to` is allowed.
 
@@ -327,21 +325,21 @@ Working directory must be the **repo root**.
 | Path | Role |
 | --- | --- |
 | `scheduler-cache.db` | Local tasks, blocked, Typewriter |
-| `.scheduler/server.txt` | Node URL |
-| `.scheduler/postgres.pw` | Postgres password for Java JDBC |
+| OS env `SCHEDULER_NODE` | Node URL (Windows `setx` / Linux user env) |
+| OS env `postgres_pw` | Postgres password for Java JDBC and Node |
+| OS env `SMTP_*` | Host SMTP; see §7 |
+| `~/.config/ashore-prospect/user.env` (Linux) or `%APPDATA%\ashore-prospect\user.env` (Windows) | Same keys, outside the repo |
 | `.scheduler/session.txt` | Remember-me Bearer token |
 | `.scheduler/login.txt` | Remember, random-challenge, reminder prefs, `idleMinutes`, `realtimeOverlay` |
 | `.scheduler/theme.txt` | Dark / light |
-| `.scheduler/smtp.txt` | SMTP host/user/from |
-| `.scheduler/smtp.env` | `SMTP_PASS` for Node |
 | `.scheduler/vault.txt` | Encrypt-at-rest wanted + wrapped key |
 | `.scheduler/vault.device` | Device wrap for remember-me unlock |
 | `scheduler-device-id.txt` | This install’s device id (Account → User info, Copy) |
 | `typewriter-images/` | Image cache |
 
-Java does not need env vars if those files exist. Fallbacks: `postgres_pw`, `PGPASSWORD`, `SCHEDULER_NODE`, `SCHEDULER_PG`. The app does not write `setx`.
+Secrets are OS env, not project files. Fallbacks: leftover `.scheduler/postgres.pw` / `server.txt` from older builds (read, then deleted on next save).
 
-Node still needs Postgres credentials in **its** process. After server-pick writes `.scheduler/postgres.pw`, restart Node yourself (`cd server && node server.js`, `0.0.0.0:3456`).
+Node still needs Postgres credentials in **its** process. After server-pick persists `postgres_pw`, restart Node yourself (`cd server && node server.js`, `0.0.0.0:3456`).
 
 ---
 
@@ -359,5 +357,5 @@ Does **not** have: auto-scheduler, undo/redo, drag-drop, day/month desktop layou
 
 - JDK **21** and JavaFX **23** (`javafx.controls`, `javafx.fxml`, `javafx.web`). Gradle Kotlin DSL; compile in IntelliJ.
 - Entry: `org.ashoreprospect.SchedulerApp`. CLI: `org.ashoreprospect.CliRunner.CLIRunner`.
-- First launch (or missing Postgres password on a non-creator PC) shows server pick; Continue writes `.scheduler/server.txt` and `.scheduler/postgres.pw` only — no `setx`.
+- First launch (or missing Postgres password on a non-creator PC) shows server pick; Continue persists `SCHEDULER_NODE` and `postgres_pw` in OS user env (Windows `setx`, Linux user env).
 - Host: PostgreSQL database `Scheduler`, schema `TASK`, then Node as above. Restart Node yourself after SMTP or route changes.

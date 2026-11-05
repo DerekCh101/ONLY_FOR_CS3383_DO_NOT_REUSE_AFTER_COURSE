@@ -1,8 +1,8 @@
 /** Sends password-reset mail using host SMTP settings. */
 /**
  * Password-reset mail.
- * Host/user/from: repo-root `.scheduler/smtp.txt`
- * App password: `.scheduler/smtp.env` as SMTP_PASS=... (or SMTP_PASS env).
+ * Host/user/from/pass: OS env (SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_FROM / SMTP_PASS)
+ * plus user-config `user.env` outside the git repo. Leftover `.scheduler/smtp.*` is fallback only.
  * Always print the token on the Node console. Never log the password.
  */
 
@@ -10,6 +10,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyUserEnv, userEnvFile } from "./userEnv.js";
 
 const require = createRequire(import.meta.url);
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -24,8 +25,8 @@ export function smtpStatus() {
         user: cfg ? cfg.user : "",
         from: cfg ? cfg.from : "",
         passSet: !!(cfg && cfg.pass),
-        smtpTxt: files.txt || "(not found)",
-        smtpEnv: files.env || "(not found)"
+        smtpTxt: files.txt || "(legacy not found)",
+        smtpEnv: files.env || userEnvFile()
     };
 }
 
@@ -165,18 +166,19 @@ async function deliverMail(to, subject, text, logTag) {
 }
 
 function loadSmtp() {
+    applyUserEnv();
     applyEnvFile();
     const file = readSmtpFile();
-    const host = (file.host || process.env.SMTP_HOST || "").trim();
-    const user = (file.user || process.env.SMTP_USER || "").trim();
+    const host = (process.env.SMTP_HOST || file.host || "").trim();
+    const user = (process.env.SMTP_USER || file.user || "").trim();
     const pass = stripPass(process.env.SMTP_PASS || file.pass || "");
     if (!host || !user || !pass) return null;
     return {
         host,
-        port: Number(file.port || process.env.SMTP_PORT || 587),
+        port: Number(process.env.SMTP_PORT || file.port || 587),
         user,
         pass,
-        from: (file.from || process.env.SMTP_FROM || user).trim()
+        from: (process.env.SMTP_FROM || file.from || user).trim()
     };
 }
 

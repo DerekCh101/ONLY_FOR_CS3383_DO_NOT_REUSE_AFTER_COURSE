@@ -4,6 +4,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyUserEnv } from "./lib/userEnv.js";
 
 const { Pool } = pg;
 
@@ -14,6 +15,7 @@ pg.types.setTypeParser(1266, (v) => (v == null ? null : String(v).slice(0, 8)));
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function postgresPassword() {
+    applyUserEnv();
     const env = process.env.PGPASSWORD || process.env.postgres_pw || "";
     if (String(env).trim()) return String(env).trim();
     const files = [

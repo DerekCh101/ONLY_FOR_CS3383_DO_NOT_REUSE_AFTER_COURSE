@@ -92,7 +92,8 @@ public final class TypewriterStore {
 
     private static PostgresTypewriterRepository pg() {
         // Host JavaFX does not JDBC-write Typewriter. Node owns Postgres there.
-        if (!NetworkWatch.isOnline() || Endpoints.isHostDevice()) {
+        // Tailscale / LAN clients are HTTP-only — never open Postgres JDBC.
+        if (!NetworkWatch.isOnline() || Endpoints.isHostDevice() || !Endpoints.isLocalHost()) {
             postgresAvailable = false;
             return null;
         }
@@ -246,13 +247,7 @@ public final class TypewriterStore {
                     System.out.println("Typewriter pulled from Node into SQLite+Postgres");
                     return sqlite.fetchAll(uid);
                 }
-                if (!isEmpty(localData)
-                        && (remoteTs == null || !TaskRepository.preferRemote(local, remoteTs))) {
-                    Api.INSTANCE.postTypewriter(
-                            toBundle(localData),
-                            local != null ? local.toString() : Instant.now().toString()
-                    );
-                }
+                // GET must not POST. Local-newer waits for an explicit save.
             } catch (Exception e) {
                 System.out.println("Typewriter Node load failed: " + e.getMessage());
             }

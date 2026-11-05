@@ -59,7 +59,8 @@ public class SchedulerApp extends Application {
     private static boolean needServerPick() {
         if (!Endpoints.hasSavedServer()) return true;
         if (Endpoints.isCreatorHost()) return false;
-        return Endpoints.postgresPassword().isBlank();
+        if (Endpoints.isLocalHost()) return Endpoints.postgresPassword().isBlank();
+        return false;
     }
 
     /**
@@ -85,8 +86,14 @@ public class SchedulerApp extends Application {
     }
 
     public static void returnToLogin() {
+        returnToLogin(true);
+    }
+
+    /** Idle logout keeps the remember-me token. Menu / wipe logout still forgets it. */
+    public static void returnToLogin(boolean forgetRemembered) {
         org.ashoreprospect.GUI.TaskReminders.stop();
-        Api.INSTANCE.logout();
+        if (forgetRemembered) Api.INSTANCE.logout();
+        else Api.INSTANCE.logoutKeepRemembered();
         org.ashoreprospect.crypto.Vault.lock();
         resetPostgres();
         TaskManagementSystem.resetInstance();
@@ -146,7 +153,9 @@ public class SchedulerApp extends Application {
         spin.skinProperty().addListener((o, a, b) -> Platform.runLater(() -> stripBootSpinPlate(spin)));
         Label msg = new Label(text);
         msg.setStyle("-fx-text-fill: white; -fx-font-size: 15px;");
-        VBox box = new VBox(16, spin, msg);
+        Label ver = new Label("Ashore Prospect " + AppVersion.LABEL);
+        ver.setStyle("-fx-text-fill: #9aa4b2; -fx-font-size: 12px;");
+        VBox box = new VBox(16, spin, msg, ver);
         box.setAlignment(Pos.CENTER);
         box.setStyle("-fx-background-color: #1c2430;");
         setStageRoot(box);

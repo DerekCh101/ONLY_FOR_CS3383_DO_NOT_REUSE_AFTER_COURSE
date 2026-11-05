@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * One door for all task/blocked saving.
@@ -43,6 +45,22 @@ public class TaskRepository {
     private final String deviceId = DeviceConfig.getOrCreateDeviceId();
     private boolean postgresAvailable = false;
     private String lastNodeFingerprint;
+    private final ReentrantLock historyLock = new ReentrantLock();
+    private final AtomicLong historyEpoch = new AtomicLong();
+
+    /** Calendar undo/redo and Node poll must not mutate SQLite/RAM at the same time. */
+    public void lockHistory() {
+        historyLock.lock();
+    }
+
+    public void unlockHistory() {
+        if (historyLock.isHeldByCurrentThread()) historyLock.unlock();
+    }
+
+    /** Bump when Clear/undo/redo commits SQLite so an in-flight Node GET is dropped. */
+    public void bumpHistoryEpoch() {
+        historyEpoch.incrementAndGet();
+    }
 
     public TaskRepository() {
         try {
@@ -55,10 +73,12 @@ public class TaskRepository {
     }
 
     private void rebuildPostgres() {
-        if (Endpoints.isCreatorHost()) {
+        if (Endpoints.isCreatorHost() || !Endpoints.isLocalHost()) {
             postgres = null;
             postgresAvailable = false;
-            System.out.println("Creator host — Java skips Postgres JDBC");
+            System.out.println(Endpoints.isCreatorHost()
+                    ? "Creator host — Java skips Postgres JDBC"
+                    : "Client — HTTP only, skip Postgres JDBC");
             return;
         }
         try {
@@ -199,30 +219,67 @@ public class TaskRepository {
 
     public void dbRestoreTask(Task task) throws SQLException {
         if (task == null || task.getID() == null) return;
-        ensureTimestamps(task);
+        dbRestoreTasks(List.of(task), true);
+    }
 
-        task.touchLastUpdated();
-        sqlite.unrecordDelete(task.getID());
-        sqlite.upsert(task);
+    /**
+     * Restore a snapshot. SQLite is one transaction. RAM is not touched here —
+     * caller must {@link #reloadFromSqlite} after success.
+     * @param bumpClocks true for a new user write; false for session undo (keep original stamps).
+     */
+    public void dbRestoreTasks(List<Task> tasks, boolean bumpClocks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
+        List<Task> batch = new ArrayList<>();
+        for (Task task : tasks) {
+            if (task == null || task.getID() == null) continue;
+            ensureTimestamps(task);
+            if (bumpClocks) task.touchLastUpdated();
+            batch.add(task);
+        }
+        sqlite.restoreTasks(batch);
 
         if (!postgresAvailable) tryReconnectPostgres();
         if (postgresAvailable) {
-            try {
-                postgres.unrecordDelete(task.getID());
-                postgres.upsert(task);
-                System.out.println("dbRestoreTask postgres ok id=" + task.getID());
-            } catch (SQLException e) {
-                postgresAvailable = false;
-                System.err.println("dbRestoreTask postgres FAILED: " + e.getMessage());
-                e.printStackTrace();
+            for (Task task : batch) {
+                try {
+                    postgres.unrecordDelete(task.getID());
+                    postgres.upsert(task);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    System.err.println("dbRestoreTask postgres FAILED: " + e.getMessage());
+                    e.printStackTrace();
+                    break;
+                }
             }
         }
-        nodePostTask(task);
+        for (Task task : batch) nodePostTask(task);
+    }
+
+    public void dbClearTasks(List<Task> tasks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
+        sqlite.deleteTasksAndLog(tasks);
+        if (!postgresAvailable) tryReconnectPostgres();
+        if (postgresAvailable) {
+            for (Task task : tasks) {
+                if (task == null || task.getID() == null) continue;
+                try {
+                    postgres.deleteTaskAndLog(task);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    System.err.println("dbClearTask postgres FAILED: " + e.getMessage());
+                    e.printStackTrace();
+                    break;
+                }
+            }
+        }
+        for (Task task : tasks) {
+            if (task != null) nodeDeleteTask(task.getID());
+        }
     }
 
     public void dbCleanAll() throws SQLException {
         List<Task> all = sqlite.fetchAll();
-        sqlite.deleteAllTasksAndLogEach();
+        sqlite.deleteTasksAndLog(all);
         if (postgresAvailable) {
             try {
                 postgres.deleteAllTasksAndLog();
@@ -330,12 +387,17 @@ public class TaskRepository {
     public void reloadFromSqlite(TaskManagementSystem theSystem, boolean persistLifecycle)
             throws SQLException {
         if (theSystem == null) return;
-        theSystem.getPendingTasks().clear();
-        theSystem.getPlacedTasks().clear();
-        theSystem.getUnscheduledTasks().clear();
-        theSystem.getGrid().clear();
-        loadBlockedIntoMemory(theSystem, persistLifecycle);
-        loadSqliteIntoMemory(theSystem, persistLifecycle);
+        lockHistory();
+        try {
+            theSystem.getPendingTasks().clear();
+            theSystem.getPlacedTasks().clear();
+            theSystem.getUnscheduledTasks().clear();
+            theSystem.getGrid().clear();
+            loadBlockedIntoMemory(theSystem, persistLifecycle);
+            loadSqliteIntoMemory(theSystem, persistLifecycle);
+        } finally {
+            unlockHistory();
+        }
     }
 
     public List<Task> fetchUnscheduledTasks() throws SQLException {
@@ -351,19 +413,29 @@ public class TaskRepository {
             lastNodeFingerprint = null;
             return false;
         }
+        long epoch = historyEpoch.get();
         try {
             List<Map<String, String>> tasks = Api.INSTANCE.getTasks();
             List<Map<String, String>> blocked = Api.INSTANCE.getBlocked();
             String fp = fingerprint(tasks, blocked);
-            if (fp.equals(lastNodeFingerprint)) {
-                return false;
+            lockHistory();
+            try {
+                if (epoch != historyEpoch.get()) {
+                    System.out.println("Node pull dropped — calendar history changed during GET");
+                    return false;
+                }
+                if (fp.equals(lastNodeFingerprint)) {
+                    return false;
+                }
+                boolean changed = mergeNodeTasks(tasks);
+                changed = mergeNodeBlocked(blocked) || changed;
+                lastNodeFingerprint = fp;
+                sqlite.setMeta("last_node_sync_at", Instant.now().toString());
+                if (changed) System.out.println("Node pull applied");
+                return changed;
+            } finally {
+                unlockHistory();
             }
-            boolean changed = mergeNodeTasks(tasks);
-            changed = mergeNodeBlocked(blocked) || changed;
-            lastNodeFingerprint = fp;
-            sqlite.setMeta("last_node_sync_at", Instant.now().toString());
-            if (changed) System.out.println("Node pull applied");
-            return changed;
         } catch (Exception e) {
             System.err.println("Node pull failed: " + e.getMessage());
             e.printStackTrace();

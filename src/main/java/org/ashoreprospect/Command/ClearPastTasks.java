@@ -1,8 +1,6 @@
 /** Delete leftover past tasks that were never finished. */
 package org.ashoreprospect.Command;
 
-import org.ashoreprospect.AppTimeReference;
-import org.ashoreprospect.Day;
 import org.ashoreprospect.RefreshLifeCycle;
 import org.ashoreprospect.Task;
 import org.ashoreprospect.TaskLifeCycle;
@@ -19,6 +17,7 @@ public class ClearPastTasks implements Command {
 
     private final TaskManagementSystem theSystem;
     private final List<Task> savedTasks = new ArrayList<>();
+    private boolean captured;
 
     public ClearPastTasks(TaskManagementSystem theSystem) {
         this.theSystem = theSystem;
@@ -27,39 +26,26 @@ public class ClearPastTasks implements Command {
     @Override
     public boolean execute() throws SQLException {
         RefreshLifeCycle.refreshAll(theSystem);
-        savedTasks.clear();
-        Set<Task> past = new LinkedHashSet<>();
-        for (Task t : theSystem.getPlacedTasks()) {
-            if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
-        }
-        for (Task t : theSystem.getPendingTasks()) {
-            if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
-        }
-        for (Task t : theSystem.getUnscheduledTasks()) {
-            if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
-        }
-        if (past.isEmpty()) {
-            System.out.println("No past tasks to clear.");
-            return true;
-        }
-        savedTasks.addAll(past);
-        for (Task t : past) {
-            theSystem.getPlacedTasks().remove(t);
-            theSystem.getPendingTasks().remove(t);
-            theSystem.getUnscheduledTasks().remove(t);
-            for (Day day : theSystem.getGrid().values()) {
-                Task[] slots = day.returnDayGrid();
-                boolean touched = false;
-                for (int i = 0; i < slots.length; i++) {
-                    if (slots[i] == t) {
-                        slots[i] = null;
-                        touched = true;
-                    }
-                }
-                if (touched) day.recomputeLoadFromGrid();
+        if (!captured) {
+            savedTasks.clear();
+            Set<Task> past = new LinkedHashSet<>();
+            for (Task t : theSystem.getPlacedTasks()) {
+                if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
             }
-            theSystem.getTaskRepo().dbClearTask(t);
+            for (Task t : theSystem.getPendingTasks()) {
+                if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
+            }
+            for (Task t : theSystem.getUnscheduledTasks()) {
+                if (t != null && t.getLifeCycle() == TaskLifeCycle.PAST) past.add(t);
+            }
+            if (past.isEmpty()) {
+                System.out.println("No past tasks to clear.");
+                return false;
+            }
+            savedTasks.addAll(past);
+            captured = true;
         }
+        applyDelete();
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
         System.out.println("Cleared past tasks: " + savedTasks.size());
@@ -68,31 +54,37 @@ public class ClearPastTasks implements Command {
 
     @Override
     public void undo() throws SQLException {
-        for (Task t : savedTasks) {
-            if (t.getPlacedDate() != null && t.getPlacedTime() != null) {
-                java.time.LocalDate col = AppTimeReference.columnDateFor(
-                        t.getPlacedDate(), t.getPlacedTime());
-                theSystem.getGrid().putIfAbsent(col, new Day(theSystem.getBlockedTime()));
-                Day day = theSystem.getGrid().get(col);
-                int slot = org.ashoreprospect.AppTimeReference.localTimeToSlot(t.getPlacedTime());
-                day.placeTask(slot, t);
-                theSystem.getPlacedTasks().add(t);
-            } else if (t.getLifeCycle() == TaskLifeCycle.UNSCHEDULED) {
-                theSystem.getUnscheduledTasks().add(t);
-            } else {
-                theSystem.getPendingTasks().add(t);
-            }
-            org.ashoreprospect.RefreshLifeCycle.refreshLifeCycle(t);
-            theSystem.getTaskRepo().dbRestoreTask(t);
-        }
+        applyRestore();
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
 
     @Override
     public void redo() throws SQLException {
-        execute();
+        applyDelete();
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);
+    }
+
+    private void applyDelete() throws SQLException {
+        theSystem.getTaskRepo().lockHistory();
+        try {
+            theSystem.getTaskRepo().bumpHistoryEpoch();
+            theSystem.getTaskRepo().dbClearTasks(savedTasks);
+            theSystem.getTaskRepo().reloadFromSqlite(theSystem);
+        } finally {
+            theSystem.getTaskRepo().unlockHistory();
+        }
+    }
+
+    private void applyRestore() throws SQLException {
+        theSystem.getTaskRepo().lockHistory();
+        try {
+            theSystem.getTaskRepo().bumpHistoryEpoch();
+            theSystem.getTaskRepo().dbRestoreTasks(savedTasks, false);
+            theSystem.getTaskRepo().reloadFromSqlite(theSystem);
+        } finally {
+            theSystem.getTaskRepo().unlockHistory();
+        }
     }
 }

@@ -39,3 +39,8 @@ db.properties
 .env
 .env.*
 *.pw
+
+# Agent / Cursor user-store notes — never commit
+ANDROID_ALIGN_PROMPT.md
+Ashore Prospect Android - ANDROID_ALIGN_PROMPT.md
+Ashore Prospect *.md

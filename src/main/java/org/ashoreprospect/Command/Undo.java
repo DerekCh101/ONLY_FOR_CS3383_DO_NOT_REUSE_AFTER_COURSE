@@ -16,9 +16,12 @@ public class Undo extends RecordedCommand {
 
     @Override
     public boolean execute() throws SQLException {
+        if (RecordedCommand.getUndoList().isEmpty()) {
+            System.out.println("Nothing to undo.");
+            return false;
+        }
         RecordedCommand.getUndoList().getLast().undo();
         return true;
-
     }
 
 }
