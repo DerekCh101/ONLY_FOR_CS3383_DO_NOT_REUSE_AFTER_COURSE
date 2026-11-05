@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Ashore Prospect</string>
+    <string name="widget_calendar_label">Ashore calendar</string>
+    <string name="widget_calendar_description">Month grid with occupancy dots. Tap &lt; &gt; to change month; tap a day to list that day’s task names and times below. Day mode shows today; Finish / Done / X on each task; tap the day heading to open that date in the app.</string>
+</resources>

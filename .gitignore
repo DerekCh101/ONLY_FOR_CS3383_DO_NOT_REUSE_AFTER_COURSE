@@ -1,0 +1,21 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Agent / objective docs (local machine only — do not publish)
+/Main Objective.md
+/current state of the javafx desktop version 2026-10-10.md
+/android-port-sync-log.md
+/android-port-edit-history.md
