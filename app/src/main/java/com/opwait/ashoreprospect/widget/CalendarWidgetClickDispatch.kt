@@ -104,11 +104,15 @@ internal object CalendarWidgetClickDispatch {
         val repo = TaskRepository(context)
         val snap = repo.loadLocalWorkspace()
         val task = snap.tasks.find { it.id == taskId } ?: return
-        if (task.placedDate == null || task.placedTime == null) return
-        val next = if (task.workflow == Workflow.FINISHED) Workflow.UNFINISHED else Workflow.FINISHED
-        val updated = task.copy(workflow = next)
-        RefreshLifeCycle.refresh(updated)
-        repo.upsertTask(updated)
+        val parent = NestedTasks.mainTask(snap.tasks, task)
+        if (parent.placedDate == null || parent.placedTime == null) return
+        val next = if (parent.workflow == Workflow.FINISHED) Workflow.UNFINISHED else Workflow.FINISHED
+        val affiliated = listOf(parent) + NestedTasks.ofParent(snap.tasks, parent)
+        for (row in affiliated) {
+            val updated = row.copy(workflow = next)
+            RefreshLifeCycle.refresh(updated)
+            repo.upsertTask(updated)
+        }
         runCatching { repo.pullFromNode() }
     }
 

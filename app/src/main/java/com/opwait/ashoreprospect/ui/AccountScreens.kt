@@ -215,6 +215,12 @@ private fun AccountHub(
 ) {
     AccountChrome(title = "Account", onBack = onBack) {
         Text(
+            "Ashore Prospect ${com.opwait.ashoreprospect.AppVersion.LABEL}",
+            color = SchedulerColors.LabelMuted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        Text(
             account?.username ?: "…",
             color = SchedulerColors.Cream,
             style = MaterialTheme.typography.titleMedium,

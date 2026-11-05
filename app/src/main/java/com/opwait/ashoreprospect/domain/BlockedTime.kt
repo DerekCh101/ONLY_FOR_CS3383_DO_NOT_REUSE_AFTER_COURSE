@@ -176,10 +176,21 @@ class BlockedTimePeriod(private val blockedPeriod: MutableList<BlockedTime> = Ar
         fun sameLayer(a: BlockedTime, b: BlockedTime): Boolean {
             if (a.isException != b.isException) return false
             if (a.isException) return a.specificDate == b.specificDate
-            if (a.isDaily() && b.isDaily()) return true
-            if (a.isDaily() || b.isDaily()) return false
-            if (a.weekday != null || b.weekday != null) return a.weekday == b.weekday
-            return a.specificDate == b.specificDate
+            val openA = a.isDaily()
+            val openB = b.isDaily()
+            if (openA || openB) return true
+            val da = a.specificDate
+            val db = b.specificDate
+            if (da != null && db != null) return da == db
+            if (da != null) {
+                val wb = b.weekday ?: return false
+                return da.dayOfWeek == BlockedTime.weekdayToDayOfWeek(wb)
+            }
+            if (db != null) {
+                val wa = a.weekday ?: return false
+                return db.dayOfWeek == BlockedTime.weekdayToDayOfWeek(wa)
+            }
+            return a.weekday != null && a.weekday == b.weekday
         }
 
         fun clockOverlap(a: BlockedTime, b: BlockedTime): Boolean =

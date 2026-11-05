@@ -246,6 +246,12 @@ fun LoginScreen(
     var pass by remember { mutableStateOf("") }
     AuthColumn {
         Text("Sign in", color = SchedulerColors.Cream, style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "Ashore Prospect ${com.opwait.ashoreprospect.AppVersion.LABEL}",
+            color = SchedulerColors.LabelMuted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
         Text(serverUrl, color = SchedulerColors.LabelMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         Text(
             when (hostReachable) {
@@ -308,6 +314,49 @@ fun LoginScreen(
 }
 
 @Composable
+private fun VaultUnlockPane(
+    loading: Boolean,
+    error: String?,
+    onUnlock: (String) -> Unit,
+    onLogout: () -> Unit,
+) {
+    var pass by remember { mutableStateOf("") }
+    AuthColumn {
+        Text("Unlock notes", color = SchedulerColors.Cream, style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "Remember-me could not open the vault. Enter the account password. Ciphertext is not shown on the grid.",
+            color = SchedulerColors.LabelMuted,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Spacer(Modifier.height(24.dp))
+        OutlinedTextField(
+            value = pass,
+            onValueChange = { pass = it },
+            label = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+            colors = schedulerOutlinedFieldColors(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = { if (!loading && pass.isNotBlank()) onUnlock(pass) },
+            ),
+        )
+        if (error != null) {
+            Text(error, color = SchedulerColors.Error, modifier = Modifier.padding(top = 8.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        AuthWorkingButton("Unlock", loading) {
+            if (pass.isNotBlank()) onUnlock(pass)
+        }
+        TextButton(onClick = onLogout, enabled = !loading) {
+            Text("Sign out", color = SchedulerColors.LabelMuted)
+        }
+    }
+}
+
+@Composable
 private fun RememberLoginRow(rememberLogin: Boolean, onRememberLogin: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -325,7 +374,7 @@ private fun RememberLoginRow(rememberLogin: Boolean, onRememberLogin: (Boolean) 
         Text("Remember login", color = SchedulerColors.Cream)
     }
     Text(
-        "Checked: after a restart this phone signs in and shows titles. Idle lock still returns here.",
+        "Checked: after a restart this phone signs in and shows titles.",
         color = SchedulerColors.LabelMuted,
         fontSize = 12.sp,
         modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
@@ -604,7 +653,17 @@ fun MainSchedulerScreen(
     onAttachTypewriterImage: (diaryDate: String?, pageId: String?, name: String, mime: String, bytes: ByteArray) -> Unit,
     onPreviewTypewriterImage: (sha: String) -> Unit,
     onClearImagePreview: () -> Unit,
+    onUnlockVault: (String) -> Unit,
 ) {
+    if (state.vaultNeedsUnlock) {
+        VaultUnlockPane(
+            loading = state.loading,
+            error = state.error,
+            onUnlock = onUnlockVault,
+            onLogout = onLogout,
+        )
+        return
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -649,7 +708,13 @@ fun MainSchedulerScreen(
                     color = SchedulerColors.Cream,
                     maxLines = 1,
                     softWrap = false,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp).padding(top = 24.dp),
+                )
+                Text(
+                    com.opwait.ashoreprospect.AppVersion.LABEL,
+                    color = SchedulerColors.LabelMuted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 16.dp, top = 4.dp),
                 )
                 MainTab.entries.forEach { tab ->
                     NavigationDrawerItem(

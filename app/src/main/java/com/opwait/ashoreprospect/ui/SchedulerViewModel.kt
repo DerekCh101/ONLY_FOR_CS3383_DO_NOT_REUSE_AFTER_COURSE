@@ -1050,20 +1050,25 @@ class SchedulerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleFinish(task: Task) {
         viewModelScope.launch {
-            if (task.placedDate == null || task.placedTime == null) return@launch
-            val next = if (task.workflow == Workflow.FINISHED) {
+            val parent = NestedTasks.mainTask(_ui.value.tasks, task)
+            if (parent.placedDate == null || parent.placedTime == null) return@launch
+            val next = if (parent.workflow == Workflow.FINISHED) {
                 Workflow.UNFINISHED
             } else {
                 Workflow.FINISHED
             }
-            task.workflow = next
-            task.touchLastUpdated()
-            val snapshot = task.copy(workflow = next, lastUpdatedAt = task.lastUpdatedAt)
-            repo.upsertTask(task)
+            val affiliated = listOf(parent) + NestedTasks.ofParent(_ui.value.tasks, parent)
+            val stamped = affiliated.map { row ->
+                row.workflow = next
+                row.touchLastUpdated()
+                row.copy(workflow = next, lastUpdatedAt = row.lastUpdatedAt)
+            }
+            for (row in stamped) repo.upsertTask(row)
+            val byId = stamped.associateBy { it.id }
             _ui.update { st ->
                 st.copy(
-                    tasks = st.tasks.map { t -> if (t.id == task.id) snapshot else t },
-                    selectedTask = snapshot,
+                    tasks = st.tasks.map { t -> byId[t.id] ?: t },
+                    selectedTask = byId[parent.id] ?: st.selectedTask,
                 )
             }
             syncReminders()
@@ -1071,7 +1076,7 @@ class SchedulerViewModel(app: Application) : AndroidViewModel(app) {
                 .onSuccess { snap ->
                     applyWorkspace(snap.tasks, snap.blocked)
                     _ui.update { st ->
-                        st.copy(selectedTask = st.tasks.find { it.id == task.id } ?: snapshot)
+                        st.copy(selectedTask = st.tasks.find { it.id == parent.id } ?: byId[parent.id])
                     }
                 }
         }

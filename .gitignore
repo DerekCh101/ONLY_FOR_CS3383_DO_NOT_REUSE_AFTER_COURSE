@@ -14,8 +14,14 @@
 .cxx
 local.properties
 
-# Agent / objective docs (local machine only — do not publish)
+# Agent / Cursor user-store docs — never commit
 /Main Objective.md
-/current state of the javafx desktop version 2026-10-10.md
+/AGENT_STATUS.md
+/trackingProgressAutopilotMode.md
+/android trackingProgressAutopilotMode.md
+/Ashore Prospect *.md
+/current state of the *.md
 /android-port-sync-log.md
 /android-port-edit-history.md
+/.cursor/rules/android-autopilot-wakes.mdc
+/.cursor/rules/ashore-prospect-android-autopilot-wakes.mdc

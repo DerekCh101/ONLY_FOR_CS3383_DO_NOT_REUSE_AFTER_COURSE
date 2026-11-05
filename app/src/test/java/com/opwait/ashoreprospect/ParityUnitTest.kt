@@ -154,6 +154,8 @@ class ParityUnitTest {
         val mon2 = BlockedTime.weekly(java.time.DayOfWeek.MONDAY, "run", LocalTime.of(7, 30), LocalTime.of(8, 30))
         assertFalse(BlockedTimePeriod.sameLayer(mon, tue))
         assertTrue(BlockedTimePeriod.sameLayer(mon, mon2))
+        val daily = BlockedTime.daily("sleep", LocalTime.of(7, 0), LocalTime.of(8, 0))
+        assertTrue(BlockedTimePeriod.sameLayer(daily, mon))
         val period = BlockedTimePeriod()
         period.add(mon)
         assertEquals(null, period.conflictMessage(tue))

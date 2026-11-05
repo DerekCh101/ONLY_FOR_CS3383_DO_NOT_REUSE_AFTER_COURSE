@@ -6,6 +6,7 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.appwidget.action.ActionCallback
 import com.opwait.ashoreprospect.data.TaskRepository
 import com.opwait.ashoreprospect.domain.AppTimeReference
+import com.opwait.ashoreprospect.domain.NestedTasks
 import com.opwait.ashoreprospect.domain.RefreshLifeCycle
 import com.opwait.ashoreprospect.domain.Workflow
 import java.time.LocalDate
@@ -89,11 +90,15 @@ class FinishTaskAction : ActionCallback {
         val repo = TaskRepository(context.applicationContext)
         val snap = repo.loadLocalWorkspace()
         val task = snap.tasks.find { it.id == taskId } ?: return
-        if (task.placedDate == null || task.placedTime == null) return
-        val next = if (task.workflow == Workflow.FINISHED) Workflow.UNFINISHED else Workflow.FINISHED
-        val updated = task.copy(workflow = next)
-        RefreshLifeCycle.refresh(updated)
-        repo.upsertTask(updated)
+        val parent = NestedTasks.mainTask(snap.tasks, task)
+        if (parent.placedDate == null || parent.placedTime == null) return
+        val next = if (parent.workflow == Workflow.FINISHED) Workflow.UNFINISHED else Workflow.FINISHED
+        val affiliated = listOf(parent) + NestedTasks.ofParent(snap.tasks, parent)
+        for (row in affiliated) {
+            val updated = row.copy(workflow = next)
+            RefreshLifeCycle.refresh(updated)
+            repo.upsertTask(updated)
+        }
         runCatching { repo.pullFromNode() }
         CalendarWidgetRefresh.updateAll(context)
     }

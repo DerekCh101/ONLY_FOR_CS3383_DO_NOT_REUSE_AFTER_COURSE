@@ -360,6 +360,7 @@ class MainActivity : ComponentActivity() {
                         onAttachTypewriterImage = vm::attachTypewriterImage,
                         onPreviewTypewriterImage = vm::previewTypewriterImage,
                         onClearImagePreview = vm::clearImagePreview,
+                        onUnlockVault = vm::unlockVault,
                     )
                 }
 
