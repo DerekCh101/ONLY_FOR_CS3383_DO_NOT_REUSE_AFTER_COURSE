@@ -9,10 +9,21 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
+/app/build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
+.kotlin/
+.cursor/
+*.env
+.env.*
+**/secrets.*
+**/*credentials*
+*.jks
+*.keystore
+*.pem
+*.p12
 
 # Agent / Cursor user-store docs — never commit
 /Main Objective.md
