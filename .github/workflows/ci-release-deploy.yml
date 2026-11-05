@@ -219,6 +219,13 @@ jobs:
           path: release-assets
           merge-multiple: false
 
+      - name: Download canonical JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: release-jars
+          path: release-assets
+          merge-multiple: true
+
       - name: Prepare uniquely named release assets
         shell: bash
         run: |

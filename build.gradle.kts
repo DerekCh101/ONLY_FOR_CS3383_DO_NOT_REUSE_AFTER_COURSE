@@ -98,60 +98,6 @@ tasks.register<Jar>("cliJar") {
     from(sourceSets.main.get().output)
 }
 
-val runtimeClasspath = configurations.runtimeClasspath
-
-fun Jar.embedRuntimeDependencies() {
-    duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE
-    val mergedServices = layout.buildDirectory.dir("merged-services")
-    from(runtimeClasspath.get().map { file ->
-        if (file.isDirectory) {
-            file
-        } else {
-            zipTree(file).matching {
-                exclude("META-INF/services/**")
-            }
-        }
-    })
-    from(mergedServices)
-    doFirst {
-        val serviceEntries = mutableMapOf<String, LinkedHashSet<String>>()
-        runtimeClasspath.get().filter { it.isFile }.forEach { file ->
-            ZipFile(file).use { zip ->
-                zip.entries().asSequence()
-                    .filter { it.name.startsWith("META-INF/services/") && !it.isDirectory }
-                    .forEach { entry ->
-                        val providers = serviceEntries.getOrPut(entry.name) { LinkedHashSet() }
-                        zip.getInputStream(entry).bufferedReader().useLines { lines ->
-                            lines.map(String::trim)
-                                .filter { it.isNotEmpty() && !it.startsWith("#") }
-                                .forEach(providers::add)
-                        }
-                    }
-            }
-        }
-        val outputDirectory = mergedServices.get().asFile
-        outputDirectory.deleteRecursively()
-        serviceEntries.forEach { (name, providers) ->
-            val outputFile = outputDirectory.resolve(name)
-            outputFile.parentFile.mkdirs()
-            outputFile.writeText(providers.joinToString(System.lineSeparator()) + System.lineSeparator())
-        }
-    }
-}
-
-tasks.jar {
-    archiveBaseName = "scheduler-gui"
-    embedRuntimeDependencies()
-    manifest {
-        attributes["Main-Class"] = application.mainClass.get()
-    }
-}
-
-tasks.register<Jar>("cliJar") {
-    archiveBaseName = "scheduler-cli"
-    embedRuntimeDependencies()
-    manifest {
-        attributes["Main-Class"] = "org.ashoreprospect.CliRunner.CLIRunner"
-    }
-    from(sourceSets.main.get().output)
+tasks.named("build") {
+    dependsOn("cliJar")
 }
