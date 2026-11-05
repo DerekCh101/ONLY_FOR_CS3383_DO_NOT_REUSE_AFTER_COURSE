@@ -1,3 +1,4 @@
+/** Shared HTTP helpers: read body, send JSON, parse path. */
 export function readBody(req) {
     return new Promise((resolve, reject) => {
         const chunks = [];

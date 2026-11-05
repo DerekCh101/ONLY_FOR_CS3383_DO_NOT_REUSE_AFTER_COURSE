@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+<!-- Web shell that loads app.js against this Node server. -->
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Scheduler</title>
+    <title>Ashore Prospect</title>
     <style>
         :root {
             --line: #d8dde6;
@@ -12,8 +13,25 @@
             --card: #fff;
             --ink: #1c2430;
             --blue: #1f4f7a;
+            --chip: #e8f0f8;
+            --chip-line: #c5d4e4;
+            --input: #fff;
+        }
+        html.dark {
+            --line: #2e3238;
+            --muted: #9aa3ad;
+            --bg: #141618;
+            --card: #1c1e22;
+            --ink: #e6e8ea;
+            --blue: #8b95a1;
+            --chip: #2a2e34;
+            --chip-line: #3a4048;
+            --input: #222428;
         }
         * { box-sizing: border-box; }
+    </style>
+    <script>if (localStorage.getItem("ashoreTheme") === "dark") document.documentElement.classList.add("dark");</script>
+    <style>
         body {
             font-family: "Segoe UI", system-ui, sans-serif;
             max-width: 72rem;
@@ -29,12 +47,16 @@
             padding: 0.4rem 0.55rem;
             border: 1px solid var(--line);
             border-radius: 6px;
-            background: #fff;
+            background: var(--input);
+            color: var(--ink);
         }
         button { cursor: pointer; background: var(--blue); color: #fff; border-color: var(--blue); }
-        button.ghost { background: #fff; color: var(--blue); }
+        button.ghost { background: var(--card); color: var(--blue); }
         button.danger { background: #fff; color: #9b1c2c; border-color: #e2b4ba; }
         button.active { background: #163a5a; color: #fff; border-color: #163a5a; }
+        html.dark button { color: #1c1e22; }
+        html.dark button.ghost { color: var(--blue); }
+        html.dark button.active { background: #252a30; color: #e6e8ea; border-color: #8b95a1; }
         .err { color: #9b1c2c; min-height: 1.2em; font-size: 0.9rem; }
         .ok { color: #0a7; }
         #app { display: none; }
@@ -59,8 +81,42 @@
         .row { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
         label.chk { display: flex; gap: 0.3rem; align-items: center; font-size: 0.9rem; }
         .toolbar { display: flex; gap: 0.4rem; margin: 0.6rem 0 1rem; }
-        #twBody { white-space: pre-wrap; width: 100%; min-height: 8rem; }
-        #twImgs img {
+        .tw-editor {
+            display: flex;
+            align-items: stretch;
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            overflow: hidden;
+            background: #fff;
+        }
+        #twLineNos {
+            margin: 0;
+            padding: 0.4rem 0.4rem 0.4rem 0.3rem;
+            min-width: 2.4rem;
+            text-align: right;
+            color: var(--muted);
+            background: #eef2f6;
+            font: 0.85rem/1.45 Consolas, "Courier New", monospace;
+            overflow: hidden;
+            user-select: none;
+        }
+        #twBody {
+            white-space: pre-wrap;
+            width: 100%;
+            min-height: 8rem;
+            border: 0;
+            resize: vertical;
+            font: 0.9rem/1.45 Consolas, "Courier New", monospace;
+        }
+        #twImgs { align-items: flex-start; }
+        .tw-img {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            max-width: 16rem;
+        }
+        #twImgs img, .tw-img img {
             max-width: 100%;
             max-height: 16rem;
             border: 1px solid var(--line);
@@ -99,9 +155,9 @@
             display: block;
             width: 100%;
             text-align: left;
-            background: #e8f0f8;
+            background: var(--chip);
             color: var(--ink);
-            border: 1px solid #c5d4e4;
+            border: 1px solid var(--chip-line);
             border-radius: 6px;
             padding: 0.28rem 0.35rem;
             margin: 0 0 0.28rem;
@@ -170,6 +226,7 @@
             cursor: pointer;
         }
         .find-link:hover { border-color: var(--blue); background: #f3f7fb; }
+        .find-link.now { border-color: var(--blue); }
         .find-link .k { font-weight: 600; }
         .find-link .n { color: var(--muted); font-size: 0.8rem; }
         #twSaveMsg { min-width: 4.5rem; }
@@ -191,10 +248,218 @@
         }
         .toast.on { opacity: 1; transform: translateY(0); }
         .toast.bad { background: #9b1c2c; }
+        #regExtra { display: none; width: 100%; }
+        #regExtra.on { display: flex; }
+        #regHint { display: none; color: var(--muted); font-size: 0.82rem; }
+        #regHint.on { display: block; }
+        .app-user {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+            justify-content: space-between; margin-bottom: 0.55rem;
+        }
+        .spa-tabs { display: flex; gap: 0.3rem; margin-bottom: 0.8rem; }
+        .action-wrap { position: relative; }
+        .action-menu {
+            position: absolute; right: 0; top: 2.2rem; z-index: 20;
+            min-width: 14rem; background: var(--card); border: 1px solid var(--line);
+            border-radius: 8px; padding: 0.35rem; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        .action-menu button { width: 100%; text-align: left; margin: 0.15rem 0; }
+        .week-split {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(15rem, 17.5rem);
+            gap: 0.75rem;
+            align-items: stretch;
+        }
+        .week-main { min-width: 0; }
+        .task-desc {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 0.65rem 0.7rem;
+            background: var(--card);
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            max-height: 28rem;
+            overflow: auto;
+        }
+        .task-desc > strong { font-size: 0.95rem; }
+        #descMeta { white-space: pre-wrap; }
+        #descListHead, #descQuicksHead { font-weight: 700; font-size: 0.78rem; }
+        #descList, #descQuicks { display: flex; flex-direction: column; gap: 0.35rem; }
+        .desc-row { display: flex; gap: 0.35rem; align-items: center; }
+        .desc-row input[type="text"] { flex: 1; min-width: 0; }
+        .week-grid.time-grid {
+            display: grid;
+            grid-template-columns: 3.2rem repeat(7, minmax(4.5rem, 1fr));
+            grid-template-rows: auto repeat(48, 18px);
+            gap: 0;
+            overflow: auto;
+            max-height: 28rem;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--card);
+        }
+        .tg-head, .tg-time {
+            position: sticky; background: var(--card); z-index: 4;
+            font-size: 0.72rem; color: var(--muted); padding: 0.25rem;
+        }
+        .tg-head { top: 0; }
+        .tg-time {
+            left: 0; padding: 0 0.2rem; line-height: 18px; overflow: hidden;
+            border-top: 0;
+            z-index: 8;
+        }
+        .tg-head.tg-time { border-top: 0; }
+        .tg-cell { position: relative; min-height: 18px; height: 100%; border-top: 1px solid #8e96a0; min-width: 0; z-index: 2; }
+        .tg-cell.past { background: #d5dbe0; }
+        .tg-cell.today { background: #d8f0f6; }
+        .tg-cell.occ {
+            background: transparent !important;
+            border-top: none !important;
+        }
+        .tg-occ-block {
+            background: #c5d8ec;
+            pointer-events: none;
+            z-index: 1;
+            min-height: 0;
+        }
+        .tg-occ-block.ended { background: #9eb4c8; }
+        html.dark .tg-cell { background: #243044; }
+        html.dark .tg-cell.past { background: #0b0c0e; }
+        html.dark .tg-cell.today { background: #2e3c56; }
+        html.dark .tg-occ-block { background: #2f92e0; }
+        html.dark .tg-occ-block.ended { background: #5c636c; }
+        html.dark .tg-cell.occ.ended .tg-name { color: #e6e8ea; }
+        html.dark .tg-cell, html.dark .tg-time { border-top-color: #5a6570; }
+        .tg-now-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: rgba(168, 72, 72, 0.45);
+            z-index: 6;
+            pointer-events: none;
+        }
+        html.dark .tg-now-line { background: rgba(196, 110, 110, 0.42); }
+        .tg-bar {
+            position: absolute; left: 2px; right: 2px; overflow: hidden;
+            border-radius: 4px; background: var(--chip); border: 1px solid var(--chip-line);
+            font-size: 0.68rem; line-height: 1.15; padding: 0 0.2rem;
+            white-space: nowrap; text-overflow: ellipsis; z-index: 3; cursor: pointer;
+            color: var(--ink);
+        }
+        html.dark .tg-bar { background: rgba(255, 255, 255, 0.28); border-color: #f4f7fa; color: #f4f7fa; }
+        html.dark .tg-bar.past { background: rgba(18, 20, 24, 0.55); border-color: #8b929a; color: #e6e8ea; }
+        html.dark .tg-name { color: #f4f7fa; }
+        html.dark .tg-cell.occ.ended .tg-name { color: #e6e8ea; }
+        .tg-bar.past { background: rgba(31, 79, 122, 0.50); border-color: #5a7a94; }
+        .tg-name {
+            position: absolute; left: 2px; right: 2px; top: 1px;
+            border: 0; background: transparent; padding: 0 0.2rem;
+            font-size: 0.68rem; line-height: 1.15; text-align: left;
+            white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+            color: var(--ink); cursor: pointer; z-index: 3;
+        }
+        .tg-bar.picked, .tg-name.picked, .month-cell .t.picked {
+            outline: 2px solid var(--blue);
+            outline-offset: -1px;
+        }
+        .tg-bar.has-quick, .tg-name.has-quick { padding-right: 1.35rem; }
+        .tg-quick-count {
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            min-width: 0.95rem;
+            text-align: center;
+            font-size: 0.62rem;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 0 0.22rem;
+            border-radius: 3px;
+            background: #e8b86d;
+            border: 1px solid #b67a28;
+            color: #3d2710;
+            pointer-events: none;
+        }
+        html.dark .tg-quick-count {
+            background: #c4842e;
+            border-color: #f0c070;
+            color: #fff4e4;
+        }
+        html.dark .tw-editor, html.dark #twBody, html.dark #twLineNos,
+        html.dark .day-col, html.dark .create-box, html.dark .find-box,
+        html.dark .find-link, html.dark .step { background: var(--card); }
+        html.dark li { border-bottom-color: var(--line); }
+        .spa-nav { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+        #who { max-width: min(100%, 22rem); }
+        .tg-cell { overflow: visible; }
+        .month-cell .t {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+        }
+        .month-grid {
+            display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.25rem;
+        }
+        .month-cell {
+            min-height: 4.2rem; border: 1px solid var(--line); border-radius: 6px;
+            padding: 0.25rem; overflow: hidden; font-size: 0.72rem; background: var(--card);
+        }
+        .month-cell .n { color: var(--muted); }
+        .panel-hidden { display: none !important; }
+        .chip .t, .find-link .k, #who {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+        }
+        [data-page] { display: none; }
+        [data-page].on { display: block; }
+        .account-split {
+            display: grid; grid-template-columns: 12rem 1fr; gap: 1.2rem; align-items: start;
+        }
+        .account-nav { display: flex; flex-direction: column; gap: 0.3rem; }
+        .account-nav button { text-align: left; }
+        .account-main { min-width: 0; }
+        .acct-block { margin: 0 0 1.1rem; }
+        .acct-block h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
+        .acct-fold {
+            display: flex; width: 100%; justify-content: space-between; align-items: center;
+            background: transparent; color: var(--ink); border: none;
+            border-bottom: 1px solid var(--line); border-radius: 0;
+            text-align: left; font-weight: 600; font-size: 0.95rem;
+            padding: 0.7rem 0; cursor: pointer;
+        }
+        .acct-fold .chev { color: var(--muted); font-weight: 400; }
+        .acct-fold-body { padding: 0.65rem 0 1rem; }
+        .acct-form { display: flex; flex-direction: column; gap: 0.4rem; max-width: 28rem; }
+        .acct-sessions { margin-top: 0.5rem; }
+        .lead-ticks { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.4rem 0; }
+        .lead-add { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+        @media (max-width: 720px) {
+            .account-split { grid-template-columns: 1fr; }
+            .week-split { grid-template-columns: 1fr; }
+            .task-desc { max-height: 18rem; }
+            body { padding: 0.6rem 0.55rem 2.5rem; margin: 0 auto; }
+            h1 { font-size: 1.15rem; }
+            .week-grid { grid-template-columns: repeat(7, minmax(5.5rem, 1fr)); overflow-x: auto; }
+            .day-col { min-height: 8rem; }
+            .chip { font-size: 0.7rem; }
+            li { align-items: flex-start; flex-direction: column; }
+            .row { gap: 0.3rem; }
+            input, select, button, textarea { max-width: 100%; min-width: 0; }
+            .week-grid.time-grid {
+                max-height: 18rem;
+                grid-template-columns: 2.4rem repeat(7, minmax(4.4rem, 1fr));
+            }
+            .tg-bar { font-size: 0.58rem; }
+            .month-cell { min-height: 3.2rem; }
+            .app-user { align-items: stretch; }
+            .app-user .toolbar { flex-wrap: wrap; }
+            .card { overflow-x: auto; }
+            .action-menu { right: auto; left: 0; }
+        }
     </style>
 </head>
 <body>
-<h1>Scheduler</h1>
+<h1>Ashore Prospect</h1>
 <p class="err" id="err"></p>
 <div id="auth" class="card">
     <div class="row">
@@ -202,16 +467,41 @@
         <input id="pass" type="password" placeholder="password" autocomplete="current-password" />
         <button type="button" id="btnLogin">Login</button>
         <button type="button" class="ghost" id="btnReg">Register</button>
+        <p id="regHint">Email and a security question are only needed to create an account.</p>
+        <div class="row" id="regExtra">
+            <input id="email" placeholder="email (required to register)" autocomplete="email" />
+            <input id="question" placeholder="security question (required to register)" />
+            <input id="answer" type="password" placeholder="security answer (required to register)" />
+            <p class="hint">New password needs 8+ characters, upper and lower case, a number, and a symbol.</p>
+        </div>
     </div>
 </div>
 <div id="app">
-    <p class="ok" id="who"></p>
-    <div class="toolbar">
-        <button type="button" class="ghost" id="btnOut">Logout</button>
-        <button type="button" class="ghost" id="btnReload">Reload</button>
+    <div class="app-user">
+        <p class="ok" id="who"></p>
+        <div class="toolbar" style="margin:0">
+            <button type="button" class="ghost" data-spa="account">Account</button>
+            <button type="button" class="ghost" id="btnOut">Logout</button>
+            <button type="button" class="ghost" id="btnReload">Reload</button>
+        </div>
     </div>
-
-    <h2>Week</h2>
+    <div class="spa-tabs">
+        <div id="spaNav" class="spa-nav">
+            <button type="button" class="active" data-spa="calendar">Calendar</button>
+            <button type="button" class="ghost" data-spa="typewriter">Typewriter</button>
+        </div>
+        <span class="action-wrap">
+            <button type="button" class="ghost" id="btnAction">Action</button>
+            <div id="actionMenu" class="action-menu" hidden>
+                <button type="button" class="ghost" id="actTaskList">View task list</button>
+                <button type="button" class="ghost" id="actBlocked">Blocked times</button>
+                <button type="button" class="ghost" id="actMonth">Monthly view</button>
+                <button type="button" class="ghost" id="actWeek">Week view</button>
+            </div>
+        </span>
+    </div>
+    <div data-page="calendar" class="on">
+    <h2 id="calTitle">Week</h2>
     <div class="card">
         <div class="week-bar">
             <div class="week-left">
@@ -221,31 +511,70 @@
             <strong id="weekLabel"></strong>
             <div class="week-right">
                 <button type="button" class="ghost" id="btnThisWeek">Jump to this week</button>
+                <label class="chk"><input type="checkbox" id="realtimeOverlay" checked /> Real-time overlay</label>
             </div>
         </div>
-        <div id="weekGrid" class="week-grid"></div>
+        <div class="week-split">
+            <div class="week-main">
+                <div id="weekGrid" class="week-grid time-grid"></div>
+                <div id="monthGrid" class="month-grid panel-hidden"></div>
+            </div>
+            <aside class="task-desc" id="taskDesc">
+                <strong>Task description</strong>
+                <p class="meta" id="descMeta">Left-click a task to see it here.</p>
+                <div id="descListHead" hidden>Checklist</div>
+                <div id="descList"></div>
+                <div class="row">
+                    <input id="descAddField" placeholder="Add checklist item…" maxlength="500" disabled />
+                    <button type="button" class="ghost" id="descAddBtn" disabled>Add</button>
+                </div>
+                <div id="descQuicksHead" hidden>Quick time events</div>
+                <div id="descQuicks"></div>
+                <div class="row">
+                    <button type="button" id="descFinish" disabled>Finish</button>
+                    <button type="button" class="ghost" id="descSave" disabled>Save description</button>
+                </div>
+                <p class="err" id="descErr"></p>
+            </aside>
+        </div>
     </div>
 
-    <h2>Blocked times</h2>
+    <h2>Add task</h2>
     <div class="card">
-        <ul id="blocked"></ul>
-        <div class="row" style="margin-top:0.7rem">
-            <input id="bTitle" placeholder="title (morning)" />
-            <input id="bStart" type="time" step="1800" value="06:00" />
-            <input id="bEnd" type="time" step="1800" value="07:00" />
+        <div class="row">
+            <input id="tTitle" placeholder="title" maxlength="100" />
+            <input id="tDur" type="number" min="0.016" max="24" step="0.5" value="1" style="width:5rem" title="Grid duration (hours)" />
+            <label class="chk" id="tMinWrap"><input type="checkbox" id="tMinOn" /> Minutes</label>
+            <input id="tDurMin" type="number" min="1" max="1440" step="1" value="60" style="width:5.2rem;display:none" title="Minute duration" />
+            <select id="tState">
+                <option>Fixed</option>
+                <option>Deadline</option>
+                <option>Flexible</option>
+            </select>
+            <span id="tDeadlineWrap" style="display:none">
+                <input id="tDeadlineDate" type="date" />
+                <input id="tDeadlineTime" type="time" step="60" value="18:00" />
+            </span>
+            <input id="tDate" type="date" title="optional for Deadline / Flexible (unscheduled if empty)" />
+            <input id="tTime" type="time" step="60" title="exact time is kept; the grid rounds to 30 minutes" />
+            <label class="chk"><input type="checkbox" id="tEndOn" /> End time</label>
+            <input id="tEnd" type="time" step="60" title="end time instead of typing duration" style="display:none" />
+            <button type="button" id="btnAdd">Add</button>
+            <button type="button" class="ghost" id="btnQuick" hidden>Add as quick event</button>
         </div>
         <div class="row" style="margin-top:0.4rem">
-            <label class="chk"><input type="checkbox" id="bEvery" checked /> Every day</label>
-            <label class="chk"><input type="checkbox" id="bException" /> Exception (free this date)</label>
-            <input id="bFrom" type="date" disabled />
-            <input id="bTo" type="date" disabled />
-            <button type="button" id="btnAddBlocked">Add</button>
+            <label class="chk"><input type="checkbox" id="tDescDone" /> Description finished</label>
+            <input id="tDesc" placeholder="what to do exactly (description)" style="flex:1" maxlength="8000" />
         </div>
-        <p class="err" id="errBlocked"></p>
+        <div id="tQuicks" class="meta" style="margin-top:0.35rem"></div>
+        <p class="hint">Add saves the task. “Description finished” only marks the checklist, it does not add. Tick End time to set a finish clock instead of duration — the other number follows. Times like 18:31 are stored exactly; the grid rounds occupancy. Quick events belong to the open task (shown below) and are not separate tasks.</p>
+        <p class="ok" id="tReuseHint"></p>
+        <button type="button" id="btnNewTask" class="ghost" style="display:none">New instead</button>
+        <p class="err" id="errAdd"></p>
     </div>
 
-    <h2>Tasks</h2>
-    <div class="card">
+    <h2 id="taskListHeading" class="panel-hidden">View task list</h2>
+    <div class="card panel-hidden" id="taskListPanel">
         <div class="row tabs" id="taskWhenTabs">
             <button type="button" class="active" data-taskwhen="all">All</button>
             <button type="button" class="ghost" data-taskwhen="ongoing">Ongoing</button>
@@ -260,40 +589,66 @@
         </div>
         <details class="fold" open>
             <summary>Task list</summary>
+            <p class="hint">Oldest / most past first, then toward the future. Unscheduled sit at the end.</p>
             <ul id="tasks"></ul>
+            <div class="row" id="taskPager" hidden>
+                <button type="button" class="ghost" id="btnTaskPrev">Previous 12</button>
+                <span class="meta" id="taskPageLabel"></span>
+                <button type="button" class="ghost" id="btnTaskNext">Next 12</button>
+            </div>
         </details>
     </div>
 
-    <h2>Add task</h2>
-    <div class="card">
-        <div class="row">
-            <input id="tTitle" placeholder="title" />
-            <input id="tDur" type="number" min="0.5" step="0.5" value="1" style="width:5rem" />
-            <select id="tState">
-                <option>Fixed</option>
-                <option>Flexible</option>
-            </select>
-            <input id="tDate" type="date" />
-            <input id="tTime" type="time" step="1800" />
-            <button type="button" id="btnAdd">Add</button>
+    <h2 id="blockedHeading" class="panel-hidden">Blocked times</h2>
+    <div class="card panel-hidden" id="blockedPanel">
+        <ul id="blocked"></ul>
+        <div class="row" style="margin-top:0.7rem">
+            <input id="bTitle" placeholder="title (morning)" maxlength="100" />
+            <input id="bStart" type="time" step="60" value="06:00" />
+            <input id="bEnd" type="time" step="60" value="07:00" />
+            <button type="button" id="btnAddBlocked">Add</button>
         </div>
-        <p class="err" id="errAdd"></p>
+        <div class="row" style="margin-top:0.4rem">
+            <label class="chk"><input type="checkbox" id="bEvery" checked /> Every day</label>
+            <label class="chk" id="bRangeWrap"><input type="checkbox" id="bRange" /> Range</label>
+            <label class="chk" id="bExceptionWrap"><input type="checkbox" id="bException" /> <span id="bExceptionLab">Exception (from every day)</span></label>
+        </div>
+        <div class="row" id="bDateRow" style="margin-top:0.4rem" hidden>
+            <span class="meta" id="bFromLab">Date</span>
+            <input id="bFrom" type="date" />
+            <span class="meta" id="bToLab" hidden>To</span>
+            <input id="bTo" type="date" hidden />
+        </div>
+        <div class="row" id="bWeekRow" style="margin-top:0.4rem" hidden>
+            <span class="meta">Weekdays:</span>
+            <label class="chk"><input type="checkbox" class="bDow" value="1" /> Mon</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="2" /> Tue</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="3" /> Wed</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="4" /> Thu</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="5" /> Fri</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="6" /> Sat</label>
+            <label class="chk"><input type="checkbox" class="bDow" value="7" /> Sun</label>
+        </div>
+        <p class="err" id="errBlocked"></p>
+    </div>
     </div>
 
+    <div data-page="typewriter">
     <h2>Typewriter</h2>
     <div class="card">
         <div class="tabs">
-            <button type="button" id="tabDiary" class="active" data-twtab="diary">Diary</button>
-            <button type="button" id="tabPages" class="ghost" data-twtab="pages">Pages</button>
+            <button type="button" id="tabPages" class="active" data-twtab="pages">Pages</button>
+            <button type="button" id="tabDiary" class="ghost" data-twtab="diary">Diary</button>
             <button type="button" id="tabLists" class="ghost" data-twtab="lists">Lists</button>
         </div>
 
-        <div id="paneDiary" class="tw-pane on">
+        <div id="paneDiary" class="tw-pane">
             <div class="create-box">
                 <h3>Create or open one date</h3>
                 <p class="hint">Pick a calendar date, then press the button. If that day has no writing yet, the site asks before creating it. Empty days are not saved.</p>
                 <div class="row">
                     <input id="twDay" type="date" />
+                    <button type="button" class="ghost" id="btnTwToday">Jump to Today</button>
                     <button type="button" id="btnTwFind">Create / open date</button>
                 </div>
             </div>
@@ -316,9 +671,9 @@
             </div>
         </div>
 
-        <div id="panePages" class="tw-pane">
+        <div id="panePages" class="tw-pane on">
             <div class="row">
-                <input id="twPageTitle" placeholder="page title" />
+                <input id="twPageTitle" placeholder="page title" maxlength="200" />
                 <button type="button" id="btnTwAddPage">Add page</button>
             </div>
             <ul id="twPageList"></ul>
@@ -326,17 +681,25 @@
 
         <div id="paneLists" class="tw-pane">
             <div class="row">
-                <input id="twListTitle" placeholder="list title" />
+                <input id="twListTitle" placeholder="list title" maxlength="200" />
                 <button type="button" id="btnTwAddList">Add list</button>
             </div>
             <ul id="twLists"></ul>
         </div>
 
         <div id="twView">
-            <input id="twTitle" style="width:100%" />
+            <input id="twTitle" style="width:100%" maxlength="200" />
             <div class="meta" id="twMeta"></div>
-            <textarea id="twBody"></textarea>
+            <div class="tw-editor">
+                <pre id="twLineNos" aria-hidden="true">1</pre>
+                <textarea id="twBody"></textarea>
+            </div>
             <div id="twImgs" class="row"></div>
+            <div class="row" id="twAttachRow" style="margin-top:0.4rem;display:none">
+                <input type="file" id="twImgFile" accept=".png,.jpg,.jpeg,.gif,.webp,image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+                <button type="button" class="ghost" id="btnTwAttach">Attach images</button>
+                <span class="meta" id="twAttachHint">0 / 20 images · png, jpg, gif, webp · 8 MB each</span>
+            </div>
             <div class="row" style="margin-top:0.5rem">
                 <button type="button" id="btnTwSaveNote">Save this</button>
                 <button type="button" class="danger" id="btnTwDelNote">Delete this</button>
@@ -344,8 +707,24 @@
             </div>
         </div>
     </div>
+    </div>
+
+    <div data-page="account">
+        <div id="accountRoot"></div>
+    </div>
 </div>
 <div id="toast" class="toast" hidden></div>
+<script src="/vault.js"></script>
 <script src="/app.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "htm": "https://esm.sh/htm@3.1.1"
+  }
+}
+</script>
+<script type="module" src="/shell.js"></script>
 </body>
 </html>

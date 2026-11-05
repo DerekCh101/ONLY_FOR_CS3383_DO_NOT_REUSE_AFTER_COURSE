@@ -1,16 +1,43 @@
+/** Postgres access for users, sessions, tasks, blocked time, and typewriter. */
 import pg from "pg";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { applyUserEnv } from "./lib/userEnv.js";
 
 const { Pool } = pg;
 
 pg.types.setTypeParser(1082, (v) => (v == null ? null : String(v).slice(0, 10)));
-pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v)));
+pg.types.setTypeParser(1083, (v) => (v == null ? null : String(v).slice(0, 8)));
+pg.types.setTypeParser(1266, (v) => (v == null ? null : String(v).slice(0, 8)));
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function postgresPassword() {
+    applyUserEnv();
+    const env = process.env.PGPASSWORD || process.env.postgres_pw || "";
+    if (String(env).trim()) return String(env).trim();
+    const files = [
+        join(REPO, ".scheduler", "postgres.pw"),
+        join(process.cwd(), ".scheduler", "postgres.pw"),
+        join(process.cwd(), "..", ".scheduler", "postgres.pw")
+    ];
+    for (const p of files) {
+        if (!existsSync(p)) continue;
+        try {
+            const s = readFileSync(p, "utf8").trim();
+            if (s) return s;
+        } catch { /* ignore */ }
+    }
+    return "";
+}
 
 const pool = new Pool({
     host: process.env.PGHOST || "127.0.0.1",
     port: Number(process.env.PGPORT || 5432),
     user: process.env.PGUSER || "postgres",
-    password: process.env.PGPASSWORD || process.env.postgres_pw || "",
+    password: postgresPassword(),
     database: process.env.PGDATABASE || "Scheduler"
 });
 
@@ -34,6 +61,50 @@ function first(obj, keys) {
     return null;
 }
 
+function hasKey(obj, keys) {
+    if (!obj) return false;
+    for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(obj, k)) return true;
+    }
+    return false;
+}
+
+/** null = field omitted (keep existing on update); "" = client cleared it. */
+function extraText(task, keys) {
+    if (!hasKey(task, keys)) return null;
+    return str(first(task, keys)) || "";
+}
+
+function isSealed(s) {
+    return String(s ?? "").startsWith("AP1.");
+}
+
+function clipLen(s, max) {
+    const t = String(s ?? "");
+    if (isSealed(t)) return t;
+    return t.length > max ? t.slice(0, max) : t;
+}
+
+function clipImageName(name) {
+    const raw = String(name || "image.png");
+    if (raw.length <= 120) return raw;
+    const dot = raw.lastIndexOf(".");
+    const ext = dot >= 0 ? raw.slice(dot) : "";
+    return raw.slice(0, Math.max(1, 120 - ext.length)) + ext;
+}
+
+/** null = omitted (keep existing on update). */
+function extraBool(task, keys) {
+    if (!hasKey(task, keys)) return null;
+    for (const k of keys) {
+        if (!Object.prototype.hasOwnProperty.call(task, k)) continue;
+        const v = task[k];
+        if (v === true || v === "true" || v === "1") return true;
+        if (v === false || v === "false" || v === "0") return false;
+    }
+    return false;
+}
+
 function bearerToken(req) {
     const h = req && req.headers ? (req.headers.authorization || req.headers.Authorization || "") : "";
     const s = String(h);
@@ -47,6 +118,33 @@ function toYmd(v) {
     return m ? m[1] + "-" + m[2] + "-" + m[3] : "";
 }
 
+function normClock(v) {
+    const s = String(v ?? "").trim();
+    const m = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return s || null;
+    const pad = (n) => String(n).padStart(2, "0");
+    return pad(m[1]) + ":" + pad(m[2]) + ":" + pad(m[3] || "00");
+}
+
+function normBlockedRow(row) {
+    if (!row) return row;
+    const wd = row.weekday;
+    const n = wd == null || wd === "" ? null : Number(wd);
+    const rawEx = row.is_exception ?? row.isException;
+    row.specific_date = toYmd(row.specific_date || row.specificDate) || null;
+    row.start_time = normClock(row.start_time || row.startTime);
+    row.end_time = normClock(row.end_time || row.endTime);
+    row.weekday = n == null || !Number.isFinite(n) ? null : (n === 0 ? 7 : n);
+    row.is_exception = rawEx === true || rawEx === "t" || rawEx === "true" || rawEx === 1 || rawEx === "1";
+    return row;
+}
+
+function clipListRow(list) {
+    if (!list || typeof list !== "object") return list;
+    if (!Array.isArray(list.items) || list.items.length <= 500) return list;
+    return Object.assign({}, list, { items: list.items.slice(0, 500) });
+}
+
 function parseBundle(raw) {
     const empty = { diary: [], lists: [], pages: [] };
     try {
@@ -54,7 +152,7 @@ function parseBundle(raw) {
         if (!o || typeof o !== "object") return empty;
         return {
             diary: Array.isArray(o.diary) ? o.diary : [],
-            lists: Array.isArray(o.lists) ? o.lists : [],
+            lists: Array.isArray(o.lists) ? o.lists.map(clipListRow) : [],
             pages: Array.isArray(o.pages) ? o.pages : []
         };
     } catch (_) {
@@ -74,7 +172,7 @@ function imageText(note) {
         const id = String((im && (im.id || im.sha256)) || "").toLowerCase();
         if (/^[a-f0-9]{64}$/.test(id)) out.push(id);
     }
-    return out.join(",");
+    return out.slice(0, 20).join(",");
 }
 
 function imageArr(text) {
@@ -82,6 +180,7 @@ function imageArr(text) {
         .split(",")
         .map((s) => s.trim().toLowerCase())
         .filter((s) => /^[a-f0-9]{64}$/.test(s))
+        .slice(0, 20)
         .map((id) => ({ id, name: "" }));
 }
 
@@ -95,12 +194,37 @@ export async function ensureSchema() {
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     `);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS email TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS security_question TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.users ADD COLUMN IF NOT EXISTS security_answer_hash TEXT`);
+    await query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.reset_tokens (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ
+        )
+    `);
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.sessions (
             token TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
+    `);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS session_id TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS device TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.sessions ADD COLUMN IF NOT EXISTS vault_wrap TEXT`);
+    await query(`
+        UPDATE ${SCHEMA}.sessions
+        SET session_id = token
+        WHERE session_id IS NULL OR session_id = ''
+    `);
+    await query(`
+        UPDATE ${SCHEMA}.sessions
+        SET last_seen_at = COALESCE(last_seen_at, created_at, NOW())
+        WHERE last_seen_at IS NULL
     `);
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.tasks (
@@ -119,6 +243,14 @@ export async function ensureSchema() {
             placement_updated_at TIMESTAMPTZ
         )
     `);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS category TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS subcategory TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description TEXT`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS description_done BOOLEAN NOT NULL DEFAULT FALSE`);
+    await query(`ALTER TABLE ${SCHEMA}.tasks ADD COLUMN IF NOT EXISTS parent_id TEXT`);
+    try {
+        await query(`ALTER TABLE ${SCHEMA}.tasks ALTER COLUMN duration TYPE DOUBLE PRECISION USING duration::double precision`);
+    } catch { /* already float or not postgres */ }
     await query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.blocked (
             id TEXT PRIMARY KEY,
@@ -196,35 +328,248 @@ export async function ensureSchema() {
             last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     `);
+    await query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.deleted_accounts (
+            user_id TEXT PRIMARY KEY,
+            deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    `);
 }
 
 await ensureSchema();
+
+const USER_COLS = `id::text AS id, username, password_hash, email, security_question, security_answer_hash`;
 
 export async function findUserByUsername(username) {
     const name = str(username);
     if (!name) return null;
     const r = await query(
-        `SELECT id::text AS id, username, password_hash FROM ${SCHEMA}.users WHERE username = $1`,
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users WHERE username = $1`,
         [name]
     );
     return r.rows[0] || null;
 }
 
-export async function createUser(id, username, passwordHash) {
+export async function findUserById(id) {
+    if (!id) return null;
     const r = await query(
-        `INSERT INTO ${SCHEMA}.users(id, username, password_hash)
-         VALUES ($1,$2,$3)
-             RETURNING id::text AS id, username, password_hash`,
-        [id, str(username), passwordHash]
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users WHERE id::text = $1`,
+        [String(id)]
+    );
+    return r.rows[0] || null;
+}
+
+export async function findUserByUsernameAndEmail(username, email) {
+    const name = str(username);
+    const mail = str(email) ? String(email).trim().toLowerCase() : null;
+    if (!name || !mail) return null;
+    const r = await query(
+        `SELECT ${USER_COLS} FROM ${SCHEMA}.users
+         WHERE username = $1 AND lower(email) = $2`,
+        [name, mail]
+    );
+    return r.rows[0] || null;
+}
+
+export async function updateUsername(userId, username) {
+    const name = str(username);
+    if (!name) throw new Error("username required");
+    if (name.length > 40) throw new Error("username max 40 characters");
+    const clash = await findUserByUsername(name);
+    if (clash && String(clash.id) !== String(userId)) {
+        throw new Error("username already taken");
+    }
+    await query(
+        `UPDATE ${SCHEMA}.users SET username = $2 WHERE id::text = $1`,
+        [String(userId), name]
+    );
+}
+
+export async function updateUserEmail(userId, email) {
+    const mail = str(email) ? String(email).trim().toLowerCase() : null;
+    await query(
+        `UPDATE ${SCHEMA}.users SET email = $2 WHERE id::text = $1`,
+        [String(userId), mail]
+    );
+}
+
+export async function updateUserPassword(userId, passwordHash) {
+    await query(
+        `UPDATE ${SCHEMA}.users SET password_hash = $2 WHERE id::text = $1`,
+        [String(userId), passwordHash]
+    );
+}
+
+export async function updateUserSecurity(userId, question, answerHash) {
+    await query(
+        `UPDATE ${SCHEMA}.users SET security_question = $2, security_answer_hash = $3
+         WHERE id::text = $1`,
+        [String(userId), str(question), answerHash]
+    );
+}
+
+export async function deleteSessionsForUser(userId, keepToken) {
+    if (keepToken) {
+        await query(
+            `DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1 AND token::text <> $2`,
+            [String(userId), String(keepToken)]
+        );
+        return;
+    }
+    await query(
+        `DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1`,
+        [String(userId)]
+    );
+}
+
+export async function isAccountDeleted(userId) {
+    if (!userId) return false;
+    const r = await query(
+        `SELECT 1 FROM ${SCHEMA}.deleted_accounts WHERE user_id = $1`,
+        [String(userId)]
+    );
+    return r.rowCount > 0;
+}
+
+/** Ignore missing tables that Java JDBC created but Node schema never did. */
+async function tryDelete(client, sql, params) {
+    try {
+        await client.query(sql, params);
+    } catch (e) {
+        if (e && e.code === "42P01") return;
+        throw e;
+    }
+}
+
+/** Server-side wipe: rows, sessions, then tombstone so stale clients can clear themselves. */
+export async function deleteAccountFully(userId) {
+    const uid = String(userId || "");
+    if (!uid) throw new Error("user id required");
+    const user = await findUserById(uid);
+    const username = user && user.username ? user.username : "";
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM ${SCHEMA}.tw_list_items WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_lists WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_pages WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_diary WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_images WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tw_meta WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.tasks WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.blocked WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client,
+            `DELETE FROM ${SCHEMA}.sync_deletes_blocked WHERE id IN (
+                SELECT id FROM ${SCHEMA}.blocked_times WHERE user_id::text = $1)`,
+            [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.blocked_times WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.sync_deletes WHERE user_id::text = $1`, [uid]);
+        await tryDelete(client, `DELETE FROM ${SCHEMA}.devices WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.reset_tokens WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.sessions WHERE user_id::text = $1`, [uid]);
+        await client.query(`DELETE FROM ${SCHEMA}.users WHERE id::text = $1`, [uid]);
+        await client.query(
+            `INSERT INTO ${SCHEMA}.deleted_accounts(user_id) VALUES ($1)
+             ON CONFLICT (user_id) DO UPDATE SET deleted_at = now()`,
+            [uid]
+        );
+        await client.query("COMMIT");
+    } catch (e) {
+        try {
+            await client.query("ROLLBACK");
+        } catch (_) {}
+        throw e;
+    } finally {
+        client.release();
+    }
+    return username;
+}
+
+export async function createResetToken(userId) {
+    const token = randomBytes(24).toString("hex");
+    await query(
+        `INSERT INTO ${SCHEMA}.reset_tokens(token, user_id, expires_at)
+         VALUES ($1,$2, NOW() + INTERVAL '8 minutes')`,
+        [token, String(userId)]
+    );
+    return token;
+}
+
+export async function takeResetToken(token) {
+    const t = str(token);
+    if (!t) return null;
+    const r = await query(
+        `SELECT token, user_id::text AS user_id FROM ${SCHEMA}.reset_tokens
+         WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()`,
+        [t]
+    );
+    if (!r.rows[0]) return null;
+    await query(
+        `UPDATE ${SCHEMA}.reset_tokens SET used_at = NOW() WHERE token = $1`,
+        [t]
     );
     return r.rows[0];
 }
 
-export async function createSession(userId) {
-    const token = randomUUID();
+export async function createUser(id, username, passwordHash, email, question, answerHash) {
+    const r = await query(
+        `INSERT INTO ${SCHEMA}.users(id, username, password_hash, email, security_question, security_answer_hash)
+         VALUES ($1,$2,$3,$4,$5,$6)
+             RETURNING id::text AS id, username, email`,
+        [id, str(username), passwordHash, str(email).toLowerCase(), str(question), answerHash]
+    );
+    return r.rows[0];
+}
+
+export async function setSessionVaultWrap(token, wrap) {
     await query(
-        `INSERT INTO ${SCHEMA}.sessions(token, user_id) VALUES ($1,$2)`,
-        [token, String(userId)]
+        `UPDATE ${SCHEMA}.sessions SET vault_wrap = $2 WHERE token::text = $1`,
+        [String(token), wrap || null]
+    );
+}
+
+export async function getSessionVault(token) {
+    if (!token) return null;
+    const r = await query(
+        `SELECT user_id::text AS uid, vault_wrap FROM ${SCHEMA}.sessions WHERE token::text = $1`,
+        [String(token)]
+    );
+    return r.rows[0] || null;
+}
+
+export async function userHasSealedData(userId) {
+    const uid = String(userId);
+    const r = await query(
+        `SELECT EXISTS (
+            SELECT 1 FROM ${SCHEMA}.tasks WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(description, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.blocked WHERE user_id::text = $1 AND title LIKE 'AP1.%'
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.typewriter WHERE user_id::text = $1
+                AND (content LIKE 'AP1.%' OR content LIKE '%AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_pages WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(body, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_diary WHERE user_id::text = $1
+                AND (title LIKE 'AP1.%' OR COALESCE(body, '') LIKE 'AP1.%')
+            UNION ALL
+            SELECT 1 FROM ${SCHEMA}.tw_lists WHERE user_id::text = $1 AND title LIKE 'AP1.%'
+        ) AS hit`,
+        [uid]
+    );
+    return !!(r.rows[0] && r.rows[0].hit === true);
+}
+
+export async function createSession(userId, device) {
+    const token = randomUUID();
+    const sessionId = randomUUID();
+    await query(
+        `INSERT INTO ${SCHEMA}.sessions(token, user_id, session_id, last_seen_at, device)
+         VALUES ($1,$2,$3, NOW(), $4)`,
+        [token, String(userId), sessionId, str(device)]
     );
     return token;
 }
@@ -233,11 +578,46 @@ export async function userFromToken(req) {
     const token = bearerToken(req);
     if (!token) return null;
     const r = await query(
-        `SELECT u.id::text AS id, u.username
+        `SELECT u.id::text AS id, u.username, u.email, u.security_question,
+                (u.security_answer_hash IS NOT NULL AND u.security_answer_hash <> '') AS has_security,
+                s.session_id, s.token
          FROM ${SCHEMA}.sessions s
          JOIN ${SCHEMA}.users u ON u.id::text = s.user_id::text
          WHERE s.token::text = $1`,
         [token]
+    );
+    if (!r.rows[0]) return null;
+    await query(
+        `UPDATE ${SCHEMA}.sessions SET last_seen_at = NOW() WHERE token::text = $1`,
+        [token]
+    );
+    return r.rows[0];
+}
+
+export async function listSessions(userId, currentToken) {
+    const r = await query(
+        `SELECT session_id, device, created_at, last_seen_at,
+                (token::text = $2) AS current
+         FROM ${SCHEMA}.sessions
+         WHERE user_id::text = $1
+         ORDER BY last_seen_at DESC NULLS LAST, created_at DESC`,
+        [String(userId), String(currentToken || "")]
+    );
+    return r.rows.map((row) => ({
+        id: row.session_id,
+        device: row.device || "Unknown device",
+        createdAt: row.created_at,
+        lastSeenAt: row.last_seen_at,
+        current: row.current === true
+    }));
+}
+
+export async function deleteSessionById(userId, sessionId) {
+    const r = await query(
+        `DELETE FROM ${SCHEMA}.sessions
+         WHERE user_id::text = $1 AND session_id = $2
+         RETURNING token`,
+        [String(userId), String(sessionId)]
     );
     return r.rows[0] || null;
 }
@@ -257,7 +637,10 @@ export async function listTasks(userId) {
              lifecycle,
              workflow,
              last_updated_at,
-             placement_updated_at
+             placement_updated_at,
+             description,
+             description_done,
+             parent_id
          FROM ${SCHEMA}.tasks
          WHERE user_id::text = $1
          ORDER BY placed_date NULLS LAST, placed_time NULLS LAST, title`,
@@ -273,20 +656,24 @@ export async function upsertTask(task) {
     await query(
         `INSERT INTO ${SCHEMA}.tasks(
             id, user_id, title, duration, state, placed_date, placed_time,
-            deadline_date, deadline_time, lifecycle, workflow, last_updated_at, placement_updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            deadline_date, deadline_time, lifecycle, workflow, last_updated_at, placement_updated_at,
+            description, description_done, parent_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14,''),COALESCE($15,FALSE),$16)
              ON CONFLICT (id) DO UPDATE SET
-            title = EXCLUDED.title,
-                                     duration = EXCLUDED.duration,
-                                     state = EXCLUDED.state,
-                                     placed_date = EXCLUDED.placed_date,
-                                     placed_time = EXCLUDED.placed_time,
-                                     deadline_date = EXCLUDED.deadline_date,
-                                     deadline_time = EXCLUDED.deadline_time,
-                                     lifecycle = EXCLUDED.lifecycle,
-                                     workflow = EXCLUDED.workflow,
-                                     last_updated_at = EXCLUDED.last_updated_at,
-                                     placement_updated_at = EXCLUDED.placement_updated_at
+            title = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.title ELSE ${SCHEMA}.tasks.title END,
+            duration = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.duration ELSE ${SCHEMA}.tasks.duration END,
+            state = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.state ELSE ${SCHEMA}.tasks.state END,
+            deadline_date = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.deadline_date ELSE ${SCHEMA}.tasks.deadline_date END,
+            deadline_time = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.deadline_time ELSE ${SCHEMA}.tasks.deadline_time END,
+            lifecycle = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.lifecycle ELSE ${SCHEMA}.tasks.lifecycle END,
+            workflow = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.workflow ELSE ${SCHEMA}.tasks.workflow END,
+            last_updated_at = CASE WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN EXCLUDED.last_updated_at ELSE ${SCHEMA}.tasks.last_updated_at END,
+            placed_date = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_date ELSE ${SCHEMA}.tasks.placed_date END,
+            placed_time = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placed_time ELSE ${SCHEMA}.tasks.placed_time END,
+            placement_updated_at = CASE WHEN EXCLUDED.placement_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.placement_updated_at::timestamptz, EXCLUDED.placement_updated_at::timestamptz) THEN EXCLUDED.placement_updated_at ELSE ${SCHEMA}.tasks.placement_updated_at END,
+            description = CASE WHEN $14 IS NULL THEN ${SCHEMA}.tasks.description WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $14 ELSE ${SCHEMA}.tasks.description END,
+            description_done = CASE WHEN $15 IS NULL THEN ${SCHEMA}.tasks.description_done WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $15 ELSE ${SCHEMA}.tasks.description_done END,
+            parent_id = CASE WHEN $16 IS NULL THEN ${SCHEMA}.tasks.parent_id WHEN EXCLUDED.last_updated_at::timestamptz >= COALESCE(${SCHEMA}.tasks.last_updated_at::timestamptz, EXCLUDED.last_updated_at::timestamptz) THEN $16 ELSE ${SCHEMA}.tasks.parent_id END
                                  WHERE ${SCHEMA}.tasks.user_id::text = $2`,
         [
             id,
@@ -301,7 +688,10 @@ export async function upsertTask(task) {
             str(first(task, ["lifecycle"])) || "ONGOING",
             str(first(task, ["workflow"])) || "UNFINISHED",
             str(first(task, ["last_updated_at", "lastUpdatedAt"])) || new Date().toISOString(),
-            str(first(task, ["placement_updated_at", "placementUpdatedAt"])) || new Date().toISOString()
+            str(first(task, ["placement_updated_at", "placementUpdatedAt"])) || new Date().toISOString(),
+            extraText(task, ["description"]),
+            extraBool(task, ["description_done", "descriptionDone"]),
+            extraText(task, ["parent_id", "parentId"])
         ]
     );
     return task;
@@ -322,7 +712,7 @@ export async function listBlocked(userId) {
          ORDER BY start_time NULLS LAST, specific_date NULLS LAST`,
         [String(userId)]
     );
-    return r.rows;
+    return r.rows.map(normBlockedRow);
 }
 
 export async function upsertBlocked(row) {
@@ -344,11 +734,14 @@ export async function upsertBlocked(row) {
             end_time = EXCLUDED.end_time,
             last_updated_at = EXCLUDED.last_updated_at,
             is_exception = EXCLUDED.is_exception
-        WHERE ${SCHEMA}.blocked.user_id::text = $2`,
+        WHERE ${SCHEMA}.blocked.user_id::text = $2
+          AND (${SCHEMA}.blocked.last_updated_at IS NULL
+               OR EXCLUDED.last_updated_at::timestamptz
+                    >= ${SCHEMA}.blocked.last_updated_at::timestamptz)`,
         [
             id,
             userId,
-            str(first(row, ["title"])) || "blocked",
+            clipLen(str(first(row, ["title"])) || "blocked", 100),
             weekday == null || weekday === "" ? null : Number(weekday),
             str(first(row, ["specific_date", "specificDate"])),
             str(first(row, ["start_time", "startTime"])),
@@ -475,9 +868,9 @@ async function saveStructured(userId, bundle, at) {
 
     let pi = 0;
     for (const page of bundle.pages || []) {
-        if (!page || page.kind === "folder") continue;
-        const id = str(page.id);
+        const id = str(page && page.id);
         if (!id) continue;
+        const kind = str(page.kind) || "note";
         await query(
             `INSERT INTO ${SCHEMA}.tw_pages(id, user_id, parent_id, kind, title, body, images, pos)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -485,8 +878,8 @@ async function saveStructured(userId, bundle, at) {
                 id,
                 uid,
                 str(page.parent_id) || "root",
-                str(page.kind) || "note",
-                str(page.title) || "page",
+                kind,
+                str(page.title) || (kind === "folder" ? "folder" : "page"),
                 String(page.body || ""),
                 imageText(page),
                 page.pos == null ? pi : Number(page.pos)
@@ -504,6 +897,13 @@ async function saveStructured(userId, bundle, at) {
 }
 
 export async function getTypewriter(userId) {
+    const r = await query(
+        `SELECT content, last_updated_at FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`,
+        [String(userId)]
+    );
+    if (r.rowCount && isSealed(r.rows[0].content)) {
+        return { content: String(r.rows[0].content), last_updated_at: r.rows[0].last_updated_at };
+    }
     const structured = await loadStructured(userId);
     const hasStructured =
         structured.diary.length || structured.lists.length || structured.pages.length;
@@ -517,31 +917,55 @@ export async function getTypewriter(userId) {
             last_updated_at: meta.rows[0] ? meta.rows[0].last_updated_at : null
         };
     }
-    const r = await query(
-        `SELECT content, last_updated_at FROM ${SCHEMA}.typewriter WHERE user_id::text = $1`,
-        [String(userId)]
-    );
     if (!r.rowCount) {
         return { content: JSON.stringify({ diary: [], lists: [], pages: [] }), last_updated_at: null };
     }
+    const stored = r.rows[0].content;
     return {
-        content: JSON.stringify(parseBundle(r.rows[0].content)),
+        content: JSON.stringify(parseBundle(stored)),
         last_updated_at: r.rows[0].last_updated_at
     };
 }
 
 export async function upsertTypewriter(userId, content, lastUpdatedAt) {
     const incoming = str(lastUpdatedAt) || new Date().toISOString();
+    if (isSealed(content)) {
+        const r = await query(
+            `INSERT INTO ${SCHEMA}.typewriter(user_id, content, last_updated_at)
+             VALUES ($1,$2,$3)
+             ON CONFLICT (user_id) DO UPDATE SET
+                content = EXCLUDED.content,
+                last_updated_at = EXCLUDED.last_updated_at
+             WHERE ${SCHEMA}.typewriter.last_updated_at IS NULL
+                OR EXCLUDED.last_updated_at::timestamptz
+                    >= ${SCHEMA}.typewriter.last_updated_at::timestamptz
+             RETURNING last_updated_at`,
+            [String(userId), String(content), incoming]
+        );
+        if (!r.rowCount) {
+            return getTypewriter(userId);
+        }
+        // Legacy whole-bundle AP1. blob. Do not empty tw_diary / tw_pages / tw_lists —
+        // Node cannot split that into rows. New writes send JSON with AP1. per field.
+        return { content: String(content), last_updated_at: incoming };
+    }
     const bundle = parseBundle(content);
     const raw = JSON.stringify(bundle);
-    await query(
+    const r = await query(
         `INSERT INTO ${SCHEMA}.typewriter(user_id, content, last_updated_at)
          VALUES ($1,$2,$3)
          ON CONFLICT (user_id) DO UPDATE SET
             content = EXCLUDED.content,
-            last_updated_at = EXCLUDED.last_updated_at`,
+            last_updated_at = EXCLUDED.last_updated_at
+         WHERE ${SCHEMA}.typewriter.last_updated_at IS NULL
+            OR EXCLUDED.last_updated_at::timestamptz
+                >= ${SCHEMA}.typewriter.last_updated_at::timestamptz
+         RETURNING last_updated_at`,
         [String(userId), raw, incoming]
     );
+    if (!r.rowCount) {
+        return getTypewriter(userId);
+    }
     await saveStructured(userId, bundle, incoming);
     return { content: raw, last_updated_at: incoming };
 }
@@ -559,7 +983,7 @@ export async function putTypewriterImage(userId, sha, name, mime, buf) {
         `INSERT INTO ${SCHEMA}.tw_images(user_id, sha256, name, mime, data, last_updated_at)
          VALUES ($1,$2,$3,$4,$5, now())
              ON CONFLICT (user_id, sha256) DO NOTHING`,
-        [String(userId), sha, name || "image.png", mime || "image/png", buf]
+        [String(userId), sha, clipImageName(name || "image.png"), mime || "image/png", buf]
     );
 }
 

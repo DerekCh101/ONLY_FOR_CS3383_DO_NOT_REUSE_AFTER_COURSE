@@ -1,7 +1,9 @@
+/** HTTP list/upsert/delete for blocked time. */
 import { randomUUID } from "node:crypto";
 import { userFromToken, listBlocked, upsertBlocked, deleteBlocked } from "../db.js";
-import { readBody, send, parseJson, pathname, toYmd } from "../lib/httpUtil.js";
+import { readBody, send, parseJson, pathname, toYmd, normTime } from "../lib/httpUtil.js";
 import { blockedConflict } from "../lib/overlap.js";
+import { revealPayload, hideBlocked } from "../lib/vaultSession.js";
 
 export async function handleBlocked(req, res) {
     const path = pathname(req);
@@ -14,7 +16,7 @@ export async function handleBlocked(req, res) {
             return true;
         }
         try {
-            send(res, 200, { blocked: await listBlocked(user.id) });
+            send(res, 200, await revealPayload(req, { blocked: await listBlocked(user.id) }));
         } catch (e) {
             send(res, 500, { error: String(e.message || e) });
         }
@@ -49,20 +51,29 @@ export async function handleBlocked(req, res) {
                 || body.is_exception === "true"
                 || body.is_exception === 1;
             const specific = toYmd(body.specific_date || body.specificDate) || null;
-            const start = String(body.start_time ?? "").trim() || null;
-            const end = String(body.end_time ?? "").trim() || null;
+            const start = normTime(String(body.start_time ?? body.startTime ?? "").trim()) || null;
+            const end = normTime(String(body.end_time ?? body.endTime ?? "").trim()) || null;
             if (!start || !end) {
                 send(res, 400, { error: "start_time and end_time required" });
                 return true;
             }
-            if (isException && !specific) {
-                send(res, 400, { error: "exception needs a date" });
+            let weekday = body.weekday == null || body.weekday === "" ? null : Number(body.weekday);
+            if (weekday === 0) weekday = 7;
+            const hasWeekday = weekday != null && weekday >= 1 && weekday <= 7;
+            if (isException && !specific && !hasWeekday) {
+                send(res, 400, { error: "exception needs a date or weekday" });
                 return true;
             }
+            if (weekday != null && !hasWeekday) {
+                send(res, 400, { error: "weekday must be 1–7 (Mon–Sun)" });
+                return true;
+            }
+            let title = String(body.title ?? "").trim() || "blocked";
+            if (!title.startsWith("AP1.") && title.length > 100) title = title.slice(0, 100);
             const row = {
                 id: String(body.id ?? randomUUID()).trim(),
-                title: String(body.title ?? "").trim() || "blocked",
-                weekday: body.weekday == null || body.weekday === "" ? null : Number(body.weekday),
+                title,
+                weekday: hasWeekday ? weekday : null,
                 specific_date: specific,
                 start_time: start,
                 end_time: end,
@@ -73,13 +84,25 @@ export async function handleBlocked(req, res) {
                 is_exception: isException,
             };
             const existing = await listBlocked(authUser.id);
+            const already = existing.some((b) => String(b.id) === String(row.id));
+            if (specific && !already) {
+                const p = String(end).split(":");
+                const hh = String(p[0] || "23").padStart(2, "0");
+                const mm = String(p[1] || "59").padStart(2, "0");
+                const until = new Date(specific + "T" + hh + ":" + mm + ":00");
+                if (!Number.isNaN(until.getTime()) && until.getTime() <= Date.now()) {
+                    send(res, 400, { error: "Cannot add a blocked time that has already ended." });
+                    return true;
+                }
+            }
             const clash = blockedConflict(existing, row);
             if (clash) {
                 send(res, 400, { error: clash });
                 return true;
             }
+            await hideBlocked(req, row);
             await upsertBlocked(row);
-            send(res, 201, row);
+            send(res, 201, (await revealPayload(req, { blocked: [row] })).blocked[0]);
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
         }

@@ -1,0 +1,1263 @@
+/** One door for task/blocked save: SQLite first, then Postgres, then Node HTTP. */
+package org.ashoreprospect.db;
+
+import org.ashoreprospect.*;
+import org.ashoreprospect.crypto.Vault;
+import org.ashoreprospect.net.Api;
+import org.ashoreprospect.net.Endpoints;
+
+import java.sql.SQLException;
+import java.time.DayOfWeek;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
+
+/**
+ * One door for all task/blocked saving.
+ * Phone-book rule: always write SQLite on this PC first.
+ * If the internet server (Postgres) is up, copy the same change there.
+ * If Node session exists, copy the same change through HTTP too.
+ * Same-timestamp ties: {@link org.ashoreprospect.net.Endpoints#isHostDevice()}
+ * keeps local; every other install takes remote. Newer still wins.
+ */
+public class TaskRepository {
+
+    public static final int STALE_MONTHS = 3;
+    public static final int ABANDONED_MONTHS = 12;
+
+    private final SqliteTaskRepository sqlite =
+            new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
+
+    private PostgresTaskRepository postgres;
+
+    private final String deviceId = DeviceConfig.getOrCreateDeviceId();
+    private boolean postgresAvailable = false;
+    private String lastNodeFingerprint;
+    private final ReentrantLock historyLock = new ReentrantLock();
+    private final AtomicLong historyEpoch = new AtomicLong();
+
+    /** Calendar undo/redo and Node poll must not mutate SQLite/RAM at the same time. */
+    public void lockHistory() {
+        historyLock.lock();
+    }
+
+    public void unlockHistory() {
+        if (historyLock.isHeldByCurrentThread()) historyLock.unlock();
+    }
+
+    /** Bump when Clear/undo/redo commits SQLite so an in-flight Node GET is dropped. */
+    public void bumpHistoryEpoch() {
+        historyEpoch.incrementAndGet();
+    }
+
+    public TaskRepository() {
+        try {
+            sqlite.initialize();
+            System.out.println("SQLite cache ready, deviceId=" + deviceId);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        rebuildPostgres();
+    }
+
+    private void rebuildPostgres() {
+        if (Endpoints.isCreatorHost() || !Endpoints.isLocalHost()) {
+            postgres = null;
+            postgresAvailable = false;
+            System.out.println(Endpoints.isCreatorHost()
+                    ? "Creator host — Java skips Postgres JDBC"
+                    : "Client — HTTP only, skip Postgres JDBC");
+            return;
+        }
+        try {
+            postgres = new PostgresTaskRepository(
+                    Endpoints.postgresUrl(),
+                    "postgres",
+                    Endpoints.postgresPassword()
+            );
+            postgres.initialize();
+            postgresAvailable = true;
+            System.out.println("Postgres Connected OK " + Endpoints.postgresUrl());
+        } catch (Exception e) {
+            postgres = null;
+            postgresAvailable = false;
+            System.out.println("Postgres offline — SQLite only");
+            System.out.println("Postgres reason: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void tryReconnectPostgres() {
+        rebuildPostgres();
+    }
+
+    public boolean isPostgresAvailable() {
+        return postgresAvailable;
+    }
+
+    /** Local SQLite + typewriter cache only. Does not change Node or Postgres. */
+    public void wipeLocalCacheOnly() {
+        try {
+            sqlite.wipeAllLocalData();
+            sqlite.setMeta("user_id", "");
+            sqlite.setMeta("last_node_sync_at", "");
+        } catch (Exception e) {
+            System.err.println("wipe local tasks failed: " + e.getMessage());
+        }
+        org.ashoreprospect.GUI.TypewriterStore.wipeCurrentUser();
+    }
+
+    public String getDeviceId() {
+        return deviceId;
+    }
+
+    /** SQLite cache owner, or null if this PC has no cached account yet. */
+    public static String peekCachedUserId() {
+        SqliteTaskRepository probe = new SqliteTaskRepository("jdbc:sqlite:scheduler-cache.db");
+        try {
+            probe.initialize();
+            String id = probe.getMeta("user_id");
+            return (id == null || id.isBlank()) ? null : id;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public String allocateNewTaskId() {
+        while (true) {
+            String id = UUID.randomUUID().toString();
+            if (!idIsTaken(id)) return id;
+        }
+    }
+
+    public boolean idIsTaken(String id) {
+        if (id == null || id.isBlank()) return true;
+        try {
+            if (sqlite.existsTaskId(id) || sqlite.isDeletedId(id)) return true;
+            if (postgresAvailable) {
+                try {
+                    if (postgres.existsTaskId(id) || postgres.isDeletedId(id)) return true;
+                } catch (SQLException e) {
+                    System.err.println("idIsTaken postgres check failed: " + e.getMessage());
+                }
+            }
+            return false;
+        } catch (SQLException e) {
+            System.err.println("idIsTaken sqlite failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void dbAddTask(Task task) throws SQLException {
+        ensureTimestamps(task);
+        Set<String> deleted = sqlite.fetchDeletedIds();
+        if (deleted.contains(task.getID())) {
+            System.out.println("dbAddTask: id is in sync_deletes, skipping upsert: " + task.getID());
+            return;
+        }
+        sqlite.upsert(task);
+        if (postgresAvailable) {
+            try {
+                postgres.upsert(task);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                e.printStackTrace();
+            }
+        }
+        nodePostTask(task);
+    }
+
+    public void dbUpdateWorkflow(Task task) throws SQLException {
+        task.touchLastUpdated();
+        sqlite.updateWorkflow(task);
+        if (postgresAvailable) {
+            try {
+                postgres.updateWorkflow(task);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                e.printStackTrace();
+            }
+        }
+        nodePostTask(task);
+    }
+
+    public void dbClearTask(Task task) throws SQLException {
+        if (task == null || task.getID() == null) return;
+
+        sqlite.deleteTaskAndLog(task);
+        System.out.println("dbClearTask sqlite ok id=" + task.getID());
+
+        if (!postgresAvailable) {
+            tryReconnectPostgres();
+        }
+        if (postgresAvailable) {
+            try {
+                postgres.deleteTaskAndLog(task);
+                System.out.println("dbClearTask postgres ok id=" + task.getID());
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                System.err.println("dbClearTask postgres FAILED: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else {
+            System.err.println("dbClearTask: Postgres offline — only SQLite changed");
+        }
+        nodeDeleteTask(task.getID());
+    }
+
+    public void dbRestoreTask(Task task) throws SQLException {
+        if (task == null || task.getID() == null) return;
+        dbRestoreTasks(List.of(task), true);
+    }
+
+    /**
+     * Restore a snapshot. SQLite is one transaction. RAM is not touched here —
+     * caller must {@link #reloadFromSqlite} after success.
+     * @param bumpClocks true for a new user write; false for session undo (keep original stamps).
+     */
+    public void dbRestoreTasks(List<Task> tasks, boolean bumpClocks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
+        List<Task> batch = new ArrayList<>();
+        for (Task task : tasks) {
+            if (task == null || task.getID() == null) continue;
+            ensureTimestamps(task);
+            if (bumpClocks) task.touchLastUpdated();
+            batch.add(task);
+        }
+        sqlite.restoreTasks(batch);
+
+        if (!postgresAvailable) tryReconnectPostgres();
+        if (postgresAvailable) {
+            for (Task task : batch) {
+                try {
+                    postgres.unrecordDelete(task.getID());
+                    postgres.upsert(task);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    System.err.println("dbRestoreTask postgres FAILED: " + e.getMessage());
+                    e.printStackTrace();
+                    break;
+                }
+            }
+        }
+        for (Task task : batch) nodePostTask(task);
+    }
+
+    public void dbClearTasks(List<Task> tasks) throws SQLException {
+        if (tasks == null || tasks.isEmpty()) return;
+        sqlite.deleteTasksAndLog(tasks);
+        if (!postgresAvailable) tryReconnectPostgres();
+        if (postgresAvailable) {
+            for (Task task : tasks) {
+                if (task == null || task.getID() == null) continue;
+                try {
+                    postgres.deleteTaskAndLog(task);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    System.err.println("dbClearTask postgres FAILED: " + e.getMessage());
+                    e.printStackTrace();
+                    break;
+                }
+            }
+        }
+        for (Task task : tasks) {
+            if (task != null) nodeDeleteTask(task.getID());
+        }
+    }
+
+    public void dbCleanAll() throws SQLException {
+        List<Task> all = sqlite.fetchAll();
+        sqlite.deleteTasksAndLog(all);
+        if (postgresAvailable) {
+            try {
+                postgres.deleteAllTasksAndLog();
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                e.printStackTrace();
+            }
+        }
+        for (Task t : all) {
+            nodeDeleteTask(t.getID());
+        }
+    }
+
+    public void dbAddBlocked(BlockedTime blocked) throws SQLException {
+        if (blocked.getLastUpdatedAt() == null) blocked.touch();
+        Set<String> deleted = sqlite.fetchBlockedDeletedIds();
+        if (deleted.contains(blocked.getId())) {
+            System.out.println("dbAddBlocked: id tombstoned, skip " + blocked.getId());
+            return;
+        }
+        if (sqlite.findBlockedById(blocked.getId()) == null) {
+            BlockedTimePeriod probe = new BlockedTimePeriod();
+            probe.replaceBlockedPeriods(sqlite.fetchAllBlocked());
+            String clash = probe.conflictMessage(blocked);
+            if (clash != null) throw new SQLException(clash);
+        }
+        sqlite.upsertBlocked(blocked);
+        if (postgresAvailable) {
+            try {
+                postgres.upsertBlocked(blocked);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                e.printStackTrace();
+            }
+        }
+        nodePostBlocked(blocked);
+    }
+
+    public void dbClearBlocked(BlockedTime blocked) throws SQLException {
+        if (blocked == null || blocked.getId() == null) return;
+        sqlite.deleteBlockedAndLog(blocked);
+        if (postgresAvailable) {
+            try {
+                postgres.deleteBlockedAndLog(blocked);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                e.printStackTrace();
+            }
+        }
+        nodeDeleteBlocked(blocked.getId());
+    }
+
+    public List<BlockedTime> fetchAllBlocked() throws SQLException {
+        return sqlite.fetchAllBlocked();
+    }
+
+    public void dbfetchAll(TaskManagementSystem theSystem) throws SQLException {
+        String uid = Api.INSTANCE.getUserId();
+        if (uid == null || uid.isBlank()) {
+            System.out.println("No logged-in user — skip load");
+            return;
+        }
+        String cachedUser = sqlite.getMeta("user_id");
+        if (cachedUser == null || cachedUser.isBlank()) {
+            sqlite.setMeta("user_id", uid);
+        } else if (!cachedUser.equals(uid)) {
+            sqlite.wipeAllLocalData();
+            sqlite.setMeta("user_id", uid);
+        }
+
+        boolean net = org.ashoreprospect.net.NetworkWatch.isOnline();
+        if (!net) {
+            System.out.println("Offline — SQLite only, skip Postgres/Node");
+            maybeWarnLocalStaleOffline();
+        } else if (postgresAvailable) {
+            try {
+                fullOnlineSync();
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                System.err.println("Sync failed — SQLite only: " + e.getMessage());
+                e.printStackTrace();
+            }
+        } else {
+            maybeWarnLocalStaleOffline();
+        }
+
+        if (net && Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank()) {
+            pullFromNode();
+            System.out.println("sqlite tasks=" + sqlite.fetchAll().size()
+                    + " blocked=" + sqlite.fetchAllBlocked().size());
+        }
+
+        loadBlockedIntoMemory(theSystem, true);
+        loadSqliteIntoMemory(theSystem, true);
+        System.out.println("memory placed=" + theSystem.getPlacedTasks().size()
+                + " pending=" + theSystem.getPendingTasks().size()
+                + " unscheduled=" + theSystem.getUnscheduledTasks().size()
+                + " days=" + theSystem.getGrid().size());
+    }
+
+    public void reloadFromSqlite(TaskManagementSystem theSystem) throws SQLException {
+        reloadFromSqlite(theSystem, false);
+    }
+
+    public void reloadFromSqlite(TaskManagementSystem theSystem, boolean persistLifecycle)
+            throws SQLException {
+        if (theSystem == null) return;
+        lockHistory();
+        try {
+            theSystem.getPendingTasks().clear();
+            theSystem.getPlacedTasks().clear();
+            theSystem.getUnscheduledTasks().clear();
+            theSystem.getGrid().clear();
+            loadBlockedIntoMemory(theSystem, persistLifecycle);
+            loadSqliteIntoMemory(theSystem, persistLifecycle);
+        } finally {
+            unlockHistory();
+        }
+    }
+
+    public List<Task> fetchUnscheduledTasks() throws SQLException {
+        return sqlite.fetchUnscheduled();
+    }
+
+    public boolean containsIdByDateTime(LocalDate placedDate, LocalTime placedTime) throws SQLException {
+        return sqlite.containsIdByDateTime(placedDate, placedTime);
+    }
+
+    public boolean pullFromNode() {
+        if (Api.INSTANCE.getToken() == null || Api.INSTANCE.getToken().isBlank()) {
+            lastNodeFingerprint = null;
+            return false;
+        }
+        long epoch = historyEpoch.get();
+        try {
+            List<Map<String, String>> tasks = Api.INSTANCE.getTasks();
+            List<Map<String, String>> blocked = Api.INSTANCE.getBlocked();
+            String fp = fingerprint(tasks, blocked);
+            lockHistory();
+            try {
+                if (epoch != historyEpoch.get()) {
+                    System.out.println("Node pull dropped — calendar history changed during GET");
+                    return false;
+                }
+                if (fp.equals(lastNodeFingerprint)) {
+                    return false;
+                }
+                boolean changed = mergeNodeTasks(tasks);
+                changed = mergeNodeBlocked(blocked) || changed;
+                lastNodeFingerprint = fp;
+                sqlite.setMeta("last_node_sync_at", Instant.now().toString());
+                if (changed) System.out.println("Node pull applied");
+                return changed;
+            } finally {
+                unlockHistory();
+            }
+        } catch (Exception e) {
+            System.err.println("Node pull failed: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private void nodePostTask(Task task) {
+        if (!nodeReady() || task == null) return;
+        try {
+            Api.INSTANCE.postTask(taskToJson(task));
+        } catch (Exception e) {
+            System.err.println("node POST /tasks failed: " + e.getMessage());
+        }
+    }
+
+    private void nodeDeleteTask(String id) {
+        if (!nodeReady() || id == null) return;
+        try {
+            Api.INSTANCE.deleteTask(id);
+        } catch (Exception e) {
+            System.err.println("node DELETE /tasks failed: " + e.getMessage());
+        }
+    }
+
+    private void nodePostBlocked(BlockedTime blocked) {
+        if (!nodeReady() || blocked == null) return;
+        try {
+            Api.INSTANCE.postBlocked(blockedToJson(blocked));
+        } catch (Exception e) {
+            System.err.println("node POST /blocked failed: " + e.getMessage());
+        }
+    }
+
+    private void nodeDeleteBlocked(String id) {
+        if (!nodeReady() || id == null) return;
+        try {
+            Api.INSTANCE.deleteBlocked(id);
+        } catch (Exception e) {
+            System.err.println("node DELETE /blocked failed: " + e.getMessage());
+        }
+    }
+
+    private static boolean nodeReady() {
+        return Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank();
+    }
+
+    private static String taskToJson(Task task) {
+        String state = task.getState() == 1 ? "Fixed"
+                : task.getState() == 2 ? "Deadline" : "Flexible";
+        String life = task.getLifeCycle() != null ? task.getLifeCycle().name() : "UNSCHEDULED";
+        String flow = task.getWorkflow() != null ? task.getWorkflow().name() : "UNFINISHED";
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        field(sb, "id", task.getID(), true);
+        field(sb, "title", Vault.seal(task.getTaskName()), false);
+        sb.append(",\"duration\":").append(task.getDurationHours());
+        field(sb, "state", state, false);
+        field(sb, "placed_date", dateStr(task.getPlacedDate()), false);
+        field(sb, "placed_time", timeStr(task.getPlacedTime()), false);
+        field(sb, "deadline_date", dateStr(task.getDeadLineDate()), false);
+        field(sb, "deadline_time", timeStr(task.getDeadLineTime()), false);
+        field(sb, "lifecycle", life, false);
+        field(sb, "workflow", flow, false);
+        field(sb, "placement_updated_at", instantStr(task.getPlacementUpdatedAt()), false);
+        field(sb, "last_updated_at", instantStr(task.getLastUpdatedAt()), false);
+        field(sb, "description", Vault.seal(task.getDescription()), false);
+        sb.append(",\"description_done\":").append(task.isDescriptionDone() ? "true" : "false");
+        field(sb, "parent_id", task.getParentId(), false);
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static String blockedToJson(BlockedTime b) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        field(sb, "id", b.getId(), true);
+        field(sb, "title", Vault.seal(b.getTitle()), false);
+        if (b.getWeekday() != null) {
+            sb.append(",\"weekday\":").append(toWeekdayInt(b.getWeekday()));
+        } else {
+            sb.append(",\"weekday\":null");
+        }
+        field(sb, "specific_date", dateStr(b.getSpecificDate()), false);
+        field(sb, "start_time", timeStr(b.getStartTime()), false);
+        field(sb, "end_time", timeStr(b.getEndTime()), false);
+        field(sb, "last_updated_at", instantStr(b.getLastUpdatedAt()), false);
+        sb.append(",\"is_exception\":").append(b.isException() ? "true" : "false");
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static void field(StringBuilder sb, String key, String value, boolean first) {
+        if (!first) sb.append(',');
+        sb.append('"').append(key).append('"').append(':');
+        if (value == null) sb.append("null");
+        else sb.append('"').append(escapeJson(value)).append('"');
+    }
+
+    private static String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String dateStr(LocalDate d) {
+        return d == null ? null : d.toString();
+    }
+
+    private static String timeStr(LocalTime t) {
+        return t == null ? null : t.toString();
+    }
+
+    private static String instantStr(Instant i) {
+        return i == null ? null : i.toString();
+    }
+
+    private static int toWeekdayInt(DayOfWeek d) {
+        return d.getValue();
+    }
+
+    private boolean mergeNodeTasks(List<Map<String, String>> rows) throws Exception {
+        boolean changed = false;
+        Set<String> deleted = new HashSet<>(sqlite.fetchDeletedIds());
+        List<Task> remoteList = new ArrayList<>();
+        if (rows == null) rows = List.of();
+        for (Map<String, String> row : rows) {
+            Task remote = taskFromNode(row);
+            if (remote == null || remote.getID() == null) continue;
+            remoteList.add(remote);
+        }
+
+        for (Task remote : remoteList) {
+            if (deleted.contains(remote.getID())) {
+                sqlite.unrecordDelete(remote.getID());
+                deleted.remove(remote.getID());
+                changed = true;
+            }
+            Task local = sqlite.findById(remote.getID());
+            if (local != null && sameTaskStamp(local, remote)) continue;
+            Task merged = (local == null) ? remote : mergeTasks(local, remote);
+            sqlite.upsert(merged);
+            changed = true;
+        }
+
+        Map<String, Task> remoteById = new HashMap<>();
+        for (Task r : remoteList) {
+            remoteById.put(r.getID(), r);
+        }
+
+        Instant lastSync = parseMetaInstant(sqlite.getMeta("last_node_sync_at"));
+        for (Task local : sqlite.fetchAll()) {
+            if (deleted.contains(local.getID())) continue;
+            if (remoteById.containsKey(local.getID())) continue;
+
+            Instant localEdit = local.getLastUpdatedAt();
+            if (localEdit == null) localEdit = local.getPlacementUpdatedAt();
+            if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
+                sqlite.deleteTaskRow(local.getID());
+                sqlite.recordDelete(local.getID(), Instant.now());
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private boolean mergeNodeBlocked(List<Map<String, String>> rows) throws Exception {
+        boolean changed = false;
+        Set<String> deleted = new HashSet<>(sqlite.fetchBlockedDeletedIds());
+        List<BlockedTime> remoteList = new ArrayList<>();
+        if (rows == null) rows = List.of();
+        for (Map<String, String> row : rows) {
+            BlockedTime remote = blockedFromNode(row);
+            if (remote == null || remote.getId() == null) continue;
+            if (remote.getStartTime() == null || remote.getEndTime() == null) {
+                System.err.println("skip blocked missing time id=" + remote.getId()
+                        + " start=" + remote.getStartTime()
+                        + " end=" + remote.getEndTime()
+                        + " keys=" + row.keySet()
+                        + " start_time=" + row.get("start_time")
+                        + " end_time=" + row.get("end_time"));
+                continue;
+            }
+            remoteList.add(remote);
+        }
+
+        for (BlockedTime remote : remoteList) {
+            if (deleted.contains(remote.getId())) {
+                deleted.remove(remote.getId());
+            }
+            BlockedTime local = sqlite.findBlockedById(remote.getId());
+            if (local != null && sameBlockedStamp(local, remote)) continue;
+            BlockedTime merged = (local == null) ? remote : mergeBlocked(local, remote);
+            if (merged.getStartTime() == null || merged.getEndTime() == null) continue;
+            sqlite.upsertBlocked(merged);
+            changed = true;
+        }
+
+        Map<String, BlockedTime> remoteById = new HashMap<>();
+        for (BlockedTime r : remoteList) {
+            remoteById.put(r.getId(), r);
+        }
+
+        Instant lastSync = parseMetaInstant(sqlite.getMeta("last_node_sync_at"));
+        for (BlockedTime local : sqlite.fetchAllBlocked()) {
+            if (deleted.contains(local.getId())) continue;
+            if (remoteById.containsKey(local.getId())) continue;
+
+            Instant localEdit = local.getLastUpdatedAt();
+            if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
+                sqlite.deleteBlockedRow(local.getId());
+                sqlite.recordBlockedDelete(local.getId(), Instant.now(), local.getTitle());
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static boolean sameTaskStamp(Task local, Task remote) {
+        return sameStamp(local.getLastUpdatedAt(), remote.getLastUpdatedAt())
+                && sameStamp(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt());
+    }
+
+    private static boolean sameBlockedStamp(BlockedTime local, BlockedTime remote) {
+        return sameStamp(local.getLastUpdatedAt(), remote.getLastUpdatedAt());
+    }
+
+    private static boolean sameStamp(Instant local, Instant remote) {
+        if (local == null && remote == null) return true;
+        if (local == null || remote == null) return false;
+        return local.toEpochMilli() == remote.toEpochMilli();
+    }
+
+    private static String fingerprint(List<Map<String, String>> tasks, List<Map<String, String>> blocked) {
+        StringBuilder sb = new StringBuilder();
+        fingerRows(sb, tasks, true);
+        sb.append('#');
+        fingerRows(sb, blocked, false);
+        return sb.toString();
+    }
+
+    private static void fingerRows(StringBuilder sb, List<Map<String, String>> rows, boolean withPlace) {
+        List<String> parts = new ArrayList<>();
+        if (rows != null) {
+            for (Map<String, String> row : rows) {
+                if (row == null) continue;
+                String id = first(row, "id");
+                if (id == null) continue;
+                String last = stampKey(first(row, "last_updated_at", "lastUpdatedAt"));
+                if (withPlace) {
+                    String place = stampKey(first(row, "placement_updated_at", "placementUpdatedAt"));
+                    parts.add(id + '=' + last + '/' + place);
+                } else {
+                    parts.add(id + '=' + last);
+                }
+            }
+        }
+        Collections.sort(parts);
+        for (String p : parts) sb.append(p).append(';');
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String stampKey(String raw) {
+        Instant i = parseInstant(raw);
+        return i != null ? Long.toString(i.toEpochMilli()) : nz(raw);
+    }
+
+    private static Task taskFromNode(Map<String, String> row) {
+        String id = first(row, "id");
+        if (id == null) return null;
+
+        String name = first(row, "title");
+        double duration = parseDouble(first(row, "duration"), 1);
+        int state = stateToInt(first(row, "state"));
+        LocalDate placedDate = parseDate(first(row, "placed_date", "placedDate"));
+        LocalTime placedTime = parseTime(first(row, "placed_time", "placedTime"));
+        LocalDate deadlineDate = parseDate(first(row, "deadline_date", "deadlineDate"));
+        LocalTime deadlineTime = parseTime(first(row, "deadline_time", "deadlineTime"));
+
+        Task task = Task.loadTaskFromdb(
+                id, name, duration, state,
+                null, null,
+                deadlineDate, deadlineTime,
+                placedDate, placedTime
+        );
+
+        String life = first(row, "lifecycle");
+        if (life != null && !life.isBlank()) {
+            try {
+                task.setLifeCycle(TaskLifeCycle.valueOf(life));
+            } catch (Exception ignored) {
+            }
+        }
+        String flow = first(row, "workflow");
+        if (flow != null && !flow.isBlank()) {
+            try {
+                task.setWorkflow(Workflow.valueOf(flow));
+            } catch (Exception ignored) {
+            }
+        }
+
+        Instant placeAt = parseInstant(first(row, "placement_updated_at", "placementUpdatedAt"));
+        Instant lastAt = parseInstant(first(row, "last_updated_at", "lastUpdatedAt"));
+        if (placeAt != null) task.setPlacementUpdatedAt(placeAt);
+        if (lastAt != null) task.setLastUpdatedAt(lastAt);
+        else if (placeAt != null) task.setLastUpdatedAt(placeAt);
+        task.setDescription(first(row, "description"));
+        String done = first(row, "description_done", "descriptionDone");
+        task.setDescriptionDone("true".equalsIgnoreCase(done) || "t".equalsIgnoreCase(done) || "1".equals(done));
+        task.setParentId(first(row, "parent_id", "parentId"));
+        Vault.openTask(task);
+        return task;
+    }
+
+    private static BlockedTime blockedFromNode(Map<String, String> row) {
+        String id = first(row, "id");
+        if (id == null) return null;
+        String wdRaw = first(row, "weekday");
+        Integer wd = null;
+        if (wdRaw != null && !wdRaw.isBlank() && !"null".equals(wdRaw)) {
+            try {
+                wd = Integer.parseInt(wdRaw.trim());
+            } catch (Exception ignored) {
+            }
+        }
+        Instant last = parseInstant(first(row, "last_updated_at", "lastUpdatedAt"));
+
+        LocalTime start = parseTime(first(row, "start_time", "startTime", "start"));
+        LocalTime end = parseTime(first(row, "end_time", "endTime", "end"));
+
+        BlockedTime b = new BlockedTime(
+                id,
+                first(row, "title"),
+                toDayOfWeek(wd),
+                parseDate(first(row, "specific_date", "specificDate")),
+                start,
+                end,
+                last,
+                first(row, "user_id", "userId")
+        );
+        String ex = first(row, "is_exception", "isException");
+        b.setException("true".equalsIgnoreCase(ex) || "t".equalsIgnoreCase(ex) || "1".equals(ex));
+        Vault.openBlocked(b);
+        return b;
+    }
+
+    private static LocalTime parseTime(String s) {
+        if (s == null || s.isBlank() || "null".equalsIgnoreCase(s)) return null;
+        String t = s.trim();
+        int dot = t.indexOf('.');
+        if (dot > 0) t = t.substring(0, dot);
+        if (t.length() >= 8) t = t.substring(0, 8);
+        else if (t.length() == 5) t = t + ":00";
+        try {
+            return LocalTime.parse(t);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String first(Map<String, String> row, String... keys) {
+        for (String k : keys) {
+            String v = row.get(k);
+            if (v != null && !v.isBlank() && !"null".equals(v)) return v;
+        }
+        return null;
+    }
+
+    private static int stateToInt(String state) {
+        if (state == null) return 3;
+        if ("Fixed".equalsIgnoreCase(state) || "1".equals(state)) return 1;
+        if ("Deadline".equalsIgnoreCase(state) || "2".equals(state)) return 2;
+        return 3;
+    }
+
+    private static double parseDouble(String s, double fallback) {
+        if (s == null) return fallback;
+        try {
+            return Double.parseDouble(s);
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static LocalDate parseDate(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            return LocalDate.parse(s.substring(0, Math.min(10, s.length())));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Instant parseInstant(String s) {
+        if (s == null || s.isBlank() || "null".equalsIgnoreCase(s)) return null;
+        String t = s.trim();
+        if (t.indexOf(' ') > 0 && t.indexOf('T') < 0) t = t.replace(' ', 'T');
+        try {
+            return Instant.parse(t);
+        } catch (Exception ignored) {
+        }
+        try {
+            return OffsetDateTime.parse(t).toInstant();
+        } catch (Exception ignored) {
+        }
+        if (t.endsWith("+00") || t.matches(".*[+-]\\d{2}$")) {
+            try {
+                return Instant.parse(t + ":00");
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static DayOfWeek toDayOfWeek(Integer weekday) {
+        if (weekday == null) return null;
+        if (weekday == 0) return DayOfWeek.SUNDAY;
+        try {
+            return DayOfWeek.of(weekday);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void fullOnlineSync() throws SQLException {
+        postgres.upsertDevice(deviceId, guessName(), System.getProperty("os.name"));
+
+        if (postgres.wipeIfAbandoned(ABANDONED_MONTHS)) {
+            System.out.println("Abandoned account data wiped on Postgres");
+            sqlite.wipeAllLocalData();
+        }
+
+        postgres.revokeStaleDevices(STALE_MONTHS);
+
+        if (isLocalInstallStale()) {
+            System.out.println("Local install stale > " + STALE_MONTHS + " months — wiping SQLite, full pull");
+            sqlite.wipeAllLocalData();
+        }
+
+        syncDeletesBothWays();
+        syncBlockedDeletesBothWays();
+        postgres.touchDeleteSync(deviceId);
+
+        syncTasksBothWays();
+        syncBlockedBothWays();
+        postgres.touchTaskSync(deviceId);
+
+        sqlite.setMeta("last_postgres_sync_at", Instant.now().toString());
+        sqlite.setMeta("last_delete_sync_at", Instant.now().toString());
+
+        gcDeleteLogs();
+    }
+
+    private boolean isLocalInstallStale() throws SQLException {
+        String last = sqlite.getMeta("last_postgres_sync_at");
+        if (last == null || last.isBlank()) return false;
+        Instant then = Instant.parse(last);
+        long days = ChronoUnit.DAYS.between(then, Instant.now());
+        return days >= (long) STALE_MONTHS * 30L;
+    }
+
+    private void maybeWarnLocalStaleOffline() throws SQLException {
+        if (isLocalInstallStale()) {
+            System.out.println("WARNING: offline and stale — connect Postgres once to refresh cache");
+        }
+    }
+
+    private void syncDeletesBothWays() throws SQLException {
+        for (Object[] row : postgres.fetchAllDeletes()) {
+            String id = (String) row[0];
+            Instant when = (Instant) row[1];
+            String title = (row.length > 2 && row[2] != null) ? row[2].toString() : null;
+            if (title != null && title.isBlank()) title = null;
+            sqlite.deleteTaskRow(id);
+            sqlite.recordDelete(id, when, title);
+        }
+
+        for (String[] row : sqlite.fetchAllDeletes()) {
+            String id = row[0];
+            Instant when = Instant.parse(row[1]);
+            String title = (row.length > 2 && row[2] != null && !row[2].isBlank()) ? row[2] : null;
+            postgres.deleteTaskRow(id);
+            postgres.recordDelete(id, when, title);
+        }
+
+        for (String id : sqlite.fetchDeletedIds()) {
+            sqlite.deleteTaskRow(id);
+            if (postgresAvailable) {
+                try {
+                    postgres.deleteTaskRow(id);
+                } catch (SQLException e) {
+                    System.err.println("force delete on postgres failed: " + id);
+                }
+            }
+        }
+    }
+
+    private void syncBlockedDeletesBothWays() throws SQLException {
+        for (Object[] row : postgres.fetchAllBlockedDeletes()) {
+            String id = (String) row[0];
+            Instant when = (Instant) row[1];
+            String title = (row.length > 2 && row[2] != null) ? row[2].toString() : null;
+            if (title != null && title.isBlank()) title = null;
+            sqlite.deleteBlockedRow(id);
+            sqlite.recordBlockedDelete(id, when, title);
+        }
+
+        for (String[] row : sqlite.fetchAllBlockedDeletes()) {
+            String id = row[0];
+            Instant when = Instant.parse(row[1]);
+            String title = (row.length > 2 && row[2] != null && !row[2].isBlank()) ? row[2] : null;
+            postgres.deleteBlockedRow(id);
+            postgres.recordBlockedDelete(id, when, title);
+        }
+
+        for (String id : sqlite.fetchBlockedDeletedIds()) {
+            sqlite.deleteBlockedRow(id);
+            if (postgresAvailable) {
+                try {
+                    postgres.deleteBlockedRow(id);
+                } catch (SQLException e) {
+                    System.err.println("force blocked delete on postgres failed: " + id);
+                }
+            }
+        }
+    }
+
+    private void syncTasksBothWays() throws SQLException {
+        Set<String> deleted = new HashSet<>(sqlite.fetchDeletedIds());
+
+        List<Task> remoteList = postgres.fetchAll();
+        for (Task remote : remoteList) {
+            if (deleted.contains(remote.getID())) {
+                postgres.deleteTaskRow(remote.getID());
+                continue;
+            }
+            Task local = sqlite.findById(remote.getID());
+            Task merged = (local == null) ? remote : mergeTasks(local, remote);
+            if (deleted.contains(merged.getID())) continue;
+            sqlite.upsert(merged);
+        }
+
+        Map<String, Task> remoteById = new HashMap<>();
+        for (Task r : remoteList) {
+            if (!deleted.contains(r.getID())) remoteById.put(r.getID(), r);
+        }
+
+        Instant lastSync = parseMetaInstant(sqlite.getMeta("last_postgres_sync_at"));
+
+        for (Task local : sqlite.fetchAll()) {
+            if (deleted.contains(local.getID())) continue;
+            if (remoteById.containsKey(local.getID())) continue;
+
+            Instant localEdit = local.getLastUpdatedAt();
+            if (localEdit == null) localEdit = local.getPlacementUpdatedAt();
+
+            if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
+                System.out.println("Drop local (missing on server, not new): " + local.getID());
+                sqlite.deleteTaskRow(local.getID());
+                sqlite.recordDelete(local.getID(), Instant.now());
+                try {
+                    postgres.deleteTaskRow(local.getID());
+                    postgres.recordDelete(local.getID(), Instant.now());
+                } catch (SQLException e) {
+                    System.err.println("server tombstone failed: " + local.getID());
+                }
+                continue;
+            }
+
+            try {
+                postgres.upsert(local);
+            } catch (SQLException e) {
+                System.err.println("Push local-only failed: " + local.getID());
+            }
+        }
+    }
+
+    private void syncBlockedBothWays() throws SQLException {
+        Set<String> deleted = new HashSet<>(sqlite.fetchBlockedDeletedIds());
+
+        List<BlockedTime> remoteList = postgres.fetchAllBlocked();
+        for (BlockedTime remote : remoteList) {
+            if (deleted.contains(remote.getId())) {
+                postgres.deleteBlockedRow(remote.getId());
+                continue;
+            }
+            BlockedTime local = sqlite.findBlockedById(remote.getId());
+            BlockedTime merged = (local == null) ? remote : mergeBlocked(local, remote);
+            if (deleted.contains(merged.getId())) continue;
+            sqlite.upsertBlocked(merged);
+        }
+
+        Map<String, BlockedTime> remoteById = new HashMap<>();
+        for (BlockedTime r : remoteList) {
+            if (!deleted.contains(r.getId())) remoteById.put(r.getId(), r);
+        }
+
+        Instant lastSync = parseMetaInstant(sqlite.getMeta("last_postgres_sync_at"));
+
+        for (BlockedTime local : sqlite.fetchAllBlocked()) {
+            if (deleted.contains(local.getId())) continue;
+            if (remoteById.containsKey(local.getId())) continue;
+
+            Instant localEdit = local.getLastUpdatedAt();
+            if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
+                sqlite.deleteBlockedRow(local.getId());
+                sqlite.recordBlockedDelete(local.getId(), Instant.now(), local.getTitle());
+                try {
+                    postgres.deleteBlockedRow(local.getId());
+                    postgres.recordBlockedDelete(local.getId(), Instant.now(), local.getTitle());
+                } catch (SQLException e) {
+                    System.err.println("server blocked tombstone failed: " + local.getId());
+                }
+                continue;
+            }
+
+            try {
+                postgres.upsertBlocked(local);
+            } catch (SQLException e) {
+                System.err.println("Push local blocked failed: " + local.getId());
+            }
+        }
+    }
+
+    private void gcDeleteLogs() throws SQLException {
+        Instant cutoff = postgres.minDeleteAckAmongActive(STALE_MONTHS);
+        if (cutoff == null) {
+            System.out.println("GC skipped (need ≥2 devices all acked, or no cutoff)");
+            return;
+        }
+        postgres.purgeDeletesBefore(cutoff);
+        sqlite.purgeDeletesBefore(cutoff);
+        postgres.purgeBlockedDeletesBefore(cutoff);
+        sqlite.purgeBlockedDeletesBefore(cutoff);
+        System.out.println("GC sync_deletes / blocked deletes before " + cutoff);
+    }
+
+    static Task mergeTasks(Task local, Task remote) {
+        return mergeTasks(local, remote, Endpoints.isHostDevice());
+    }
+
+    static Task mergeTasks(Task local, Task remote, boolean hostDevice) {
+        Task out = Task.loadTaskFromdb(
+                local.getID(),
+                local.getTaskName(),
+                local.getDurationHours(),
+                local.getState(),
+                local.getStartingDate(),
+                local.getStartingTime(),
+                local.getDeadLineDate(),
+                local.getDeadLineTime(),
+                local.getPlacedDate(),
+                local.getPlacedTime()
+        );
+        out.setLifeCycle(local.getLifeCycle());
+        out.setWorkflow(local.getWorkflow());
+        out.setPlacementUpdatedAt(local.getPlacementUpdatedAt());
+        out.setLastUpdatedAt(local.getLastUpdatedAt());
+
+        boolean localHas = local.getPlacedDate() != null && local.getPlacedTime() != null;
+        boolean remoteHas = remote.getPlacedDate() != null && remote.getPlacedTime() != null;
+        if (remoteHas && !localHas) {
+            out.setPlacedDate(remote.getPlacedDate());
+            out.setPlacedTime(remote.getPlacedTime());
+            out.setPlacementUpdatedAt(remote.getPlacementUpdatedAt());
+        } else if (localHas && remoteHas
+                && preferRemote(local.getPlacementUpdatedAt(), remote.getPlacementUpdatedAt(), hostDevice)) {
+            out.setPlacedDate(remote.getPlacedDate());
+            out.setPlacedTime(remote.getPlacedTime());
+            out.setPlacementUpdatedAt(remote.getPlacementUpdatedAt());
+        }
+
+        Task src = preferRemote(local.getLastUpdatedAt(), remote.getLastUpdatedAt(), hostDevice)
+                ? remote : local;
+        out.setTaskName(src.getTaskName());
+        out.setDurationHours(src.getDurationHours());
+        out.setState(src.getState());
+        out.setDeadLineDate(src.getDeadLineDate());
+        out.setDeadLineTime(src.getDeadLineTime());
+        out.setStartingDate(src.getStartingDate());
+        out.setStartingTime(src.getStartingTime());
+        out.setLifeCycle(src.getLifeCycle());
+        out.setWorkflow(src.getWorkflow());
+        out.copyExtrasFrom(src);
+        String parent = src.getParentId();
+        if (parent == null || parent.isBlank()) {
+            String other = src == remote ? local.getParentId() : remote.getParentId();
+            if (other != null && !other.isBlank()) parent = other;
+        }
+        out.setParentId(parent);
+        out.setLastUpdatedAt(src.getLastUpdatedAt() != null ? src.getLastUpdatedAt() : Instant.now());
+        return out;
+    }
+
+    static BlockedTime mergeBlocked(BlockedTime local, BlockedTime remote) {
+        return mergeBlocked(local, remote, Endpoints.isHostDevice());
+    }
+
+    static BlockedTime mergeBlocked(BlockedTime local, BlockedTime remote, boolean hostDevice) {
+        return preferRemote(local.getLastUpdatedAt(), remote.getLastUpdatedAt(), hostDevice)
+                ? remote : local;
+    }
+
+    /**
+     * Last-write-wins. Equal Instants ({@code compareTo == 0}): host keeps
+     * local, client takes remote. Remote null (including both null) keeps
+     * local — same as Android {@code nodeWinsOnTie}; there is no Node clock
+     * to prefer.
+     */
+    public static boolean preferRemote(Instant localTs, Instant remoteTs) {
+        return preferRemote(localTs, remoteTs, Endpoints.isHostDevice());
+    }
+
+    static boolean preferRemote(Instant localTs, Instant remoteTs, boolean hostDevice) {
+        Instant local = normalizeInstant(localTs);
+        Instant remote = normalizeInstant(remoteTs);
+        if (remote == null) return false;
+        if (local == null) return true;
+        if (remote.isAfter(local)) return true;
+        if (local.isAfter(remote)) return false;
+        return !hostDevice;
+    }
+
+    static Instant normalizeInstant(Instant value) {
+        return value;
+    }
+
+    public static Instant normalizeInstant(String raw) {
+        return parseInstant(raw);
+    }
+
+    static int compareInstant(Instant a, Instant b) {
+        Instant left = normalizeInstant(a);
+        Instant right = normalizeInstant(b);
+        if (left == null && right == null) return 0;
+        if (left == null) return -1;
+        if (right == null) return 1;
+        return left.compareTo(right);
+    }
+
+    private Instant parseMetaInstant(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            return Instant.parse(s);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void ensureTimestamps(Task task) {
+        Instant now = Instant.now();
+        if (task.getLastUpdatedAt() == null) task.setLastUpdatedAt(now);
+        if (task.getPlacementUpdatedAt() == null && task.getPlacedDate() != null) {
+            task.setPlacementUpdatedAt(now);
+        }
+    }
+
+    private String guessName() {
+        try {
+            return java.net.InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            return "device";
+        }
+    }
+
+    private void loadBlockedIntoMemory(TaskManagementSystem theSystem, boolean expirePast)
+            throws SQLException {
+        if (theSystem == null || theSystem.getBlockedTime() == null) return;
+        if (expirePast) expirePastBlocked();
+        theSystem.getBlockedTime().replaceBlockedPeriods(sqlite.fetchAllBlocked());
+    }
+
+    /** Dated blocks whose end is already past are deleted from SQLite / Postgres / Node. */
+    private void expirePastBlocked() throws SQLException {
+        java.time.LocalDateTime now = AppTimeReference.getCurrentDateTime();
+        for (BlockedTime b : new java.util.ArrayList<>(sqlite.fetchAllBlocked())) {
+            if (b == null || b.getSpecificDate() == null) continue;
+            java.time.LocalTime end = b.getEndTime() == null ? java.time.LocalTime.MAX : b.getEndTime();
+            java.time.LocalDateTime until = java.time.LocalDateTime.of(b.getSpecificDate(), end);
+            if (until.isAfter(now)) continue;
+            if (b.getLastUpdatedAt() != null
+                    && b.getLastUpdatedAt().isAfter(java.time.Instant.now().minusSeconds(300))) {
+                continue;
+            }
+            dbClearBlocked(b);
+        }
+    }
+
+    private void loadSqliteIntoMemory(TaskManagementSystem theSystem, boolean persistLifecycle)
+            throws SQLException {
+        Set<String> deleted = sqlite.fetchDeletedIds();
+        for (Task task : sqlite.fetchAll()) {
+            if (deleted.contains(task.getID())) continue;
+
+            LocalDate placedDate = task.getPlacedDate();
+            LocalTime placedTime = task.getPlacedTime();
+            TaskLifeCycle lifeFromDb = task.getLifeCycle();
+
+            if (placedDate != null && placedTime != null) {
+                theSystem.getPlacedTasks().add(task);
+                if (task.isQuick()) {
+                    RefreshLifeCycle.refreshLifeCycle(task);
+                    continue;
+                }
+                LocalDate column = AppTimeReference.columnDateFor(placedDate, placedTime);
+                theSystem.getGrid().putIfAbsent(column, new Day(theSystem.getBlockedTime()));
+                Day day = theSystem.getGrid().get(column);
+                int slot = AppTimeReference.localTimeToSlot(placedTime);
+                day.placeTask(slot, task);
+
+                TaskLifeCycle before = task.getLifeCycle();
+                RefreshLifeCycle.refreshLifeCycle(task);
+                if (persistLifecycle && before != task.getLifeCycle()) {
+                    dbAddTask(task);
+                }
+            } else if (lifeFromDb == TaskLifeCycle.UNSCHEDULED && task.canGoUnscheduled()) {
+                theSystem.getUnscheduledTasks().add(task);
+            } else {
+                theSystem.getPendingTasks().add(task);
+            }
+        }
+    }
+}

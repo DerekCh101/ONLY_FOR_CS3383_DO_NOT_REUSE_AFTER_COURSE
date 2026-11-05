@@ -1,37 +1,47 @@
+# One command to run the whole backend:  docker compose up -d
+# Then open http://localhost:3456 in a browser.
 services:
-  postgres:
-    image: postgres:16
-    restart: unless-stopped
+  db:
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${DB_NAME:-Scheduler}
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: Scheduler
+      POSTGRES_USER: postgres
+      # Override by creating a .env file next to this file: POSTGRES_PASSWORD=...
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ashore123}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d Scheduler"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 20
-
-  server:
-    image: ${SERVER_IMAGE:-scheduler-server:local}
-    build:
-      context: ./server
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
+
+  app:
+    build: ./server
     environment:
-      HOST_LISTEN_IP: ${NODE_HOST_IP:-0.0.0.0}
-      HostNodeServerListenToWherePort: ${NODE_PORT:-3456}
-      PGHOST: postgres
+      PGHOST: db
       PGPORT: 5432
-      PGUSER: ${DB_USER:-postgres}
-      PGPASSWORD: ${DB_PASSWORD:-postgres}
-      PGDATABASE: ${DB_NAME:-Scheduler}
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ashore123}
+      PGDATABASE: Scheduler
+      HostNodeServerListenToWherePort: 3456
+      # Optional email (password reset). Leave unset to disable mail.
+      # SMTP_HOST: smtp.gmail.com
+      # SMTP_PORT: 587
+      # SMTP_USER: you@gmail.com
+      # SMTP_PASS: app-password
+      # SMTP_FROM: you@gmail.com
     ports:
-      - "${NODE_PORT:-3456}:${NODE_PORT:-3456}"
+      - "3456:3456"
+    volumes:
+      # Typewriter images survive container rebuilds.
+      - userfiles:/app/user-files
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  postgres-data:
+  pgdata:
+  userfiles:

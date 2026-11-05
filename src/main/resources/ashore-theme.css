@@ -1,0 +1,476 @@
+/* Ashore look: token colors filled by AppTheme from the current ThemePack. */
+/* Tokens (-ashore-*) are painted onto the scene / popup root by AppTheme from the current ThemePack. */
+
+.ashore-root {
+    -fx-background-color: -ashore-bg;
+    -fx-text-fill: -ashore-ink;
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+.ashore-root .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .dialog-card {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-border-color: -ashore-line;
+}
+
+.ashore-root .dialog-card,
+.ashore-root .dialog-card .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .dialog-card .button {
+    -fx-text-fill: -ashore-card-ink;
+    -fx-background-color: -ashore-card;
+    -fx-border-color: -ashore-card-ink;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+}
+
+.ashore-root .dialog-card .check-box,
+.ashore-root .dialog-card .check-box .label,
+.ashore-root .dialog-card .radio-button,
+.ashore-root .dialog-card .radio-button .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .dialog-card .text-field,
+.ashore-root .dialog-card .password-field,
+.ashore-root .dialog-card .text-area,
+.ashore-root .dialog-card .combo-box,
+.ashore-root .dialog-card .date-picker {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
+}
+
+.ashore-root .dialog-card .text-area {
+    -fx-control-inner-background: -ashore-card;
+}
+
+.ashore-root .login-card {
+    -fx-background-color: -ashore-card;
+    -fx-background-radius: 16;
+    -fx-border-color: -ashore-line;
+    -fx-border-radius: 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 24, 0.2, 0, 8);
+}
+
+.ashore-root .login-card .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .login-card .login-muted {
+    -fx-text-fill: -ashore-card-muted;
+}
+
+.ashore-root .login-card .login-err {
+    -fx-text-fill: #8b1e1e;
+}
+
+.ashore-root .login-card .check-box,
+.ashore-root .login-card .check-box .label {
+    -fx-text-fill: -ashore-card-ink;
+}
+
+.ashore-root .login-card .text-field,
+.ashore-root .login-card .password-field {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
+}
+
+.ashore-root .check-box,
+.ashore-root .check-box .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .text-field,
+.ashore-root .password-field,
+.ashore-root .text-area {
+    -fx-text-fill: -ashore-ink;
+    -fx-prompt-text-fill: -ashore-muted;
+    -fx-background-color: -ashore-paper;
+}
+
+.ashore-root .text-area {
+    -fx-control-inner-background: -ashore-panel;
+}
+
+.ashore-root .tw-muted {
+    -fx-text-fill: -ashore-muted;
+}
+
+.ashore-root .win-bar {
+    -fx-background-color: -ashore-bg;
+    -fx-border-color: -ashore-line;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 0 0 0 14;
+    -fx-min-height: 36px;
+    -fx-pref-height: 36px;
+}
+
+.ashore-root .win-title {
+    -fx-text-fill: -ashore-ink;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+}
+
+.ashore-root .win-btn {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-border-width: 0;
+    -fx-text-fill: -ashore-ink;
+    -fx-font-size: 13px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.ashore-root .win-btn:hover {
+    -fx-background-color: -ashore-panel;
+}
+
+.ashore-root .win-close:hover {
+    -fx-background-color: #c42b1c;
+    -fx-text-fill: -ashore-accent-ink;
+}
+
+.ashore-root .scroll-bar {
+    -fx-background-color: -ashore-bg;
+    -fx-pref-width: 10px;
+    -fx-pref-height: 10px;
+    -fx-padding: 0;
+}
+
+.ashore-root .scroll-bar .track {
+    -fx-background-color: -ashore-bg;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+}
+
+.ashore-root .scroll-bar .thumb {
+    -fx-background-color: -ashore-muted;
+    -fx-background-insets: 2;
+    -fx-background-radius: 6;
+}
+
+.ashore-root .scroll-bar .thumb:hover {
+    -fx-background-color: -ashore-ink;
+}
+
+.ashore-root .scroll-bar .increment-button,
+.ashore-root .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+}
+
+.ashore-root .scroll-bar .increment-arrow,
+.ashore-root .scroll-bar .decrement-arrow {
+    -fx-shape: "";
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+.ashore-root .scroll-pane > .corner {
+    -fx-background-color: -ashore-bg;
+}
+
+.ashore-root .chrome-bar {
+    -fx-background-color: -ashore-bg;
+    -fx-padding: 10 16 8 16;
+    -fx-border-color: -ashore-line;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ashore-root .menu-button,
+.ashore-root .menu-button:hover,
+.ashore-root .menu-button:focused,
+.ashore-root .menu-button:showing {
+    -fx-background-color: -ashore-panel;
+    -fx-background-insets: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: -ashore-line;
+    -fx-border-radius: 8;
+    -fx-padding: 4 10;
+    -fx-text-fill: -ashore-ink;
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -fx-font-size: 13px;
+}
+
+.ashore-root .menu-button > .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .menu-button > .arrow-button {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0 4 0 8;
+}
+
+.ashore-root .menu-button > .arrow-button > .arrow {
+    -fx-background-color: -ashore-ink;
+    -fx-padding: 2.5 2.5 2.5 2.5;
+}
+
+.ashore-root .chrome-bar .ghost-menu,
+.ashore-root .chrome-bar .menu-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 6 10;
+}
+
+.ashore-root .chrome-bar .ghost-menu:hover,
+.ashore-root .chrome-bar .menu-button:hover,
+.ashore-root .chrome-bar .ghost-menu:showing,
+.ashore-root .chrome-bar .menu-button:showing {
+    -fx-background-color: -ashore-panel;
+}
+
+.ashore-root .tab-pills {
+    -fx-background-color: -ashore-panel;
+    -fx-background-radius: 10;
+    -fx-padding: 3;
+    -fx-border-color: -ashore-line;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+}
+
+.ashore-root .tab-pills .button {
+    -fx-background-radius: 8;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+    -fx-padding: 6 16;
+    -fx-font-size: 13px;
+}
+
+.ashore-root .tool-bar {
+    -fx-background-color: -ashore-bg;
+    -fx-padding: 8 16 10 16;
+}
+
+.ashore-root .tool-bar .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .tool-bar .button {
+    -fx-background-color: -ashore-panel;
+    -fx-text-fill: -ashore-ink;
+    -fx-background-radius: 8;
+    -fx-border-color: -ashore-line;
+    -fx-border-radius: 8;
+    -fx-padding: 6 12;
+    -fx-font-size: 13px;
+}
+
+.ashore-root .tool-bar .button:hover {
+    -fx-background-color: -ashore-hover;
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .side-panel {
+    -fx-background-color: -ashore-bg;
+    -fx-padding: 10;
+}
+
+.ashore-root .side-panel .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .scroll-pane {
+    -fx-background: -ashore-panel;
+    -fx-background-color: -ashore-panel;
+}
+
+.ashore-root .account-page .scroll-pane {
+    -fx-background: transparent;
+    -fx-background-color: transparent;
+}
+
+.ashore-root .account-page .account-save {
+    -fx-background-color: -ashore-accent;
+    -fx-text-fill: -ashore-accent-ink;
+    -fx-background-radius: 8;
+    -fx-padding: 8 12;
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    -fx-cursor: hand;
+}
+
+.ashore-root .account-page .account-save:hover {
+    -fx-opacity: 0.92;
+}
+
+.ashore-root .account-page .account-save:pressed {
+    -fx-opacity: 0.88;
+}
+
+.ashore-root .account-page .account-save:disabled {
+    -fx-opacity: 0.55;
+    -fx-cursor: default;
+}
+
+.ashore-root .account-page .accordion {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 10 2 10 2;
+    -fx-border-color: transparent transparent -ashore-line transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title > .text {
+    -fx-fill: -ashore-ink;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .title > .arrow-button .arrow {
+    -fx-background-color: -ashore-ink;
+}
+
+.ashore-root .account-page .accordion > .titled-pane > .content {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 8 2 14 8;
+}
+
+.ashore-root .account-page .accordion > .titled-pane:focused > .title {
+    -fx-background-color: transparent;
+}
+
+.ashore-root .split-pane {
+    -fx-background-color: -ashore-bg;
+}
+
+.ashore-root .grid-edge {
+    -fx-background-color: -ashore-panel;
+}
+
+.ashore-root .grid-edge .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .radio-button {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .combo-box,
+.ashore-root .combo-box .list-cell,
+.ashore-root .spinner,
+.ashore-root .date-picker {
+    -fx-background-color: -ashore-panel;
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .spinner .text-field,
+.ashore-root .spinner .text-input {
+    -fx-background-color: -ashore-card;
+    -fx-text-fill: -ashore-card-ink;
+    -fx-prompt-text-fill: -ashore-card-muted;
+}
+
+.ashore-root .list-view,
+.ashore-root .tree-view {
+    -fx-background-color: -ashore-panel;
+    -fx-control-inner-background: -ashore-panel;
+}
+
+.ashore-root .list-cell,
+.ashore-root .tree-cell {
+    -fx-text-fill: -ashore-ink;
+}
+
+.ashore-root .fab {
+    -fx-background-color: -ashore-accent;
+    -fx-text-fill: -ashore-accent-ink;
+    -fx-background-radius: 26;
+    -fx-min-width: 52px;
+    -fx-min-height: 52px;
+    -fx-max-width: 52px;
+    -fx-max-height: 52px;
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 12, 0.2, 0, 3);
+}
+
+.ashore-root .net-chip,
+.ashore-root .net-chip.online,
+.ashore-root .net-chip.offline {
+    -fx-background-color: transparent;
+    -fx-padding: 0 4 0 0;
+    -fx-font-size: 11px;
+    -fx-text-fill: -ashore-muted;
+    -fx-opacity: 0.85;
+}
+
+/*
+ * Popup scenes do not inherit scene-root tokens. Looked-up colors MUST be
+ * defined in this stylesheet (Paint), not via Node.setStyle (String) —
+ * otherwise JavaFX ClassCasts String → Paint on -fx-background-color.
+ */
+.context-menu,
+.ashore-popup {
+    -ashore-panel: #fbf7ef;
+    -ashore-ink: #1c2430;
+    -ashore-hover: #ffccdd;
+    -ashore-line: #e0d6c6;
+    -fx-background-color: -ashore-panel;
+    -fx-background-radius: 8;
+    -fx-padding: 6 0;
+    -fx-opacity: 1;
+}
+
+.context-menu.theme-dark,
+.ashore-popup.theme-dark {
+    -ashore-panel: #1c1e22;
+    -ashore-ink: #e6e8ea;
+    -ashore-hover: #3b4c6a;
+    -ashore-line: #2e3238;
+}
+
+.menu-item {
+    -fx-opacity: 1;
+    -fx-padding: 6 14;
+    -fx-background-color: transparent;
+}
+
+.menu-item .label {
+    -fx-text-fill: -ashore-ink;
+    -fx-opacity: 1;
+    -fx-font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+.menu-item:focused,
+.menu-item:hover {
+    -fx-background-color: -ashore-hover;
+}
+
+.menu-item:focused .label,
+.menu-item:hover .label {
+    -fx-text-fill: -ashore-ink;
+}
+
+.separator:horizontal .line {
+    -fx-border-color: -ashore-line transparent transparent transparent;
+}
+
+.ashore-root .boot-spin,
+.ashore-root .boot-spin .indicator,
+.ashore-root .boot-spin .spinner,
+.ashore-root .boot-spin .percentage,
+.ashore-root .boot-spin:indeterminate .spinner {
+    -fx-background-color: transparent;
+    -fx-control-inner-background: transparent;
+    -fx-box-border: transparent;
+    -fx-inner-border: transparent;
+}

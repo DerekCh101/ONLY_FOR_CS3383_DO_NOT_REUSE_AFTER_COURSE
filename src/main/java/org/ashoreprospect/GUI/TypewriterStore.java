@@ -1,0 +1,1021 @@
+/** Load/save Typewriter notes to SQLite, then Postgres/Node. */
+package org.ashoreprospect.GUI;
+
+import org.ashoreprospect.crypto.Vault;
+import org.ashoreprospect.db.PostgresTypewriterRepository;
+import org.ashoreprospect.db.SqliteTypewriterRepository;
+import org.ashoreprospect.db.TaskRepository;
+import org.ashoreprospect.net.Api;
+import org.ashoreprospect.net.Endpoints;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
+import org.ashoreprospect.net.NetworkWatch;
+
+public final class TypewriterStore {
+
+    private TypewriterStore() {}
+
+    public static final class Data {
+        public final Map<LocalDate, TypewriterPane.TwNote> diary = new LinkedHashMap<>();
+        public final List<TypewriterPane.TwList> lists = new ArrayList<>();
+        public final TypewriterPane.TwFolder pagesRoot = new TypewriterPane.TwFolder("Pages");
+    }
+
+    private static final ExecutorService remoteIo = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "tw-remote");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static final File IMAGE_DIR = new File("typewriter-images");
+    private static boolean skipNewImagePush;
+
+    private static final SqliteTypewriterRepository sqlite =
+            new SqliteTypewriterRepository("jdbc:sqlite:scheduler-cache.db");
+
+    private static PostgresTypewriterRepository postgres;
+    private static boolean postgresAvailable;
+
+    static {
+        IMAGE_DIR.mkdirs();
+        try {
+            sqlite.initialize();
+            System.out.println("Typewriter SQLite ready");
+        } catch (Exception e) {
+            System.out.println("Typewriter SQLite init failed: " + e.getMessage());
+        }
+    }
+
+    public static void resetPostgres() {
+        postgres = null;
+        postgresAvailable = false;
+    }
+
+    public static void wipeCurrentUser() {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) {
+            uid = org.ashoreprospect.db.TaskRepository.peekCachedUserId();
+        }
+        try {
+            if (uid != null && !uid.isBlank()) sqlite.wipeUser(uid);
+            sqlite.wipeAll();
+        } catch (Exception e) {
+            System.err.println("wipe typewriter cache failed: " + e.getMessage());
+        }
+        try {
+            File[] files = IMAGE_DIR.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.isFile()) f.delete();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static PostgresTypewriterRepository pg() {
+        // Host JavaFX does not JDBC-write Typewriter. Node owns Postgres there.
+        // Tailscale / LAN clients are HTTP-only — never open Postgres JDBC.
+        if (!NetworkWatch.isOnline() || Endpoints.isHostDevice() || !Endpoints.isLocalHost()) {
+            postgresAvailable = false;
+            return null;
+        }
+        if (postgres != null && postgresAvailable) return postgres;
+        try {
+            postgres = new PostgresTypewriterRepository(
+                    Endpoints.postgresUrl(),
+                    "postgres",
+                    Endpoints.postgresPassword()
+            );
+            postgres.initialize();
+            postgresAvailable = true;
+            System.out.println("Typewriter Postgres ready " + Endpoints.postgresUrl());
+            return postgres;
+        } catch (Exception e) {
+            postgres = null;
+            postgresAvailable = false;
+            System.out.println("Typewriter Postgres offline: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String currentUserId() {
+        try {
+            return Api.INSTANCE.getUserId();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean nodeReady() {
+        return Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank();
+    }
+
+    public static boolean hasContent(TypewriterPane.TwNote n) {
+        if (n == null) return false;
+        if (n.body != null && !TypewriterHtml.plainText(n.body).isBlank()) return true;
+        return n.images != null && !n.images.isEmpty();
+    }
+
+    public static int pruneEmptyDiary(Map<LocalDate, TypewriterPane.TwNote> diary) {
+        if (diary == null) return 0;
+        int n = 0;
+        Iterator<Map.Entry<LocalDate, TypewriterPane.TwNote>> it = diary.entrySet().iterator();
+        while (it.hasNext()) {
+            if (!hasContent(it.next().getValue())) {
+                it.remove();
+                n++;
+            }
+        }
+        return n;
+    }
+
+    public static Data load() {
+        Data empty = new Data();
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) {
+            System.out.println("Typewriter load skipped: no user");
+            return empty;
+        }
+        try {
+            Data localData = sqlite.fetchAll(uid);
+            pruneEmptyDiary(localData.diary);
+            return localData;
+        } catch (Exception ex) {
+            System.out.println("Typewriter load skipped: " + ex.getMessage());
+            ex.printStackTrace();
+            return empty;
+        }
+    }
+
+    /** Node/Postgres after SQLite so the Typewriter tab never freezes the UI. */
+    public static void syncRemoteInBackground(Consumer<Data> onRemoteNewer) {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) {
+            if (onRemoteNewer != null) onRemoteNewer.accept(new Data());
+            return;
+        }
+        if (!NetworkWatch.isOnline()) {
+            try {
+                Data localData = sqlite.fetchAll(uid);
+                pruneEmptyDiary(localData.diary);
+                if (onRemoteNewer != null) onRemoteNewer.accept(localData);
+            } catch (Exception e) {
+                if (onRemoteNewer != null) onRemoteNewer.accept(new Data());
+            }
+            return;
+        }
+        remoteIo.execute(() -> {
+            Data localData = new Data();
+            try {
+                localData = sqlite.fetchAll(uid);
+                pruneEmptyDiary(localData.diary);
+                Instant local = sqlite.lastUpdated(uid);
+                Data newer = pullRemote(uid, localData, local);
+                if (onRemoteNewer != null) {
+                    onRemoteNewer.accept(newer != null ? newer : localData);
+                }
+            } catch (Exception e) {
+                System.out.println("Typewriter remote sync failed: " + e.getMessage());
+                if (onRemoteNewer != null) onRemoteNewer.accept(localData);
+            }
+        });
+    }
+
+    private static String lastTwRemoteStamp;
+
+    /** Idle poll: pull only when Node stamp is strictly newer. Never POST. Never write Postgres. */
+    public static Data pullIfRemoteNewer() {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank() || !nodeReady() || !NetworkWatch.isOnline()) return null;
+        try {
+            Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
+            String stamp = first(remoteRow, "last_updated_at", "lastUpdatedAt");
+            if (stamp != null && stamp.equals(lastTwRemoteStamp)) return null;
+            Instant remoteTs = TaskRepository.normalizeInstant(stamp);
+            Instant local = sqlite.lastUpdated(uid);
+            if (remoteTs == null
+                    || (local != null && remoteTs.toEpochMilli() <= local.toEpochMilli())) {
+                lastTwRemoteStamp = stamp;
+                return null;
+            }
+            String remoteContent = first(remoteRow, "content");
+            if (Vault.sealed(remoteContent) && !Vault.unlocked()) return null;
+            Data remoteData = parseBundle(remoteContent);
+            pruneEmptyDiary(remoteData.diary);
+            sqlite.replaceAll(uid, remoteData.diary, remoteData.lists, remoteData.pagesRoot, remoteTs);
+            lastTwRemoteStamp = stamp;
+            System.out.println("Typewriter pulled from Node");
+            return sqlite.fetchAll(uid);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Data pullRemote(String uid, Data localData, Instant local) throws Exception {
+        if (nodeReady()) {
+            try {
+                Map<String, String> remoteRow = Api.INSTANCE.getTypewriter();
+                Instant remoteTs = TaskRepository.normalizeInstant(
+                        first(remoteRow, "last_updated_at", "lastUpdatedAt"));
+                String remoteContent = first(remoteRow, "content");
+                if (Vault.sealed(remoteContent) && !Vault.unlocked()) {
+                    System.out.println("Typewriter remote is encrypted; vault locked, skip pull");
+                    return null;
+                }
+                Data remoteData = parseBundle(remoteContent);
+                pruneEmptyDiary(remoteData.diary);
+                if (remoteTs != null && TaskRepository.preferRemote(local, remoteTs)) {
+                    persistLocalAndServer(uid, remoteData);
+                    System.out.println("Typewriter pulled from Node into SQLite+Postgres");
+                    return sqlite.fetchAll(uid);
+                }
+                // GET must not POST. Local-newer waits for an explicit save.
+            } catch (Exception e) {
+                System.out.println("Typewriter Node load failed: " + e.getMessage());
+            }
+        }
+
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
+            Instant remote = null;
+            try {
+                remote = pg.lastUpdated(uid);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                postgres = null;
+                System.out.println("Typewriter Postgres read failed: " + e.getMessage());
+                pg = null;
+            }
+            if (pg != null && remote != null && TaskRepository.preferRemote(local, remote)) {
+                Data pulled = pg.fetchAll(uid);
+                pruneEmptyDiary(pulled.diary);
+                if (!isEmpty(pulled) || isEmpty(localData)) {
+                    sqlite.replaceAll(uid, pulled.diary, pulled.lists, pulled.pagesRoot);
+                    return pulled;
+                }
+                System.out.println("Typewriter kept local; Postgres row was newer but empty");
+            }
+            if (pg != null && !isEmpty(localData)
+                    && (remote == null || !TaskRepository.preferRemote(local, remote))) {
+                try {
+                    pg.replaceAll(uid, localData.diary, localData.lists, localData.pagesRoot);
+                } catch (SQLException e) {
+                    postgresAvailable = false;
+                    postgres = null;
+                    System.out.println("Typewriter push failed: " + e.getMessage());
+                }
+            }
+        }
+        return null;
+    }
+
+    public static void save(Map<LocalDate, TypewriterPane.TwNote> diary,
+                            List<TypewriterPane.TwList> lists,
+                            TypewriterPane.TwFolder pagesRoot) {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) {
+            System.out.println("Typewriter save skipped: no user");
+            return;
+        }
+        pruneEmptyDiary(diary);
+        Data snap = new Data();
+        snap.diary.putAll(diary);
+        snap.lists.addAll(lists);
+        copyFolder(pagesRoot, snap.pagesRoot);
+        final String uidCopy = uid;
+        remoteIo.execute(() -> {
+            try {
+                sqlite.replaceAll(uidCopy, snap.diary, snap.lists, snap.pagesRoot);
+            } catch (Exception ex) {
+                System.out.println("Typewriter SQLite save failed: " + ex.getMessage());
+                ex.printStackTrace();
+                return;
+            }
+            if (!NetworkWatch.isOnline()) return;
+            pushRemote(uidCopy, snap);
+        });
+    }
+
+    public static String snapshotJson(Map<LocalDate, TypewriterPane.TwNote> diary,
+                                      List<TypewriterPane.TwList> lists,
+                                      TypewriterPane.TwFolder pagesRoot) {
+        Data snap = new Data();
+        snap.diary.putAll(diary);
+        snap.lists.addAll(lists);
+        copyFolder(pagesRoot, snap.pagesRoot);
+        return toBundle(snap);
+    }
+
+    public static Data fromSnapshotJson(String json) {
+        return parseBundle(json);
+    }
+
+    private static void pushRemote(String uid, Data data) {
+        skipNewImagePush = false;
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
+            try {
+                pg.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+            } catch (Exception ex) {
+                postgresAvailable = false;
+                postgres = null;
+                System.out.println("Typewriter Postgres save failed: " + ex.getMessage());
+            }
+        }
+        if (nodeReady()) {
+            try {
+                Instant local = sqlite.lastUpdated(uid);
+                Api.INSTANCE.postTypewriter(
+                        toBundle(data),
+                        local != null ? local.toString() : Instant.now().toString()
+                );
+            } catch (Exception ex) {
+                System.out.println("Typewriter Node save failed: " + ex.getMessage());
+            }
+        }
+    }
+
+    private static void persistLocalAndServer(String uid, Data data) throws Exception {
+        pruneEmptyDiary(data.diary);
+        sqlite.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+        PostgresTypewriterRepository pg = pg();
+        if (pg != null) {
+            try {
+                pg.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+            } catch (SQLException e) {
+                postgresAvailable = false;
+                postgres = null;
+                System.out.println("Typewriter Postgres write after Node pull failed: " + e.getMessage());
+            }
+        }
+    }
+
+    public static void addImages(TypewriterPane.TwNote note, String raw) {
+        if (note == null || raw == null || raw.isBlank()) return;
+        applyImageField(note, raw);
+    }
+
+    public static String joinImages(TypewriterPane.TwNote note) {
+        if (note == null || note.images.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (File f : note.images) {
+            if (sb.length() > 0) sb.append('|');
+            sb.append(f.getAbsolutePath());
+        }
+        return sb.toString();
+    }
+
+    public static void rebuildPages(Connection c, String uid, TypewriterPane.TwFolder root,
+                                    boolean postgresFlag) throws SQLException {
+        String sql = postgresFlag
+                ? "SELECT id, parent_id, kind, title, body, images FROM TASK.tw_pages WHERE user_id = ? ORDER BY pos"
+                : "SELECT id, parent_id, kind, title, body, images FROM tw_pages WHERE user_id = ? ORDER BY pos";
+        Map<String, TypewriterPane.TwFolder> folders = new LinkedHashMap<>();
+        Map<String, String> parentOf = new LinkedHashMap<>();
+        folders.put("root", root);
+        List<Object[]> notes = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, uid);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String id = rs.getString(1);
+                    String parent = rs.getString(2);
+                    String kind = rs.getString(3);
+                    parentOf.put(id, parent == null || parent.isBlank() ? "root" : parent);
+                    if ("folder".equals(kind)) {
+                        folders.put(id, new TypewriterPane.TwFolder(id, nz(rs.getString(4))));
+                    } else {
+                        TypewriterPane.TwNote note = new TypewriterPane.TwNote(id, nz(rs.getString(4)), null);
+                        note.body = nz(rs.getString(5));
+                        addImages(note, rs.getString(6));
+                        notes.add(new Object[]{id, note});
+                    }
+                }
+            }
+        }
+        for (Map.Entry<String, TypewriterPane.TwFolder> e : folders.entrySet()) {
+            if ("root".equals(e.getKey())) continue;
+            TypewriterPane.TwFolder parent = folders.getOrDefault(parentOf.get(e.getKey()), root);
+            parent.children.add(e.getValue());
+        }
+        for (Object[] row : notes) {
+            String id = (String) row[0];
+            TypewriterPane.TwNote note = (TypewriterPane.TwNote) row[1];
+            TypewriterPane.TwFolder parent = folders.getOrDefault(parentOf.get(id), root);
+            parent.notes.add(note);
+        }
+    }
+
+    public static void savePagesPg(Connection c, String uid, TypewriterPane.TwFolder folder,
+                                   String parentId, int[] pos) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO TASK.tw_pages(id,user_id,parent_id,kind,title,body,images,pos) VALUES(?,?,?,?,?,?,?,?)")) {
+            writePages(ps, uid, folder, parentId, pos);
+        }
+    }
+
+    public static void savePagesSqlite(Connection c, String uid, TypewriterPane.TwFolder folder,
+                                       String parentId, int[] pos) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO tw_pages(id,user_id,parent_id,kind,title,body,images,pos) VALUES(?,?,?,?,?,?,?,?)")) {
+            writePages(ps, uid, folder, parentId, pos);
+        }
+    }
+
+    private static void writePages(PreparedStatement ps, String uid, TypewriterPane.TwFolder folder,
+                                   String parentId, int[] pos) throws SQLException {
+        for (TypewriterPane.TwFolder child : folder.children) {
+            ps.setString(1, child.id);
+            ps.setString(2, uid);
+            ps.setString(3, parentId);
+            ps.setString(4, "folder");
+            ps.setString(5, Vault.seal(child.title));
+            ps.setString(6, "");
+            ps.setString(7, "");
+            ps.setInt(8, pos[0]++);
+            ps.executeUpdate();
+            writePages(ps, uid, child, child.id, pos);
+        }
+        for (TypewriterPane.TwNote note : folder.notes) {
+            ps.setString(1, note.id);
+            ps.setString(2, uid);
+            ps.setString(3, parentId);
+            ps.setString(4, "note");
+            ps.setString(5, Vault.seal(note.title));
+            ps.setString(6, Vault.seal(note.body));
+            ps.setString(7, joinImages(note));
+            ps.setInt(8, pos[0]++);
+            ps.executeUpdate();
+        }
+    }
+
+    public static void copyTree(TypewriterPane.TwFolder from, TypewriterPane.TwFolder to) {
+        copyFolder(from, to);
+    }
+
+    public static void openLoaded(Data data) {
+        if (data == null) return;
+        for (TypewriterPane.TwNote n : data.diary.values()) {
+            if (n == null) continue;
+            n.title = Vault.open(n.title);
+            n.body = TypewriterHtml.storedText(Vault.open(n.body));
+        }
+        for (TypewriterPane.TwList list : data.lists) {
+            if (list == null) continue;
+            list.title = Vault.open(list.title);
+            for (TypewriterPane.TwItem item : list.items) {
+                if (item != null) item.text = TypewriterHtml.storedText(Vault.open(item.text));
+            }
+        }
+        openFolder(data.pagesRoot);
+    }
+
+    private static void openFolder(TypewriterPane.TwFolder folder) {
+        if (folder == null) return;
+        folder.title = Vault.open(folder.title);
+        for (TypewriterPane.TwFolder child : folder.children) openFolder(child);
+        for (TypewriterPane.TwNote note : folder.notes) {
+            note.title = Vault.open(note.title);
+            note.body = TypewriterHtml.storedText(Vault.open(note.body));
+        }
+    }
+
+    public static void saveImmediate(Data data) throws Exception {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank() || data == null) return;
+        pruneEmptyDiary(data.diary);
+        sqlite.replaceAll(uid, data.diary, data.lists, data.pagesRoot);
+        pushRemote(uid, data);
+    }
+
+    private static void copyFolder(TypewriterPane.TwFolder from, TypewriterPane.TwFolder to) {
+        to.title = from.title;
+        to.children.clear();
+        to.notes.clear();
+        for (TypewriterPane.TwFolder child : from.children) {
+            TypewriterPane.TwFolder copy = new TypewriterPane.TwFolder(child.id, child.title);
+            copyFolder(child, copy);
+            to.children.add(copy);
+        }
+        to.notes.addAll(from.notes);
+    }
+
+    private static String toBundle(Data data) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"diary\":[");
+        boolean first = true;
+        for (Map.Entry<LocalDate, TypewriterPane.TwNote> e : data.diary.entrySet()) {
+            if (!hasContent(e.getValue())) continue;
+            if (!first) sb.append(',');
+            first = false;
+            appendNote(sb, e.getValue(), e.getKey());
+        }
+        sb.append("],\"lists\":[");
+        first = true;
+        for (TypewriterPane.TwList list : data.lists) {
+            if (!first) sb.append(',');
+            first = false;
+            sb.append("{");
+            field(sb, "id", list.id, true);
+            secret(sb, "title", list.title, false);
+            sb.append(",\"items\":[");
+            boolean firstItem = true;
+            for (TypewriterPane.TwItem item : list.items) {
+                if (!firstItem) sb.append(',');
+                firstItem = false;
+                sb.append("{");
+                secret(sb, "text", TypewriterHtml.storedText(item.text), true);
+                sb.append(",\"done\":").append(item.done ? "true" : "false");
+                sb.append('}');
+            }
+            sb.append("]}");
+        }
+        sb.append("],\"pages\":[");
+        StringBuilder pages = new StringBuilder();
+        flattenPages(pages, data.pagesRoot, null, new int[]{0});
+        sb.append(pages);
+        sb.append("]}");
+        return sb.toString();
+    }
+
+    private static void appendNote(StringBuilder sb, TypewriterPane.TwNote n, LocalDate date) {
+        sb.append("{");
+        field(sb, "date", date == null ? "" : date.toString(), true);
+        field(sb, "id", n.id, false);
+        secret(sb, "title", n.title, false);
+        secret(sb, "body", TypewriterHtml.storedText(n.body), false);
+        sb.append(",\"images\":").append(imagesToJson(n, "diary"));
+        sb.append('}');
+    }
+
+    private static void flattenPages(StringBuilder sb, TypewriterPane.TwFolder folder,
+                                     String parentId, int[] pos) {
+        boolean needComma = sb.length() > 0;
+        for (TypewriterPane.TwFolder child : folder.children) {
+            if (needComma) sb.append(',');
+            needComma = true;
+            sb.append("{");
+            field(sb, "id", child.id, true);
+            field(sb, "parent_id", parentId, false);
+            field(sb, "kind", "folder", false);
+            secret(sb, "title", child.title, false);
+            secret(sb, "body", "", false);
+            sb.append(",\"images\":[]");
+            sb.append(",\"pos\":").append(pos[0]++);
+            sb.append('}');
+            flattenPages(sb, child, child.id, pos);
+        }
+        for (TypewriterPane.TwNote note : folder.notes) {
+            if (needComma) sb.append(',');
+            needComma = true;
+            sb.append("{");
+            field(sb, "id", note.id, true);
+            field(sb, "parent_id", parentId, false);
+            field(sb, "kind", "note", false);
+            secret(sb, "title", note.title, false);
+            secret(sb, "body", TypewriterHtml.storedText(note.body), false);
+            sb.append(",\"images\":").append(imagesToJson(note, "pages"));
+            sb.append(",\"pos\":").append(pos[0]++);
+            sb.append('}');
+        }
+    }
+
+    private static String imagesToJson(TypewriterPane.TwNote note, String kind) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        if (note != null) {
+            int n = 0;
+            for (File f : note.images) {
+                if (n >= 20) break;
+                byte[] raw = readBytes(f);
+                if (raw == null) continue;
+                ImageMetaStrip.Result clean;
+                try {
+                    clean = ImageMetaStrip.strip(raw, f.getName());
+                } catch (Exception ex) {
+                    System.out.println("Typewriter image strip failed: " + f.getName()
+                            + " " + ex.getMessage());
+                    continue;
+                }
+                byte[] bytes = clean.bytes;
+                String sha = sha256Hex(bytes);
+                String imgName = clipImageName(clean.name);
+                String storedSha = sha;
+                if (!skipNewImagePush) {
+                    String pushed = pushImage(sha, imgName, bytes, kind);
+                    if (pushed == null) skipNewImagePush = true;
+                    else storedSha = pushed;
+                }
+                if (!first) sb.append(',');
+                first = false;
+                sb.append("{");
+                field(sb, "id", storedSha, true);
+                field(sb, "name", imgName, false);
+                field(sb, "added_at", java.time.Instant.ofEpochMilli(f.lastModified()).toString(), false);
+                sb.append('}');
+                n++;
+            }
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private static void applyImageField(TypewriterPane.TwNote note, String raw) {
+        if (note == null || raw == null || raw.isBlank()) return;
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("[")) {
+            for (String obj : objectsIn(trimmed, null)) {
+                String name = nz(extract(obj, "name"));
+                String embedded = extract(obj, "data");
+                String sha = firstNonBlank(extract(obj, "id"), extract(obj, "sha256"));
+                File file = null;
+                if (embedded != null && !embedded.isBlank()) {
+                    file = writeCachedImage(sha != null ? sha : note.id, embedded, name);
+                } else if (sha != null && !sha.isBlank()) {
+                    file = fileFromSha(sha, name);
+                }
+                if (file != null) {
+                    String addedAt = extract(obj, "added_at");
+                    if (addedAt != null && !addedAt.isBlank()) {
+                        try {
+                            file.setLastModified(java.time.Instant.parse(addedAt.trim()).toEpochMilli());
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    if (note.images.size() >= 20) break;
+                    note.images.add(file);
+                }
+            }
+            return;
+        }
+        for (String p : raw.split("\\|")) {
+            if (p.isBlank()) continue;
+            if (note.images.size() >= 20) break;
+            File f = new File(p);
+            if (f.isFile()) note.images.add(f);
+        }
+    }
+
+    private static File fileFromSha(String sha, String name) {
+        File cached = cacheFile(sha, name);
+        if (cached.isFile()) return cached;
+        if (!nodeReady()) return null;
+        try {
+            Map<String, String> row = Api.INSTANCE.getTypewriterImage(sha);
+            String b64 = first(row, "data");
+            String remoteName = first(row, "name");
+            return writeCachedImage(sha, b64, remoteName != null ? remoteName : name);
+        } catch (Exception e) {
+            System.out.println("Typewriter image pull failed: " + sha + " " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** @return stored sha, or null if Node asked us to stop new uploads for a minute */
+    private static String pushImage(String sha, String name, byte[] bytes, String kind) {
+        if (!nodeReady() || sha == null || bytes == null) return sha;
+        try {
+            IMAGE_DIR.mkdirs();
+            File cached = cacheFile(sha, name);
+            if (!cached.isFile()) {
+                Files.write(cached.toPath(), bytes);
+            }
+            boolean onNode = false;
+            try {
+                onNode = Api.INSTANCE.typewriterImageExists(sha);
+            } catch (Exception ex) {
+                System.out.println("Typewriter image exists check failed: " + ex.getMessage());
+            }
+            if (onNode) {
+                System.out.println("Typewriter image already on Node: " + sha);
+                return sha;
+            }
+            String mime = name != null && name.toLowerCase().endsWith(".jpg") ? "image/jpeg"
+                    : name != null && name.toLowerCase().endsWith(".gif") ? "image/gif"
+                    : name != null && name.toLowerCase().endsWith(".webp") ? "image/webp"
+                    : "image/png";
+            Map<String, String> posted = Api.INSTANCE.postTypewriterImage(sha, name,
+                    Base64.getEncoder().encodeToString(bytes), kind, mime);
+            String got = first(posted, "sha256", "sha", "id");
+            String stored = got != null && !got.isBlank() ? got.toLowerCase() : sha;
+            if (!stored.equalsIgnoreCase(sha)) {
+                File dest = cacheFile(stored, name);
+                if (!dest.isFile()) Files.write(dest.toPath(), bytes);
+            }
+            System.out.println("Typewriter image uploaded: " + stored);
+            return stored;
+        } catch (Exception e) {
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            System.out.println("Typewriter image push failed: " + msg);
+            if (msg.toLowerCase().contains("too many") || msg.contains("Wait a minute")) return null;
+            return sha;
+        }
+    }
+
+    private static File cacheFile(String sha, String name) {
+        File named = new File(IMAGE_DIR, sha + cacheExt(name));
+        if (named.isFile()) return named;
+        File png = new File(IMAGE_DIR, sha + ".png");
+        if (png.isFile()) return png;
+        return named;
+    }
+
+    private static String cacheExt(String name) {
+        String n = name == null ? "" : name.toLowerCase();
+        int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
+        if (slash >= 0) n = n.substring(slash + 1);
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return ".jpg";
+        if (n.endsWith(".gif")) return ".gif";
+        if (n.endsWith(".webp")) return ".webp";
+        return ".png";
+    }
+
+    private static File writeCachedImage(String id, String b64, String name) {
+        if (id == null || id.isBlank() || b64 == null || b64.isBlank()) return null;
+        try {
+            IMAGE_DIR.mkdirs();
+            File out = new File(IMAGE_DIR, id + cacheExt(name));
+            Files.write(out.toPath(), Base64.getDecoder().decode(b64));
+            return out;
+        } catch (Exception e) {
+            System.out.println("Typewriter image write failed: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static byte[] readBytes(File f) {
+        if (f == null || !f.isFile()) return null;
+        try {
+            return Files.readAllBytes(f.toPath());
+        } catch (Exception e) {
+            System.out.println("Typewriter image read failed: " + f + " " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(bytes);
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : d) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String firstNonBlank(String... xs) {
+        if (xs == null) return null;
+        for (String x : xs) {
+            if (x != null && !x.isBlank()) return x;
+        }
+        return null;
+    }
+
+    private static Data parseBundle(String json) {
+        Data data = new Data();
+        json = Vault.open(json);
+        if (json == null || json.isBlank()) return data;
+        for (String obj : objectsIn(json, "diary")) {
+            LocalDate day = parseDate(extract(obj, "date"));
+            if (day == null) continue;
+            TypewriterPane.TwNote note = new TypewriterPane.TwNote(
+                    nz(extract(obj, "id")), nz(extract(obj, "title")), day);
+            note.body = TypewriterHtml.storedText(nz(extract(obj, "body")));
+            applyImageField(note, imageSlice(obj));
+            if (hasContent(note)) data.diary.put(day, note);
+        }
+        for (String obj : objectsIn(json, "lists")) {
+            TypewriterPane.TwList list = new TypewriterPane.TwList(
+                    nz(extract(obj, "id")), nz(extract(obj, "title")));
+            for (String itemObj : objectsIn(obj, "items")) {
+                TypewriterPane.TwItem item = new TypewriterPane.TwItem(
+                        TypewriterHtml.storedText(nz(extract(itemObj, "text"))));
+                String done = extract(itemObj, "done");
+                item.done = "true".equalsIgnoreCase(done) || "1".equals(done);
+                list.items.add(item);
+            }
+            data.lists.add(list);
+        }
+        Map<String, TypewriterPane.TwFolder> folders = new LinkedHashMap<>();
+        Map<String, String> parentOf = new LinkedHashMap<>();
+        folders.put("root", data.pagesRoot);
+        List<Object[]> notes = new ArrayList<>();
+        for (String obj : objectsIn(json, "pages")) {
+            String id = nz(extract(obj, "id"));
+            String parent = extract(obj, "parent_id");
+            parentOf.put(id, parent == null || parent.isBlank() ? "root" : parent);
+            if ("folder".equals(extract(obj, "kind"))) {
+                folders.put(id, new TypewriterPane.TwFolder(id, nz(extract(obj, "title"))));
+            } else {
+                TypewriterPane.TwNote note = new TypewriterPane.TwNote(id, nz(extract(obj, "title")), null);
+                note.body = TypewriterHtml.storedText(nz(extract(obj, "body")));
+                applyImageField(note, imageSlice(obj));
+                notes.add(new Object[]{id, note});
+            }
+        }
+        for (Map.Entry<String, TypewriterPane.TwFolder> e : folders.entrySet()) {
+            if ("root".equals(e.getKey())) continue;
+            TypewriterPane.TwFolder parent = folders.getOrDefault(parentOf.get(e.getKey()), data.pagesRoot);
+            parent.children.add(e.getValue());
+        }
+        for (Object[] row : notes) {
+            String id = (String) row[0];
+            TypewriterPane.TwNote note = (TypewriterPane.TwNote) row[1];
+            TypewriterPane.TwFolder parent = folders.getOrDefault(parentOf.get(id), data.pagesRoot);
+            parent.notes.add(note);
+        }
+        return data;
+    }
+
+    private static String imageSlice(String obj) {
+        int key = obj.indexOf("\"images\"");
+        if (key < 0) return extract(obj, "images");
+        int colon = obj.indexOf(':', key);
+        if (colon < 0) return null;
+        int p = colon + 1;
+        while (p < obj.length() && Character.isWhitespace(obj.charAt(p))) p++;
+        if (p >= obj.length()) return null;
+        if (obj.charAt(p) == '[') {
+            int depth = 0;
+            boolean inStr = false;
+            for (int i = p; i < obj.length(); i++) {
+                char ch = obj.charAt(i);
+                if (ch == '\\' && inStr) {
+                    i++;
+                    continue;
+                }
+                if (ch == '"') {
+                    inStr = !inStr;
+                    continue;
+                }
+                if (inStr) continue;
+                if (ch == '[') depth++;
+                else if (ch == ']') {
+                    depth--;
+                    if (depth == 0) return obj.substring(p, i + 1);
+                }
+            }
+        }
+        return extract(obj, "images");
+    }
+
+    private static void field(StringBuilder sb, String key, String value, boolean first) {
+        if (!first) sb.append(',');
+        sb.append('"').append(key).append('"').append(':');
+        if (value == null) sb.append("null");
+        else sb.append('"').append(escape(value)).append('"');
+    }
+
+    private static void secret(StringBuilder sb, String key, String value, boolean first) {
+        field(sb, key, Vault.seal(value == null ? "" : value), first);
+    }
+
+    private static String escape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
+    }
+
+    private static String extract(String json, String key) {
+        if (json == null) return null;
+        String needle = "\"" + key + "\"";
+        int i = json.indexOf(needle);
+        if (i < 0) return null;
+        int colon = json.indexOf(':', i + needle.length());
+        if (colon < 0) return null;
+        int p = colon + 1;
+        while (p < json.length() && Character.isWhitespace(json.charAt(p))) p++;
+        if (p >= json.length() || json.startsWith("null", p)) return null;
+        if (json.charAt(p) != '"') {
+            int end = p;
+            while (end < json.length()) {
+                char ch = json.charAt(end);
+                if (ch == ',' || ch == '}' || ch == ']' || Character.isWhitespace(ch)) break;
+                end++;
+            }
+            return json.substring(p, end);
+        }
+        StringBuilder val = new StringBuilder();
+        for (int k = p + 1; k < json.length(); k++) {
+            char ch = json.charAt(k);
+            if (ch == '\\' && k + 1 < json.length()) {
+                char n = json.charAt(++k);
+                if (n == 'n') val.append('\n');
+                else if (n == 'r') val.append('\r');
+                else if (n == 't') val.append('\t');
+                else val.append(n);
+            } else if (ch == '"') {
+                return val.toString();
+            } else {
+                val.append(ch);
+            }
+        }
+        return null;
+    }
+
+    private static List<String> objectsIn(String json, String arrayKey) {
+        List<String> out = new ArrayList<>();
+        if (json == null) return out;
+        int bracket;
+        if (arrayKey == null) {
+            bracket = json.indexOf('[');
+        } else {
+            String needle = "\"" + arrayKey + "\"";
+            int keyAt = json.indexOf(needle);
+            bracket = json.indexOf('[', keyAt < 0 ? 0 : keyAt);
+        }
+        if (bracket < 0) return out;
+        int i = bracket + 1;
+        while (i < json.length()) {
+            while (i < json.length() && json.charAt(i) != '{' && json.charAt(i) != ']') i++;
+            if (i >= json.length() || json.charAt(i) == ']') break;
+            int close = matchingBrace(json, i);
+            if (close < 0) break;
+            out.add(json.substring(i, close + 1));
+            i = close + 1;
+        }
+        return out;
+    }
+
+    private static int matchingBrace(String s, int open) {
+        int depth = 0;
+        boolean inStr = false;
+        for (int i = open; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch == '\\' && inStr) {
+                i++;
+                continue;
+            }
+            if (ch == '"') {
+                inStr = !inStr;
+                continue;
+            }
+            if (inStr) continue;
+            if (ch == '{') depth++;
+            else if (ch == '}') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
+    private static String first(Map<String, String> row, String... keys) {
+        if (row == null) return null;
+        for (String k : keys) {
+            String v = row.get(k);
+            if (v != null && !v.isBlank() && !"null".equals(v)) return v;
+        }
+        return null;
+    }
+
+    private static LocalDate parseDate(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            return LocalDate.parse(s.substring(0, Math.min(10, s.length())));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean isEmpty(Data data) {
+        return data.diary.isEmpty() && data.lists.isEmpty()
+                && data.pagesRoot.children.isEmpty() && data.pagesRoot.notes.isEmpty();
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String clipImageName(String name) {
+        String raw = name == null || name.isBlank() ? "image.png" : name;
+        if (raw.length() <= 120) return raw;
+        int dot = raw.lastIndexOf('.');
+        String ext = dot >= 0 ? raw.substring(dot) : "";
+        int keep = Math.max(1, 120 - ext.length());
+        return raw.substring(0, keep) + ext;
+    }
+}

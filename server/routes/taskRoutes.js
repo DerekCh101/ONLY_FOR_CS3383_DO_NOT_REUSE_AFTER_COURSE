@@ -1,7 +1,18 @@
+/** HTTP list/upsert/delete for calendar tasks. */
 import { validateTask } from "../HelperMethods.js";
 import { userFromToken, listTasks, upsertTask, deleteTask } from "../db.js";
-import { readBody, send, parseJson, pathname, toYmd } from "../lib/httpUtil.js";
+import { readBody, send, parseJson, pathname, toYmd, normTime } from "../lib/httpUtil.js";
 import { taskConflict } from "../lib/overlap.js";
+import { revealPayload, hideTask } from "../lib/vaultSession.js";
+
+function clockMs(ymd, hm) {
+    const day = toYmd(ymd);
+    const s = String(hm || "").trim();
+    const p = s.split(":");
+    if (!day || p.length < 2) return null;
+    const t = new Date(day + "T" + String(p[0]).padStart(2, "0") + ":" + String(p[1]).padStart(2, "0") + ":00");
+    return Number.isNaN(t.getTime()) ? null : t.getTime();
+}
 
 export async function handleTasks(req, res) {
     const path = pathname(req);
@@ -14,7 +25,15 @@ export async function handleTasks(req, res) {
             return true;
         }
         try {
-            send(res, 200, { tasks: await listTasks(user.id) });
+            const rows = await listTasks(user.id);
+            const tasks = [];
+            const nested = [];
+            for (const t of rows || []) {
+                if (!t) continue;
+                if (t.parent_id || t.parentId) nested.push(t);
+                else tasks.push(t);
+            }
+            send(res, 200, await revealPayload(req, { tasks, nested }));
         } catch (e) {
             send(res, 500, { error: String(e.message || e) });
         }
@@ -80,13 +99,45 @@ export async function handleTasks(req, res) {
                 ).trim() || null,
                 user_id: authUser.id,
             };
+            if (Object.prototype.hasOwnProperty.call(body, "description")) {
+                task.description = body.description;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, "description_done")
+                    || Object.prototype.hasOwnProperty.call(body, "descriptionDone")) {
+                task.description_done = body.description_done ?? body.descriptionDone;
+            }
+            if (Object.prototype.hasOwnProperty.call(body, "parent_id")
+                    || Object.prototype.hasOwnProperty.call(body, "parentId")) {
+                task.parent_id = body.parent_id ?? body.parentId;
+            }
+            const existing = (await listTasks(authUser.id))
+                .find((row) => String(row.id) === String(task.id));
+            const sameStart = !!(existing
+                && toYmd(existing.placed_date) === toYmd(task.placed_date)
+                && normTime(existing.placed_time || "") === normTime(task.placed_time || ""));
+            const start = clockMs(task.placed_date, task.placed_time);
+            if (!sameStart && start != null && start <= Date.now()) {
+                send(res, 400, { error: "Cannot create a task in the past." });
+                return true;
+            }
+            if (task.state === "Deadline") {
+                const sameDeadline = !!(existing
+                    && toYmd(existing.deadline_date) === toYmd(task.deadline_date)
+                    && normTime(existing.deadline_time || "") === normTime(task.deadline_time || ""));
+                const due = clockMs(task.deadline_date, task.deadline_time);
+                if (!sameDeadline && due != null && due <= Date.now()) {
+                    send(res, 400, { error: "Cannot set deadline in the past." });
+                    return true;
+                }
+            }
             const clash = await taskConflict(authUser.id, task);
             if (clash) {
                 send(res, 409, { error: clash });
                 return true;
             }
+            await hideTask(req, task);
             await upsertTask(task);
-            send(res, 201, task);
+            send(res, 201, (await revealPayload(req, { tasks: [task] })).tasks[0]);
         } catch (e) {
             send(res, 400, { error: String(e.message || e) });
         }

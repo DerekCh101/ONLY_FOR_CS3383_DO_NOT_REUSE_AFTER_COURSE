@@ -1,3 +1,4 @@
+/** Serves the web app (index.html and static files). */
 import fs from "node:fs";
 import { pathname } from "../lib/httpUtil.js";
 
@@ -14,6 +15,18 @@ export function handleStatic(req, res) {
     if (path === "/app.js") {
         res.setHeader("Content-Type", "text/javascript; charset=utf-8");
         res.end(fs.readFileSync("./app.js", "utf8"));
+        return true;
+    }
+
+    if (path === "/vault.js") {
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(fs.readFileSync("./vault.js", "utf8"));
+        return true;
+    }
+
+    if (path === "/shell.js") {
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(fs.readFileSync("./shell.js", "utf8"));
         return true;
     }
 
