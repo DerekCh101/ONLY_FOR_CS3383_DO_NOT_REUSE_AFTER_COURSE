@@ -47,3 +47,6 @@ Ashore Prospect *.md
 
 #vsc
 .vscode/
+
+#local build
+bin/
