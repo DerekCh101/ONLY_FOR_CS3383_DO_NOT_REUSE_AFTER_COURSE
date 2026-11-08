@@ -1,0 +1,76 @@
+@startuml Sequence Scheduler and Undo
+!include vp-style.puml
+title Run scheduler, then undo the placement changes
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskManagementSystem
+participant SystemCommands
+participant SchedulerEngine
+participant Day
+participant RefreshLifeCycle
+participant TaskRepository
+participant Undo
+participant RecordedCommand
+
+User -> SchedulerController : click Run Scheduler
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : command("runScheduler")
+activate TaskManagementSystem
+TaskManagementSystem -> SystemCommands : run(name, system)
+activate SystemCommands
+create participant RunSchedulerCommand
+SystemCommands -> RunSchedulerCommand : new(system)
+activate RunSchedulerCommand
+RunSchedulerCommand -> RunSchedulerCommand : snapshot previous state
+SystemCommands -> RunSchedulerCommand : execute()
+RunSchedulerCommand -> TaskManagementSystem : updateSchedule()
+TaskManagementSystem -> SchedulerEngine : scheduleTasks()
+activate SchedulerEngine
+SchedulerEngine -> Day : remove old placements
+activate Day
+deactivate Day
+SchedulerEngine -> Day : canPlace / placeTask
+activate Day
+deactivate Day
+deactivate SchedulerEngine
+RunSchedulerCommand -> RefreshLifeCycle : refreshLifeCycle(task)
+activate RefreshLifeCycle
+deactivate RefreshLifeCycle
+RunSchedulerCommand -> TaskRepository : dbAddTask(task)
+activate TaskRepository
+deactivate TaskRepository
+RunSchedulerCommand -> RecordedCommand : add to undoList
+activate RecordedCommand
+deactivate RecordedCommand
+deactivate RunSchedulerCommand
+deactivate SystemCommands
+deactivate TaskManagementSystem
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate SchedulerController
+
+User -> SchedulerController : click Undo
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : command("undo")
+activate TaskManagementSystem
+TaskManagementSystem -> SystemCommands : run(name, system)
+activate SystemCommands
+create participant Undo
+SystemCommands -> Undo : new(system)
+activate Undo
+SystemCommands -> Undo : execute()
+Undo -> RecordedCommand : undoList.last().undo()
+activate RecordedCommand
+RecordedCommand -> TaskManagementSystem : restore previous placements
+RecordedCommand -> TaskRepository : persist restored tasks
+activate TaskRepository
+deactivate TaskRepository
+deactivate RecordedCommand
+Undo -> RecordedCommand : move command to redoList
+deactivate Undo
+deactivate SystemCommands
+deactivate TaskManagementSystem
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate SchedulerController
+@enduml

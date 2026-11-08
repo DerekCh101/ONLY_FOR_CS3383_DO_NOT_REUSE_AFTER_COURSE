@@ -1,0 +1,58 @@
+@startuml Sequence Task Drag and Move
+!include vp-style.puml
+title Drag a placed task to another time slot
+autonumber
+autoactivate off
+actor User
+participant TaskDragDropSupport
+participant WeekGridBuilder
+participant TaskManagementSystem
+participant Day
+participant RefreshLifeCycle
+participant TaskRepository
+participant RecordedCommand
+
+User -> TaskDragDropSupport : drag task cell
+activate TaskDragDropSupport
+TaskDragDropSupport -> WeekGridBuilder : read CellState
+activate WeekGridBuilder
+WeekGridBuilder --> TaskDragDropSupport : source date and slot
+deactivate WeekGridBuilder
+TaskDragDropSupport -> TaskDragDropSupport : encode task id and source slot
+deactivate TaskDragDropSupport
+User -> TaskDragDropSupport : drop on target cell
+activate TaskDragDropSupport
+TaskDragDropSupport -> TaskDragDropSupport : resolve task and target
+TaskDragDropSupport -> TaskDragDropSupport : canDropOn(target, task)
+TaskDragDropSupport -> TaskManagementSystem : read grid and blocked time
+activate TaskManagementSystem
+TaskManagementSystem --> TaskDragDropSupport : target slots available
+deactivate TaskManagementSystem
+alt target is legal
+  create participant MoveTask
+  TaskDragDropSupport -> MoveTask : new(source, target)
+  activate MoveTask
+  MoveTask -> MoveTask : isLegalTarget()
+  MoveTask -> Day : clear old slots
+  activate Day
+  deactivate Day
+  MoveTask -> Day : placeTask(newStartSlot, task)
+  activate Day
+  deactivate Day
+  MoveTask -> RefreshLifeCycle : refreshLifeCycle(task)
+  activate RefreshLifeCycle
+  deactivate RefreshLifeCycle
+  MoveTask -> TaskRepository : dbAddTask(task)
+  activate TaskRepository
+  deactivate TaskRepository
+  MoveTask -> RecordedCommand : add to undoList
+  activate RecordedCommand
+  deactivate RecordedCommand
+  deactivate MoveTask
+  TaskDragDropSupport -> User : drop completed
+  TaskDragDropSupport -> TaskDragDropSupport : onMoved()
+else target is invalid
+  TaskDragDropSupport -> User : reject drop
+end
+deactivate TaskDragDropSupport
+@enduml

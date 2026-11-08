@@ -1,0 +1,106 @@
+@startuml Java Core Scheduling Classes
+!include vp-style.puml
+left to right direction
+caption Core Scheduling and Domain Classes
+
+class Task {
+  - id : int
+  - title : String
+  - workflow : Workflow
+  - taskLifeCycle : TaskLifeCycle
+  - placedDate : LocalDate
+  - placedTime : LocalTime
+  + setWorkflow(workflow)
+  + touchPlacementUpdated()
+  + allocateIdSafely()
+}
+class Day {
+  - todayTaskGrid : Task[]
+  - blockedTime : BlockedTimePeriod
+  + canPlace(task, time)
+  + placeTask(task, time)
+  + removeTask(task)
+}
+class BlockedTime
+class BlockedTimePeriod {
+  - blockedPeriod : List<BlockedTime>
+  + isBlocked(date, time)
+}
+class TaskManagementSystem {
+  - pendingTasks : List<Task>
+  - placedTasks : List<Task>
+  - unscheduledTasks : List<Task>
+  - daysGrid : Map<LocalDate, Day>
+  - engine : SchedulerEngine
+  - blockedTime : BlockedTimePeriod
+  + command(name)
+  + updateSchedule()
+  + refreshGUI()
+  + mainTask(task)
+  + quicksOf(task)
+}
+class SchedulerEngine {
+  - daysGrid : Map<LocalDate, Day>
+  - unscheduledTasks : List<Task>
+  + scheduleTasks()
+  + refitActiveTasks()
+  + placeDeadlineTasks()
+  + placeFlexibleTasks()
+  + tryPlaceDeadline(task)
+  + markUnscheduled(task)
+}
+class TaskRepository {
+  + dbfetchAll()
+  + dbAddTask(task)
+  + dbUpdateWorkflow(task)
+  + allocateNewTaskId()
+  + wipeLocalCacheOnly()
+}
+class ValidateAddTaskInput {
+  + validateAddTaskInput(input)
+}
+class FetchPopOutTask
+class AddTaskHooks {
+  + fireAfterAdd(task)
+}
+class RefreshLifeCycle {
+  + refreshLifeCycle(task)
+}
+interface TaskStates
+class AppTimeReference
+class AppVersion
+
+enum Workflow {
+  FLEXIBLE
+  DEADLINE
+  FIXED
+  FINISHED
+  UNFINISHED
+}
+enum TaskLifeCycle {
+  ACTIVE
+  COMPLETED
+  DELETED
+}
+
+TaskManagementSystem *-- SchedulerEngine
+TaskManagementSystem *-- BlockedTimePeriod
+TaskManagementSystem o-- "0..*" Task
+TaskManagementSystem o-- "0..*" Day
+TaskManagementSystem --> TaskRepository
+TaskManagementSystem --> FetchPopOutTask
+SchedulerEngine --> TaskManagementSystem
+SchedulerEngine --> "0..*" Day
+SchedulerEngine --> "0..*" Task
+Day *-- "0..*" Task
+Day --> BlockedTimePeriod
+BlockedTimePeriod *-- "0..*" BlockedTime
+Task --> Workflow
+Task --> TaskLifeCycle
+TaskStates <|.. Task
+ValidateAddTaskInput ..> Task
+AddTaskHooks ..> Task
+RefreshLifeCycle ..> Task
+AppTimeReference ..> Task
+
+@enduml

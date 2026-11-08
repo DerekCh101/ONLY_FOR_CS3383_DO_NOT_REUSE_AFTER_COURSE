@@ -1,0 +1,79 @@
+@startuml Sequence Import Tasks
+!include vp-style.puml
+title Import tasks from the bundled task file
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskManagementSystem
+participant ValidateAddTaskInput
+participant SchedulerEngine
+participant RefreshLifeCycle
+participant TaskRepository
+participant RecordedCommand
+
+User -> SchedulerController : choose Import tasks
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : create AddTaskWithFile command
+activate TaskManagementSystem
+create participant AddTaskWithFile
+TaskManagementSystem -> AddTaskWithFile : new(system)
+activate AddTaskWithFile
+AddTaskWithFile -> AddTaskWithFile : read taskInput1.txt
+loop each task record
+  AddTaskWithFile -> ValidateAddTaskInput : validate fields
+  activate ValidateAddTaskInput
+  alt valid record
+    ValidateAddTaskInput --> AddTaskWithFile : true
+    create participant Task
+    AddTaskWithFile -> Task : create task
+    activate Task
+    deactivate Task
+  else invalid record
+    ValidateAddTaskInput --> AddTaskWithFile : false
+    AddTaskWithFile -> AddTaskWithFile : skip record
+  end
+  deactivate ValidateAddTaskInput
+end
+deactivate AddTaskWithFile
+deactivate TaskManagementSystem
+User -> SchedulerController : confirm import
+SchedulerController -> AddTaskWithFile : execute()
+activate AddTaskWithFile
+AddTaskWithFile -> AddTaskWithFile : place fixed tasks when possible
+AddTaskWithFile -> TaskManagementSystem : add flexible tasks to pending
+activate TaskManagementSystem
+deactivate TaskManagementSystem
+AddTaskWithFile -> SchedulerEngine : updateSchedule()
+activate SchedulerEngine
+deactivate SchedulerEngine
+loop each imported task
+  AddTaskWithFile -> RefreshLifeCycle : refreshLifeCycle(task)
+  activate RefreshLifeCycle
+  deactivate RefreshLifeCycle
+  AddTaskWithFile -> TaskRepository : dbAddTask(task)
+  activate TaskRepository
+  deactivate TaskRepository
+end
+AddTaskWithFile -> RecordedCommand : add to undoList
+activate RecordedCommand
+deactivate RecordedCommand
+deactivate AddTaskWithFile
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate SchedulerController
+
+User -> SchedulerController : click Undo
+activate SchedulerController
+SchedulerController -> AddTaskWithFile : undo()
+activate AddTaskWithFile
+AddTaskWithFile -> TaskManagementSystem : remove imported tasks from lists and grid
+activate TaskManagementSystem
+deactivate TaskManagementSystem
+AddTaskWithFile -> TaskRepository : dbClearTask(task)
+activate TaskRepository
+deactivate TaskRepository
+AddTaskWithFile -> RecordedCommand : move command to redoList
+deactivate AddTaskWithFile
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate SchedulerController
+@enduml

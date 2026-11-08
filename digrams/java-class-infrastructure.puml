@@ -1,0 +1,94 @@
+@startuml Java Infrastructure Classes
+!include vp-style.puml
+left to right direction
+caption Persistence, Networking, and Security Classes
+
+class TaskRepository {
+  - sqlite : SqliteTaskRepository
+  - postgres : PostgresTaskRepository
+  + dbfetchAll()
+  + dbAddTask(task)
+  + dbUpdateWorkflow(task)
+}
+class SqliteTaskRepository {
+  + upsert(task)
+  + fetchAll()
+}
+class PostgresTaskRepository {
+  + upsert(task)
+  + fetchAll()
+}
+class SqliteTypewriterRepository {
+  + load()
+  + save(data)
+}
+class PostgresTypewriterRepository {
+  + load()
+  + save(data)
+}
+class DeviceConfig
+class TypewriterStore
+class Api {
+  {static} INSTANCE : NodeApi
+}
+class NodeApi {
+  - token : String
+  - userId : String
+  - username : String
+  + authenticate()
+  + registerAccount()
+  + restoreSession()
+  + applySession()
+  + postAuth(path, data)
+  + request(method, path, data)
+  + postTask(task)
+}
+class LoginView {
+  + goLogin()
+  + goRegister()
+  + finishAuth()
+}
+class NetworkWatch {
+  + start()
+  + addListener(listener)
+}
+class LocalSession {
+  + load()
+  + save()
+  + clear()
+  + wantRemember()
+}
+class Endpoints
+class OsEnv
+class PasswordRules {
+  + validate(password)
+}
+class SmtpSettings
+class Vault {
+  + unlockWithPassword()
+  + unlockRemembered()
+  + eraseLocalKeys()
+}
+class Task
+class BlockedTime
+class TypewriterPane
+
+TaskRepository *-- SqliteTaskRepository
+TaskRepository *-- PostgresTaskRepository
+TaskRepository --> Task
+TaskRepository --> BlockedTime
+TypewriterStore *-- SqliteTypewriterRepository
+TypewriterStore *-- PostgresTypewriterRepository
+TypewriterStore --> TypewriterPane
+DeviceConfig ..> TaskRepository
+Api *-- NodeApi
+NodeApi --> LocalSession
+LoginView --> Api
+LoginView --> Vault
+NetworkWatch ..> Api
+NodeApi --> Endpoints
+NodeApi --> OsEnv
+NodeApi --> PasswordRules
+NodeApi --> SmtpSettings
+
+@enduml

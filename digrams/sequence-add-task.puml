@@ -1,0 +1,72 @@
+@startuml Sequence Add Task
+!include vp-style.puml
+title Add a task from the JavaFX interface
+autonumber
+autoactivate off
+actor User
+participant TaskDialogs
+participant FetchPopOutTask
+participant SchedulerController
+participant TaskManagementSystem
+participant SystemCommands
+participant ValidateAddTaskInput
+participant SchedulerEngine
+participant Day
+participant TaskRepository
+participant AddTaskHooks
+
+User -> TaskDialogs : submit task form
+activate TaskDialogs
+TaskDialogs -> FetchPopOutTask : read form values
+activate FetchPopOutTask
+deactivate FetchPopOutTask
+TaskDialogs -> SchedulerController : task submitted
+activate SchedulerController
+deactivate TaskDialogs
+SchedulerController -> TaskManagementSystem : command("addTask")
+activate TaskManagementSystem
+TaskManagementSystem -> SystemCommands : run("addTask", system)
+activate SystemCommands
+SystemCommands -> ValidateAddTaskInput : validateAddTaskInput(input)
+activate ValidateAddTaskInput
+ValidateAddTaskInput --> SystemCommands : valid
+deactivate ValidateAddTaskInput
+create participant AddTask
+SystemCommands -> AddTask : new command
+activate AddTask
+SystemCommands -> AddTask : execute()
+create participant Task
+AddTask -> Task : new Task(input)
+activate Task
+Task -> TaskRepository : allocateNewTaskId()
+activate TaskRepository
+TaskRepository --> Task : id
+deactivate TaskRepository
+deactivate Task
+AddTask -> TaskManagementSystem : add pending task
+AddTask -> SchedulerEngine : scheduleTasks()
+activate SchedulerEngine
+SchedulerEngine -> Day : canPlace(task, slot)
+activate Day
+Day --> SchedulerEngine : available
+deactivate Day
+SchedulerEngine -> Day : placeTask(task, slot)
+activate Day
+deactivate Day
+deactivate SchedulerEngine
+AddTask -> TaskRepository : dbAddTask(task)
+activate TaskRepository
+TaskRepository --> AddTask : persisted
+deactivate TaskRepository
+AddTask -> AddTaskHooks : fireAfterAdd(task)
+activate AddTaskHooks
+deactivate AddTaskHooks
+AddTask --> SystemCommands : completed
+deactivate AddTask
+SystemCommands --> TaskManagementSystem : command result
+deactivate SystemCommands
+TaskManagementSystem -> SchedulerController : refreshGUI()
+deactivate TaskManagementSystem
+SchedulerController --> User : updated calendar
+deactivate SchedulerController
+@enduml

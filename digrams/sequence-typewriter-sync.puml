@@ -1,0 +1,83 @@
+@startuml Sequence Typewriter Sync
+!include vp-style.puml
+title Load, save, and synchronize Typewriter notes
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TypewriterStore
+participant SqliteTypewriterRepository
+participant Api
+participant NodeApi
+participant PostgresTypewriterRepository
+participant Vault
+
+User -> SchedulerController : open Typewriter
+activate SchedulerController
+create participant TypewriterPane
+SchedulerController -> TypewriterPane : new pane
+activate TypewriterPane
+TypewriterPane -> TypewriterStore : load()
+activate TypewriterStore
+TypewriterStore -> Api : getUserId()
+activate Api
+deactivate Api
+TypewriterStore -> SqliteTypewriterRepository : fetchAll(user)
+activate SqliteTypewriterRepository
+SqliteTypewriterRepository --> TypewriterStore : local notes and lists
+deactivate SqliteTypewriterRepository
+TypewriterStore --> TypewriterPane : applyLoaded(local data)
+deactivate TypewriterStore
+TypewriterPane -> TypewriterStore : syncRemoteInBackground(callback)
+activate TypewriterStore
+TypewriterStore -> SqliteTypewriterRepository : fetch local snapshot and timestamp
+activate SqliteTypewriterRepository
+deactivate SqliteTypewriterRepository
+alt online and authenticated
+  TypewriterStore -> Api : getTypewriter()
+  activate Api
+  Api -> NodeApi : GET /typewriter
+  activate NodeApi
+  NodeApi --> Api : remote content and timestamp
+  deactivate NodeApi
+  deactivate Api
+  alt remote is newer
+    TypewriterStore -> Vault : check or decrypt content
+    activate Vault
+    deactivate Vault
+    TypewriterStore -> SqliteTypewriterRepository : replaceAll(remote data)
+    activate SqliteTypewriterRepository
+    deactivate SqliteTypewriterRepository
+    opt local Postgres is available
+      TypewriterStore -> PostgresTypewriterRepository : replaceAll(remote data)
+      activate PostgresTypewriterRepository
+      deactivate PostgresTypewriterRepository
+    end
+    TypewriterStore -> TypewriterPane : callback(remote data)
+    TypewriterPane -> SchedulerController : applyTypewriterFromNode(data)
+  else local is newer or vault is locked
+    TypewriterStore -> TypewriterStore : keep local data
+  end
+else offline
+  TypewriterStore -> TypewriterPane : callback(local data)
+end
+deactivate TypewriterStore
+deactivate TypewriterPane
+deactivate SchedulerController
+
+User -> TypewriterPane : edit and leave page
+activate TypewriterPane
+TypewriterPane -> TypewriterStore : save(diary, lists, pages)
+activate TypewriterStore
+TypewriterStore -> SqliteTypewriterRepository : replaceAll(snapshot)
+activate SqliteTypewriterRepository
+deactivate SqliteTypewriterRepository
+opt online and authenticated
+  TypewriterStore -> NodeApi : POST /typewriter
+  activate NodeApi
+  NodeApi --> TypewriterStore : save response
+  deactivate NodeApi
+end
+deactivate TypewriterStore
+deactivate TypewriterPane
+@enduml

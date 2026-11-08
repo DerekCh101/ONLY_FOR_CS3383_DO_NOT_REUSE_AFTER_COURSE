@@ -1,0 +1,110 @@
+@startuml Java GUI Classes
+!include vp-style.puml
+left to right direction
+caption JavaFX GUI and Theme Classes
+
+class SchedulerController {
+  - system : TaskManagementSystem
+  - selectedTask : Task
+  - weekGridBuilder : WeekGridBuilder
+  - monthGridBuilder : MonthGridBuilder
+  - dayGridBuilder : DayGridBuilder
+  + initialize()
+  + refresh()
+  + showTaskDescription(task)
+  + toggleTaskFinish()
+  + runUndo()
+  + runRedo()
+}
+class WeekGridBuilder {
+  + build()
+  + setOnSelectTask(handler)
+}
+class MonthGridBuilder {
+  + build()
+  + setOnSelectTask(handler)
+}
+class DayGridBuilder {
+  + build()
+  + setOnSelectTask(handler)
+}
+class TaskDialogs {
+  + showTaskPopup()
+  + showEditDialog(task)
+}
+class TaskDragDropSupport {
+  + install()
+  + moveTask(task, target)
+}
+class TaskReminders {
+  + schedule(task)
+}
+class TypewriterPane {
+  + refresh()
+  + saveNote()
+}
+class TypewriterStore {
+  + load()
+  + save(data)
+}
+class AccountPane
+class ServerPickView
+class WindowFrame
+class ThemeSwitch
+class AppTheme {
+  - current : ThemePack
+  - packs : Map<String, ThemePack>
+  + currentPack() : ThemePack
+  + register(pack)
+  + setPack(id)
+  + toggle()
+  + apply(scene)
+}
+class GuiHelper
+class ImageMetaStrip
+class SecurityChallenge
+class TypewriterHtml
+class TaskManagementSystem
+class Task
+class Api
+
+interface ThemePack {
+  + id()
+  + displayName()
+  + kind()
+  + palette()
+}
+class ColorThemePack
+class BuiltinThemes
+class Contrast
+class ThemePalette
+enum ThemeKind
+
+SchedulerController --> TaskManagementSystem
+SchedulerController --> Task
+SchedulerController *-- WeekGridBuilder
+SchedulerController *-- MonthGridBuilder
+SchedulerController *-- DayGridBuilder
+SchedulerController *-- TaskDialogs
+SchedulerController *-- TaskDragDropSupport
+SchedulerController *-- TypewriterPane
+WeekGridBuilder --> TaskManagementSystem
+MonthGridBuilder --> TaskManagementSystem
+DayGridBuilder --> TaskManagementSystem
+TaskDialogs --> TaskManagementSystem
+TaskDragDropSupport --> TaskManagementSystem
+TaskDragDropSupport ..> Task
+TypewriterPane --> TypewriterStore
+AccountPane ..> Api
+ServerPickView ..> Api
+ThemePack <|.. ColorThemePack
+ColorThemePack *-- ThemePalette
+BuiltinThemes ..> ThemePack
+AppTheme o-- ThemePack
+AppTheme --> ThemeKind
+ThemeSwitch --> AppTheme
+GuiHelper ..> SchedulerController
+ImageMetaStrip ..> TaskDialogs
+SecurityChallenge ..> AccountPane
+
+@enduml
