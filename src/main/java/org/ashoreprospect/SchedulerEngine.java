@@ -139,6 +139,14 @@ public class SchedulerEngine {
         deadlineTasks.sort((t1, t2) -> {
             int dateCompare = t1.getDeadLineDate().compareTo(t2.getDeadLineDate());
             if (dateCompare != 0) return dateCompare;
+            LocalTime time1 = t1.getDeadLineTime();
+            LocalTime time2 = t2.getDeadLineTime();
+            if (time1 == null && time2 != null) return 1;
+            if (time1 != null && time2 == null) return -1;
+            if (time1 != null && time2 != null) {
+                int timeCompare = time1.compareTo(time2);
+                if (timeCompare != 0) return timeCompare;
+            }
             return Integer.compare(t2.getDurationSlots(), t1.getDurationSlots());
         });
 
