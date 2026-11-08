@@ -13,11 +13,13 @@ participant ValidateAddTaskInput
 participant SchedulerEngine
 participant Day
 participant TaskRepository
+participant SqliteTaskRepository
+participant Api
 participant AddTaskHooks
 
 User -> TaskDialogs : submit task form
 activate TaskDialogs
-TaskDialogs -> FetchPopOutTask : read form values
+TaskDialogs -> TaskManagementSystem : fetchPopupTask(FetchPopOutTask)
 activate FetchPopOutTask
 deactivate FetchPopOutTask
 TaskDialogs -> SchedulerController : task submitted
@@ -34,7 +36,7 @@ deactivate ValidateAddTaskInput
 create participant AddTask
 SystemCommands -> AddTask : new command
 activate AddTask
-SystemCommands -> AddTask : execute()
+AddTask -> AddTask : execute()
 create participant Task
 AddTask -> Task : new Task(input)
 activate Task
@@ -44,9 +46,11 @@ TaskRepository --> Task : id
 deactivate TaskRepository
 deactivate Task
 AddTask -> TaskManagementSystem : add pending task
-AddTask -> SchedulerEngine : scheduleTasks()
+AddTask -> TaskManagementSystem : updateSchedule()
+activate TaskManagementSystem
+TaskManagementSystem -> SchedulerEngine : scheduleTasks(tasks)
 activate SchedulerEngine
-SchedulerEngine -> Day : canPlace(task, slot)
+SchedulerEngine -> Day : canPlace(task, date, slot, ...)
 activate Day
 Day --> SchedulerEngine : available
 deactivate Day
@@ -54,8 +58,15 @@ SchedulerEngine -> Day : placeTask(task, slot)
 activate Day
 deactivate Day
 deactivate SchedulerEngine
+deactivate TaskManagementSystem
 AddTask -> TaskRepository : dbAddTask(task)
 activate TaskRepository
+TaskRepository -> SqliteTaskRepository : upsert(task)
+activate SqliteTaskRepository
+deactivate SqliteTaskRepository
+opt authenticated session
+	TaskRepository -> Api : postTask(json)
+end
 TaskRepository --> AddTask : persisted
 deactivate TaskRepository
 AddTask -> AddTaskHooks : fireAfterAdd(task)

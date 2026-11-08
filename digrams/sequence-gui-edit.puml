@@ -22,10 +22,10 @@ User -> TaskDialogs : edit description
 activate TaskDialogs
 TaskDialogs -> SchedulerController : save form
 deactivate TaskDialogs
-SchedulerController -> EditTask : Snapshot.of(task)
+TaskDialogs -> EditTask : new(task, Snapshot, reschedule)
 activate EditTask
-SchedulerController -> EditTask : execute()
-EditTask -> Task : update title/description
+TaskDialogs -> EditTask : execute()
+EditTask -> Task : setTaskName/setDuration/setDeadline/setDescription
 activate Task
 deactivate Task
 EditTask -> TaskRepository : dbAddTask(task)

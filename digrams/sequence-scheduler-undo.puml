@@ -26,7 +26,7 @@ activate RunSchedulerCommand
 RunSchedulerCommand -> RunSchedulerCommand : snapshot previous state
 SystemCommands -> RunSchedulerCommand : execute()
 RunSchedulerCommand -> TaskManagementSystem : updateSchedule()
-TaskManagementSystem -> SchedulerEngine : scheduleTasks()
+TaskManagementSystem -> SchedulerEngine : scheduleTasks(tasks)
 activate SchedulerEngine
 SchedulerEngine -> Day : remove old placements
 activate Day
@@ -41,7 +41,7 @@ deactivate RefreshLifeCycle
 RunSchedulerCommand -> TaskRepository : dbAddTask(task)
 activate TaskRepository
 deactivate TaskRepository
-RunSchedulerCommand -> RecordedCommand : add to undoList
+RunSchedulerCommand -> RecordedCommand : getUndoList().add(this)
 activate RecordedCommand
 deactivate RecordedCommand
 deactivate RunSchedulerCommand
@@ -54,13 +54,13 @@ User -> SchedulerController : click Undo
 activate SchedulerController
 SchedulerController -> TaskManagementSystem : command("undo")
 activate TaskManagementSystem
-TaskManagementSystem -> SystemCommands : run(name, system)
+TaskManagementSystem -> SystemCommands : run("undo", system)
 activate SystemCommands
 create participant Undo
 SystemCommands -> Undo : new(system)
 activate Undo
 SystemCommands -> Undo : execute()
-Undo -> RecordedCommand : undoList.last().undo()
+Undo -> RecordedCommand : getUndoList().getLast().undo()
 activate RecordedCommand
 RecordedCommand -> TaskManagementSystem : restore previous placements
 RecordedCommand -> TaskRepository : persist restored tasks

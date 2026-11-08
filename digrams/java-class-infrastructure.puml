@@ -19,12 +19,18 @@ class PostgresTaskRepository {
   + fetchAll()
 }
 class SqliteTypewriterRepository {
-  + load()
-  + save(data)
+  + initialize()
+  + lastUpdated(uid)
+  + fetchAll(uid)
+  + replaceAll(uid, diary, lists, pagesRoot)
+  + wipeUser(uid)
+  + wipeAll()
 }
 class PostgresTypewriterRepository {
-  + load()
-  + save(data)
+  + initialize()
+  + lastUpdated(uid)
+  + fetchAll(uid)
+  + wipeUser(uid)
 }
 class DeviceConfig
 class TypewriterStore
@@ -39,14 +45,12 @@ class NodeApi {
   + registerAccount()
   + restoreSession()
   + applySession()
-  + postAuth(path, data)
-  + request(method, path, data)
-  + postTask(task)
+  + postTask(jsonBody)
+  + postBlocked(jsonBody)
+  + postTypewriter(content, lastUpdatedAt)
 }
 class LoginView {
-  + goLogin()
-  + goRegister()
-  + finishAuth()
+  + show()
 }
 class NetworkWatch {
   + start()
@@ -61,7 +65,7 @@ class LocalSession {
 class Endpoints
 class OsEnv
 class PasswordRules {
-  + validate(password)
+  + reject(password)
 }
 class SmtpSettings
 class Vault {
@@ -77,9 +81,9 @@ TaskRepository *-- SqliteTaskRepository
 TaskRepository *-- PostgresTaskRepository
 TaskRepository --> Task
 TaskRepository --> BlockedTime
+TaskRepository --> Api
 TypewriterStore *-- SqliteTypewriterRepository
 TypewriterStore *-- PostgresTypewriterRepository
-TypewriterStore --> TypewriterPane
 DeviceConfig ..> TaskRepository
 Api *-- NodeApi
 NodeApi --> LocalSession
@@ -90,5 +94,6 @@ NodeApi --> Endpoints
 NodeApi --> OsEnv
 NodeApi --> PasswordRules
 NodeApi --> SmtpSettings
+NodeApi --> Vault
 
 @enduml

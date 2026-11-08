@@ -4,7 +4,7 @@ left to right direction
 caption Command, CLI, and Undo/Redo Classes
 
 interface Command {
-  + execute()
+  + execute() : boolean
   + undo()
   + redo()
 }
@@ -67,7 +67,8 @@ class SystemCommands {
   + exec(command)
 }
 class TaskLookup {
-  + findTask(system, id)
+  + placed(system, idOrName)
+  + anywhere(system, idOrName)
 }
 class InAppCli {
   + run(system, raw) : Result
@@ -87,7 +88,6 @@ Command <|.. EditTask
 Command <|.. FinishTask
 Command <|.. MoveTask
 Command <|.. PrintAllTask
-Command <|.. RecordedCommand
 Command <|.. RunSchedulerCommand
 Command <|.. UnfinishTask
 RecordedCommand <|-- Undo
@@ -112,5 +112,14 @@ AddTask ..> Task
 EditTask ..> Task
 FinishTask ..> Task
 MoveTask ..> Task
+UnfinishTask ..> Task
+AddTask --> TaskRepository
+AddTask --> SchedulerEngine
+AddTask --> RefreshLifeCycle
+MoveTask --> TaskRepository
+ClearTask --> TaskRepository
+EditTask --> TaskRepository
+FinishTask --> TaskRepository
+UnfinishTask --> TaskRepository
 
 @enduml

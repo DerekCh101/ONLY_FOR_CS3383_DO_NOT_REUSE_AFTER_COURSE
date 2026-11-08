@@ -11,6 +11,7 @@ participant SchedulerEngine
 participant RefreshLifeCycle
 participant TaskRepository
 participant RecordedCommand
+participant Resource
 
 User -> SchedulerController : choose Import tasks
 activate SchedulerController
@@ -19,7 +20,7 @@ activate TaskManagementSystem
 create participant AddTaskWithFile
 TaskManagementSystem -> AddTaskWithFile : new(system)
 activate AddTaskWithFile
-AddTaskWithFile -> AddTaskWithFile : read taskInput1.txt
+AddTaskWithFile -> Resource : getResourceAsStream("taskInput1.txt")
 loop each task record
   AddTaskWithFile -> ValidateAddTaskInput : validate fields
   activate ValidateAddTaskInput
@@ -44,9 +45,12 @@ AddTaskWithFile -> AddTaskWithFile : place fixed tasks when possible
 AddTaskWithFile -> TaskManagementSystem : add flexible tasks to pending
 activate TaskManagementSystem
 deactivate TaskManagementSystem
-AddTaskWithFile -> SchedulerEngine : updateSchedule()
+AddTaskWithFile -> TaskManagementSystem : updateSchedule()
+activate TaskManagementSystem
+TaskManagementSystem -> SchedulerEngine : scheduleTasks(tasks)
 activate SchedulerEngine
 deactivate SchedulerEngine
+deactivate TaskManagementSystem
 loop each imported task
   AddTaskWithFile -> RefreshLifeCycle : refreshLifeCycle(task)
   activate RefreshLifeCycle
@@ -55,7 +59,7 @@ loop each imported task
   activate TaskRepository
   deactivate TaskRepository
 end
-AddTaskWithFile -> RecordedCommand : add to undoList
+AddTaskWithFile -> RecordedCommand : getUndoList().add(this)
 activate RecordedCommand
 deactivate RecordedCommand
 deactivate AddTaskWithFile

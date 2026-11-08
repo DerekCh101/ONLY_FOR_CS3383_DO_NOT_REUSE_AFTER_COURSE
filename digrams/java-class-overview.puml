@@ -17,8 +17,15 @@ package "org.ashoreprospect" {
   class AppTimeReference
   class AppVersion
   interface TaskStates
-  enum TaskLifeCycle
-  enum Workflow
+  enum TaskLifeCycle {
+    PAST
+    UNSCHEDULED
+    ONGOING
+  }
+  enum Workflow {
+    FINISHED
+    UNFINISHED
+  }
   class RefreshLifeCycle
 }
 package "org.ashoreprospect.Command" {
@@ -102,7 +109,7 @@ TaskManagementSystem o-- "0..*" Task
 TaskManagementSystem o-- "0..*" Day
 SchedulerEngine --> "0..*" Day
 SchedulerEngine --> "0..*" Task
-Day *-- "0..*" Task
+Day o-- "0..*" Task
 Day --> BlockedTimePeriod
 BlockedTimePeriod *-- "0..*" BlockedTime
 Task --> Workflow
@@ -110,7 +117,11 @@ Task --> TaskLifeCycle
 TaskManagementSystem --> TaskRepository
 TaskManagementSystem --> SchedulerController
 TaskManagementSystem --> FetchPopOutTask
-TaskStates <|.. Task
+TaskStates ..> Task : constants only
+SchedulerEngine --> TaskManagementSystem
+TaskManagementSystem --> Api : Node polling
+TaskDialogs --> Api
+AccountPane --> Api
 
 Command <|.. AddTask
 Command <|.. AddTaskWithFile

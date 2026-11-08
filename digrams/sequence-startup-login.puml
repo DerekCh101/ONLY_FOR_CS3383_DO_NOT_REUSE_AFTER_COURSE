@@ -14,20 +14,20 @@ participant Vault
 participant TaskManagementSystem
 participant TaskRepository
 participant SchedulerController
+participant FXMLLoader
 
 User -> SchedulerApp : launch()
 activate SchedulerApp
 SchedulerApp -> NetworkWatch : start()
 activate NetworkWatch
 deactivate NetworkWatch
-SchedulerApp -> Api : restoreSession()
+SchedulerApp -> Api : INSTANCE.restoreSession()
 activate Api
 Api -> LocalSession : load()
 activate LocalSession
 deactivate LocalSession
 deactivate Api
 alt remembered session is valid
-  LocalSession --> Api : session data
   SchedulerApp -> Vault : unlockRemembered()
   activate Vault
   deactivate Vault
@@ -37,17 +37,20 @@ alt remembered session is valid
   activate TaskRepository
   TaskRepository --> TaskManagementSystem : tasks and blocked time
   deactivate TaskRepository
-  SchedulerApp -> SchedulerController : loadMain()
+  SchedulerApp -> FXMLLoader : load("/UIScheduler.fxml")
+  activate FXMLLoader
+  FXMLLoader -> SchedulerController : initialize()
   activate SchedulerController
   SchedulerController -> TaskManagementSystem : attachGUI()
   SchedulerController -> TaskManagementSystem : refreshGUI()
   deactivate SchedulerController
+  deactivate FXMLLoader
   deactivate TaskManagementSystem
 else no valid session
   SchedulerApp -> LoginView : show()
   activate LoginView
   User -> LoginView : enter credentials
-  LoginView -> Api : authenticate(user, password)
+  LoginView -> Api : INSTANCE.authenticate(user, password)
   activate Api
   Api -> NodeApi : postAuth("/login", credentials)
   activate NodeApi

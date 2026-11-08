@@ -4,22 +4,34 @@ left to right direction
 caption Core Scheduling and Domain Classes
 
 class Task {
-  - id : int
-  - title : String
+  - id : String
+  - taskName : String
+  - durationMinutes : double
+  - state : int
+  - startingDate : LocalDate
+  - startingTime : LocalTime
+  - deadLineDate : LocalDate
+  - deadLineTime : LocalTime
   - workflow : Workflow
   - taskLifeCycle : TaskLifeCycle
   - placedDate : LocalDate
   - placedTime : LocalTime
+  - description : String
+  - parentId : String
   + setWorkflow(workflow)
+  + getDurationSlots()
+  + isFixedTime()
+  + hasDeadline()
+  + isFlexible()
+  + canGoUnscheduled()
+  + setLifeCycle(life)
   + touchPlacementUpdated()
-  + allocateIdSafely()
 }
 class Day {
   - todayTaskGrid : Task[]
   - blockedTime : BlockedTimePeriod
-  + canPlace(task, time)
-  + placeTask(task, time)
-  + removeTask(task)
+  + canPlace(task, columnDate, slotIndex, ignoreBlocked, ignoreOverload)
+  + placeTask(task, columnDate, slotIndex)
 }
 class BlockedTime
 class BlockedTimePeriod {
@@ -33,21 +45,20 @@ class TaskManagementSystem {
   - daysGrid : Map<LocalDate, Day>
   - engine : SchedulerEngine
   - blockedTime : BlockedTimePeriod
-  + command(name)
+  + command(cmdString) : boolean
   + updateSchedule()
   + refreshGUI()
   + mainTask(task)
   + quicksOf(task)
+  + getGrid()
+  + getBlockedTime()
+  + getTaskRepo()
 }
 class SchedulerEngine {
   - daysGrid : Map<LocalDate, Day>
   - unscheduledTasks : List<Task>
-  + scheduleTasks()
+  + scheduleTasks(tasks : List<Task>)
   + refitActiveTasks()
-  + placeDeadlineTasks()
-  + placeFlexibleTasks()
-  + tryPlaceDeadline(task)
-  + markUnscheduled(task)
 }
 class TaskRepository {
   + dbfetchAll()
@@ -55,6 +66,9 @@ class TaskRepository {
   + dbUpdateWorkflow(task)
   + allocateNewTaskId()
   + wipeLocalCacheOnly()
+  + fetchAllBlocked()
+  + dbAddBlocked(blocked)
+  + dbClearBlocked(blocked)
 }
 class ValidateAddTaskInput {
   + validateAddTaskInput(input)
@@ -71,16 +85,13 @@ class AppTimeReference
 class AppVersion
 
 enum Workflow {
-  FLEXIBLE
-  DEADLINE
-  FIXED
   FINISHED
   UNFINISHED
 }
 enum TaskLifeCycle {
-  ACTIVE
-  COMPLETED
-  DELETED
+  PAST
+  UNSCHEDULED
+  ONGOING
 }
 
 TaskManagementSystem *-- SchedulerEngine
@@ -92,12 +103,12 @@ TaskManagementSystem --> FetchPopOutTask
 SchedulerEngine --> TaskManagementSystem
 SchedulerEngine --> "0..*" Day
 SchedulerEngine --> "0..*" Task
-Day *-- "0..*" Task
+Day o-- "0..*" Task
 Day --> BlockedTimePeriod
 BlockedTimePeriod *-- "0..*" BlockedTime
 Task --> Workflow
 Task --> TaskLifeCycle
-TaskStates <|.. Task
+TaskStates ..> Task : constants only
 ValidateAddTaskInput ..> Task
 AddTaskHooks ..> Task
 RefreshLifeCycle ..> Task

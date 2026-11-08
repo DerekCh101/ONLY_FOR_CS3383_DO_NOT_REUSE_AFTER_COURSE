@@ -34,7 +34,7 @@ alt resize or update deadline
   deactivate EditTask
   TaskDialogs -> TaskManagementSystem : updateSchedule()
   activate TaskManagementSystem
-  TaskManagementSystem -> SchedulerEngine : scheduleTasks()
+  TaskManagementSystem -> SchedulerEngine : scheduleTasks(tasks)
   activate SchedulerEngine
   alt task can be placed
     SchedulerEngine --> TaskManagementSystem : placed task
@@ -57,7 +57,7 @@ else delete completely
   ClearTask -> TaskRepository : dbClearTask(task)
   activate TaskRepository
   deactivate TaskRepository
-  ClearTask -> RecordedCommand : add to undoList
+  ClearTask -> RecordedCommand : getUndoList().add(this)
   activate RecordedCommand
   deactivate RecordedCommand
   deactivate ClearTask

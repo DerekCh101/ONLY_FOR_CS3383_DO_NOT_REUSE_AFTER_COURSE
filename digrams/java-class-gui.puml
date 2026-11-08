@@ -17,27 +17,29 @@ class SchedulerController {
   + runRedo()
 }
 class WeekGridBuilder {
-  + build()
+  + build(grid, sidePanel, weekOffset)
   + setOnSelectTask(handler)
 }
 class MonthGridBuilder {
-  + build()
+  + build(grid, sidePanel, monthOffset)
   + setOnSelectTask(handler)
 }
 class DayGridBuilder {
-  + build()
+  + build(grid, sidePanel, dayOffset)
   + setOnSelectTask(handler)
 }
 class TaskDialogs {
-  + showTaskPopup()
-  + showEditDialog(task)
+  + showTaskPopup(fromGridClick, clickedDate, slotIndex)
+  + showBlockedEditor()
+  + showUnscheduledPopup()
+  + showTaskInfoPopup(task, date, slotIndex)
 }
 class TaskDragDropSupport {
-  + install()
-  + moveTask(task, target)
+  + canDropOn(target, task)
 }
 class TaskReminders {
-  + schedule(task)
+  + start()
+  + stop()
 }
 class TypewriterPane {
   + refresh()
@@ -45,7 +47,8 @@ class TypewriterPane {
 }
 class TypewriterStore {
   + load()
-  + save(data)
+  + save(diary, lists, pagesRoot)
+  + syncRemoteInBackground(callback)
 }
 class AccountPane
 class ServerPickView
@@ -92,19 +95,25 @@ WeekGridBuilder --> TaskManagementSystem
 MonthGridBuilder --> TaskManagementSystem
 DayGridBuilder --> TaskManagementSystem
 TaskDialogs --> TaskManagementSystem
+TaskDialogs --> Api
+TaskDialogs --> AddTask
+TaskDialogs --> EditTask
+TaskDialogs --> ClearTask
 TaskDragDropSupport --> TaskManagementSystem
 TaskDragDropSupport ..> Task
+TaskDragDropSupport --> MoveTask
 TypewriterPane --> TypewriterStore
+TypewriterPane --> ImageMetaStrip
 AccountPane ..> Api
-ServerPickView ..> Api
+ServerPickView ..> Endpoints
 ThemePack <|.. ColorThemePack
 ColorThemePack *-- ThemePalette
 BuiltinThemes ..> ThemePack
 AppTheme o-- ThemePack
 AppTheme --> ThemeKind
 ThemeSwitch --> AppTheme
-GuiHelper ..> SchedulerController
-ImageMetaStrip ..> TaskDialogs
-SecurityChallenge ..> AccountPane
+SchedulerController --> AccountPane
+SchedulerController --> FinishTask
+SchedulerController --> UnfinishTask
 
 @enduml

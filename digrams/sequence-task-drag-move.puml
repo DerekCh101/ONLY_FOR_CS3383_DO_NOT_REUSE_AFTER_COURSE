@@ -33,6 +33,7 @@ alt target is legal
   TaskDragDropSupport -> MoveTask : new(source, target)
   activate MoveTask
   MoveTask -> MoveTask : isLegalTarget()
+  MoveTask -> TaskManagementSystem : getGrid()
   MoveTask -> Day : clear old slots
   activate Day
   deactivate Day
@@ -45,7 +46,7 @@ alt target is legal
   MoveTask -> TaskRepository : dbAddTask(task)
   activate TaskRepository
   deactivate TaskRepository
-  MoveTask -> RecordedCommand : add to undoList
+  MoveTask -> RecordedCommand : getUndoList().add(this)
   activate RecordedCommand
   deactivate RecordedCommand
   deactivate MoveTask

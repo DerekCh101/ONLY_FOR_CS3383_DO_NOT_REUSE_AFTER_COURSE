@@ -10,19 +10,19 @@ participant BlockedTime
 participant BlockedTimePeriod
 participant TaskRepository
 participant SqliteTaskRepository
-participant NodeApi
+participant Api
 
 User -> SchedulerController : open Blocked times
 activate SchedulerController
 SchedulerController -> TaskDialogs : showBlockedEditor()
 activate TaskDialogs
-TaskDialogs -> TaskRepository : fetchAllBlocked()
+TaskDialogs -> TaskManagementSystem : getBlockedTime()
 activate TaskRepository
 TaskRepository --> TaskDialogs : existing periods
 deactivate TaskRepository
 
 User -> TaskDialogs : enter recurrence and time range
-TaskDialogs -> BlockedTime : expand daily, range, or weekday rows
+TaskDialogs -> BlockedTime : daily()/weekly()/once()/dailyRange()
 activate BlockedTime
 BlockedTime --> TaskDialogs : candidate rows
 deactivate BlockedTime
@@ -40,9 +40,7 @@ else valid rows
     activate SqliteTaskRepository
     deactivate SqliteTaskRepository
     opt authenticated session
-      TaskRepository -> NodeApi : POST /blocked
-      activate NodeApi
-      deactivate NodeApi
+      TaskRepository -> Api : postBlocked(json)
     end
     deactivate TaskRepository
   end
@@ -67,9 +65,7 @@ TaskRepository -> SqliteTaskRepository : delete blocked row and log tombstone
 activate SqliteTaskRepository
 deactivate SqliteTaskRepository
 opt authenticated session
-  TaskRepository -> NodeApi : DELETE /blocked/{id}
-  activate NodeApi
-  deactivate NodeApi
+  TaskRepository -> Api : deleteBlocked(id)
 end
 deactivate TaskRepository
 TaskDialogs -> TaskRepository : fetchAllBlocked()

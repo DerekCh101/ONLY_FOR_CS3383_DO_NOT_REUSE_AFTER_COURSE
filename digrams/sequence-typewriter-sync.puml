@@ -48,11 +48,6 @@ alt online and authenticated
     TypewriterStore -> SqliteTypewriterRepository : replaceAll(remote data)
     activate SqliteTypewriterRepository
     deactivate SqliteTypewriterRepository
-    opt local Postgres is available
-      TypewriterStore -> PostgresTypewriterRepository : replaceAll(remote data)
-      activate PostgresTypewriterRepository
-      deactivate PostgresTypewriterRepository
-    end
     TypewriterStore -> TypewriterPane : callback(remote data)
     TypewriterPane -> SchedulerController : applyTypewriterFromNode(data)
   else local is newer or vault is locked
@@ -73,10 +68,13 @@ TypewriterStore -> SqliteTypewriterRepository : replaceAll(snapshot)
 activate SqliteTypewriterRepository
 deactivate SqliteTypewriterRepository
 opt online and authenticated
-  TypewriterStore -> NodeApi : POST /typewriter
+  TypewriterStore -> Api : postTypewriter(bundle, timestamp)
+  activate Api
+  Api -> NodeApi : POST /typewriter
   activate NodeApi
-  NodeApi --> TypewriterStore : save response
+  NodeApi --> Api : save response
   deactivate NodeApi
+  deactivate Api
 end
 deactivate TypewriterStore
 deactivate TypewriterPane

@@ -11,11 +11,14 @@ participant SqliteTaskRepository
 participant PostgresTaskRepository
 participant NodeApi
 participant RecordedCommand
+participant SystemCommands
+participant Undo
 
 User -> SchedulerController : choose Delete task
 activate SchedulerController
-SchedulerController -> TaskManagementSystem : run ClearTask
+SchedulerController -> TaskManagementSystem : command("clearTask")
 activate TaskManagementSystem
+TaskManagementSystem -> SystemCommands : run("clearTask", system)
 create participant ClearTask
 TaskManagementSystem -> ClearTask : new(task)
 activate ClearTask
@@ -50,7 +53,7 @@ TaskRepository -> NodeApi : DELETE /tasks/{id}
 activate NodeApi
 deactivate NodeApi
 deactivate TaskRepository
-ClearTask -> RecordedCommand : add to undoList
+ClearTask -> RecordedCommand : getUndoList().add(this)
 activate RecordedCommand
 deactivate RecordedCommand
 deactivate ClearTask
@@ -60,7 +63,10 @@ deactivate SchedulerController
 
 User -> SchedulerController : click Undo
 activate SchedulerController
-SchedulerController -> RecordedCommand : last().undo()
+SchedulerController -> TaskManagementSystem : command("undo")
+TaskManagementSystem -> SystemCommands : run("undo", system)
+SystemCommands -> Undo : new(system)
+Undo -> RecordedCommand : getUndoList().getLast().undo()
 activate RecordedCommand
 RecordedCommand -> ClearTask : undo()
 activate ClearTask

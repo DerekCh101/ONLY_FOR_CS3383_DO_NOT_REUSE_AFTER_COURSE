@@ -10,7 +10,6 @@ participant SqliteTaskRepository
 participant PostgresTaskRepository
 participant Api
 participant NodeApi
-participant LocalSession
 
 User -> AddTask : execute()
 activate AddTask
@@ -28,13 +27,9 @@ opt PostgreSQL configured
   deactivate PostgresTaskRepository
 end
 opt authenticated session
-  TaskRepository -> Api : postTask(task)
+  TaskRepository -> Api : postTask(json)
   activate Api
-  Api -> LocalSession : load()
-  activate LocalSession
-  LocalSession --> Api : session token
-  deactivate LocalSession
-  Api -> NodeApi : request("POST", "/tasks", task)
+  Api -> NodeApi : request("POST", "/tasks", json)
   activate NodeApi
   NodeApi --> Api : server response
   deactivate NodeApi

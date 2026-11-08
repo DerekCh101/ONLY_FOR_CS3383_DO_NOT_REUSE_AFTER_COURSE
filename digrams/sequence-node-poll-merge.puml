@@ -8,21 +8,20 @@ participant Api
 participant TaskRepository
 participant NodeApi
 participant SqliteTaskRepository
+participant SqliteTypewriterRepository
 participant TypewriterStore
 participant SchedulerController
 participant Task
 
 loop every 30 seconds while application is running
-  TaskManagementSystem -> Api : getToken()
+  TaskManagementSystem -> Api : INSTANCE.getToken()
   activate Api
   deactivate Api
   alt authenticated
     TaskManagementSystem -> TaskRepository : pullFromNode()
     activate TaskRepository
-    TaskRepository -> NodeApi : GET remote task changes
-    activate NodeApi
-    NodeApi --> TaskRepository : task rows and tombstones
-    deactivate NodeApi
+    TaskRepository -> Api : getTasks()
+    TaskRepository -> Api : getBlocked()
     TaskRepository -> SqliteTaskRepository : merge newer rows
     activate SqliteTaskRepository
     SqliteTaskRepository --> TaskRepository : calendar changed?
@@ -39,7 +38,7 @@ loop every 30 seconds while application is running
     deactivate Api
     alt Typewriter remote timestamp is newer
       TypewriterStore -> TypewriterStore : parse and validate bundle
-      TypewriterStore -> SqliteTaskRepository : replace Typewriter cache
+      TypewriterStore -> SqliteTypewriterRepository : replaceAll(...)
       activate SqliteTaskRepository
       deactivate SqliteTaskRepository
       TypewriterStore --> TaskManagementSystem : Typewriter data

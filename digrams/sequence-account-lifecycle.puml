@@ -10,18 +10,20 @@ participant Api
 participant NodeApi
 participant LocalSession
 participant TypewriterPane
-participant TypewriterStore
 participant TaskRepository
+participant TypewriterStore
 participant SchedulerApp
+participant Vault
 
 User -> SchedulerController : open Account
 activate SchedulerController
 SchedulerController -> AccountPane : show account page
 activate AccountPane
-AccountPane -> Api : getUsername and get email
+AccountPane -> Api : getUsername()
 activate Api
 Api --> AccountPane : current profile
 deactivate Api
+AccountPane -> Api : getMe()
 
 alt update profile or password
   User -> AccountPane : save username, email, or password
@@ -70,7 +72,7 @@ alt delete account
   SchedulerApp -> TaskRepository : clear cached tasks
   activate TaskRepository
   deactivate TaskRepository
-  SchedulerApp -> TypewriterStore : wipeCurrentUser()
+  TaskRepository -> TypewriterStore : wipeCurrentUser()
   activate TypewriterStore
   deactivate TypewriterStore
   deactivate SchedulerApp
@@ -88,6 +90,8 @@ else sign out
   activate Api
   deactivate Api
   SchedulerController -> SchedulerApp : return to login view
+  SchedulerApp -> TaskManagementSystem : resetInstance()
+  SchedulerApp -> Vault : lock()
 end
 deactivate AccountPane
 deactivate SchedulerController
