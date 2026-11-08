@@ -1,0 +1,80 @@
+@startuml Sequence Blocked Time Edit
+!include vp-style.puml
+title Create or delete a blocked-time period
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskDialogs
+participant BlockedTime
+participant BlockedTimePeriod
+participant TaskRepository
+participant SqliteTaskRepository
+participant Api
+
+User -> SchedulerController : open Blocked times
+activate SchedulerController
+SchedulerController -> TaskDialogs : showBlockedEditor()
+activate TaskDialogs
+TaskDialogs -> TaskManagementSystem : getBlockedTime()
+activate TaskRepository
+TaskRepository --> TaskDialogs : existing periods
+deactivate TaskRepository
+
+User -> TaskDialogs : enter recurrence and time range
+TaskDialogs -> BlockedTime : daily()/weekly()/once()/dailyRange()
+activate BlockedTime
+BlockedTime --> TaskDialogs : candidate rows
+deactivate BlockedTime
+TaskDialogs -> BlockedTimePeriod : conflictAmong(rows)
+activate BlockedTimePeriod
+alt invalid time, expired row, or conflict
+  BlockedTimePeriod --> TaskDialogs : validation error
+  TaskDialogs -> User : show alert
+else valid rows
+  BlockedTimePeriod --> TaskDialogs : no conflict
+  loop each row
+    TaskDialogs -> TaskRepository : dbAddBlocked(row)
+    activate TaskRepository
+    TaskRepository -> SqliteTaskRepository : upsert blocked row
+    activate SqliteTaskRepository
+    deactivate SqliteTaskRepository
+    opt authenticated session
+      TaskRepository -> Api : postBlocked(json)
+    end
+    deactivate TaskRepository
+  end
+  TaskDialogs -> TaskRepository : fetchAllBlocked()
+  activate TaskRepository
+  TaskRepository --> TaskDialogs : saved periods
+  deactivate TaskRepository
+  TaskDialogs -> BlockedTimePeriod : replaceBlockedPeriods(saved)
+  activate BlockedTimePeriod
+  deactivate BlockedTimePeriod
+  TaskDialogs -> SchedulerController : onChanged()
+end
+deactivate BlockedTimePeriod
+deactivate TaskDialogs
+deactivate SchedulerController
+
+User -> TaskDialogs : click Delete
+activate TaskDialogs
+TaskDialogs -> TaskRepository : dbClearBlocked(row)
+activate TaskRepository
+TaskRepository -> SqliteTaskRepository : delete blocked row and log tombstone
+activate SqliteTaskRepository
+deactivate SqliteTaskRepository
+opt authenticated session
+  TaskRepository -> Api : deleteBlocked(id)
+end
+deactivate TaskRepository
+TaskDialogs -> TaskRepository : fetchAllBlocked()
+activate TaskRepository
+TaskRepository --> TaskDialogs : remaining periods
+deactivate TaskRepository
+TaskDialogs -> BlockedTimePeriod : replaceBlockedPeriods(remaining)
+activate BlockedTimePeriod
+deactivate BlockedTimePeriod
+TaskDialogs -> SchedulerController : onChanged()
+deactivate TaskDialogs
+@enduml

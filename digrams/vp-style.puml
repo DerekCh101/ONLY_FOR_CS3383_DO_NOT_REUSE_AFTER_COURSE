@@ -1,0 +1,40 @@
+' Shared Visual Paradigm-inspired styling for the scheduler diagrams.
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam roundcorner 0
+skinparam class {
+  BackgroundColor #FFFDF5
+  BorderColor #3C4A5A
+  ArrowColor #3C4A5A
+  FontColor #20252B
+  HeaderBackgroundColor #DCEAF7
+  AttributeFontColor #303840
+  MethodFontColor #303840
+}
+skinparam interface {
+  BackgroundColor #F3F7FB
+  BorderColor #3C4A5A
+}
+skinparam enum {
+  BackgroundColor #FFF4D6
+  BorderColor #8A6D1D
+}
+skinparam package {
+  BackgroundColor #F7F9FB
+  BorderColor #8995A3
+  FontColor #26313D
+}
+skinparam sequence {
+  ArrowColor #3C4A5A
+  LifeLineBorderColor #73808C
+  LifeLineBackgroundColor #F4F7FA
+  ActivationBorderColor #8A6D1D
+  ActivationBackgroundColor #FFF4D6
+  ParticipantBorderColor #3C4A5A
+  ParticipantBackgroundColor #DCEAF7
+  GroupBorderColor #8995A3
+  GroupBackgroundColor #F7F9FB
+}
+hide circle
+hide empty members
+skinparam linetype ortho

@@ -1,0 +1,117 @@
+@startuml Java Core Scheduling Classes
+!include vp-style.puml
+left to right direction
+caption Core Scheduling and Domain Classes
+
+class Task {
+  - id : String
+  - taskName : String
+  - durationMinutes : double
+  - state : int
+  - startingDate : LocalDate
+  - startingTime : LocalTime
+  - deadLineDate : LocalDate
+  - deadLineTime : LocalTime
+  - workflow : Workflow
+  - taskLifeCycle : TaskLifeCycle
+  - placedDate : LocalDate
+  - placedTime : LocalTime
+  - description : String
+  - parentId : String
+  + setWorkflow(workflow)
+  + getDurationSlots()
+  + isFixedTime()
+  + hasDeadline()
+  + isFlexible()
+  + canGoUnscheduled()
+  + setLifeCycle(life)
+  + touchPlacementUpdated()
+}
+class Day {
+  - todayTaskGrid : Task[]
+  - blockedTime : BlockedTimePeriod
+  + canPlace(task, columnDate, slotIndex, ignoreBlocked, ignoreOverload)
+  + placeTask(task, columnDate, slotIndex)
+}
+class BlockedTime
+class BlockedTimePeriod {
+  - blockedPeriod : List<BlockedTime>
+  + isBlocked(date, time)
+}
+class TaskManagementSystem {
+  - pendingTasks : List<Task>
+  - placedTasks : List<Task>
+  - unscheduledTasks : List<Task>
+  - daysGrid : Map<LocalDate, Day>
+  - engine : SchedulerEngine
+  - blockedTime : BlockedTimePeriod
+  + command(cmdString) : boolean
+  + updateSchedule()
+  + refreshGUI()
+  + mainTask(task)
+  + quicksOf(task)
+  + getGrid()
+  + getBlockedTime()
+  + getTaskRepo()
+}
+class SchedulerEngine {
+  - daysGrid : Map<LocalDate, Day>
+  - unscheduledTasks : List<Task>
+  + scheduleTasks(tasks : List<Task>)
+  + refitActiveTasks()
+}
+class TaskRepository {
+  + dbfetchAll()
+  + dbAddTask(task)
+  + dbUpdateWorkflow(task)
+  + allocateNewTaskId()
+  + wipeLocalCacheOnly()
+  + fetchAllBlocked()
+  + dbAddBlocked(blocked)
+  + dbClearBlocked(blocked)
+}
+class ValidateAddTaskInput {
+  + validateAddTaskInput(input)
+}
+class FetchPopOutTask
+class AddTaskHooks {
+  + fireAfterAdd(task)
+}
+class RefreshLifeCycle {
+  + refreshLifeCycle(task)
+}
+interface TaskStates
+class AppTimeReference
+class AppVersion
+
+enum Workflow {
+  FINISHED
+  UNFINISHED
+}
+enum TaskLifeCycle {
+  PAST
+  UNSCHEDULED
+  ONGOING
+}
+
+TaskManagementSystem *-- SchedulerEngine
+TaskManagementSystem *-- BlockedTimePeriod
+TaskManagementSystem o-- "0..*" Task
+TaskManagementSystem o-- "0..*" Day
+TaskManagementSystem --> TaskRepository
+TaskManagementSystem --> FetchPopOutTask
+SchedulerEngine --> TaskManagementSystem
+SchedulerEngine --> "0..*" Day
+SchedulerEngine --> "0..*" Task
+Day o-- "0..*" Task
+Day --> BlockedTimePeriod
+BlockedTimePeriod *-- "0..*" BlockedTime
+Task --> Workflow
+Task --> TaskLifeCycle
+TaskStates ..> Task : constants only
+ValidateAddTaskInput ..> Task
+AddTaskHooks ..> Task
+RefreshLifeCycle ..> Task
+AppTimeReference ..> Task
+
+@enduml

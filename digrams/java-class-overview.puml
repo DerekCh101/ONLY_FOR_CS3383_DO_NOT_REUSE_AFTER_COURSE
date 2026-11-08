@@ -1,0 +1,182 @@
+@startuml Java Class Overview
+!include vp-style.puml
+left to right direction
+caption Java Scheduler - Complete Project Class Overview
+
+package "org.ashoreprospect" {
+  class SchedulerApp
+  class TaskManagementSystem
+  class SchedulerEngine
+  class Task
+  class Day
+  class BlockedTime
+  class BlockedTimePeriod
+  class FetchPopOutTask
+  class ValidateAddTaskInput
+  class AddTaskHooks
+  class AppTimeReference
+  class AppVersion
+  interface TaskStates
+  enum TaskLifeCycle {
+    PAST
+    UNSCHEDULED
+    ONGOING
+  }
+  enum Workflow {
+    FINISHED
+    UNFINISHED
+  }
+  class RefreshLifeCycle
+}
+package "org.ashoreprospect.Command" {
+  interface Command
+  class AddTask
+  class AddTaskWithFile
+  class ClearAllTask
+  class ClearPastTasks
+  class ClearTask
+  class EditTask
+  class FinishTask
+  class MoveTask
+  class PrintAllTask
+  class RecordedCommand
+  class Redo
+  class RunSchedulerCommand
+  class Undo
+  class UnfinishTask
+  class InAppCli
+  class SystemCommands
+  class TaskLookup
+}
+package "org.ashoreprospect.CliRunner" {
+  class CLIRunner
+}
+package "org.ashoreprospect.GUI" {
+  class SchedulerController
+  class WindowFrame
+  class AccountPane
+  class ServerPickView
+  class TypewriterPane
+  class TypewriterHtml
+  class TypewriterStore
+  class WeekGridBuilder
+  class MonthGridBuilder
+  class DayGridBuilder
+  class TaskDialogs
+  class TaskDragDropSupport
+  class TaskReminders
+  class GuiHelper
+  class ImageMetaStrip
+  class SecurityChallenge
+  class ThemeSwitch
+  class AppTheme
+}
+package "org.ashoreprospect.GUI.theme" {
+  interface ThemePack
+  class ColorThemePack
+  class BuiltinThemes
+  class Contrast
+  class ThemePalette
+  enum ThemeKind
+}
+package "org.ashoreprospect.db" {
+  class TaskRepository
+  class SqliteTaskRepository
+  class PostgresTaskRepository
+  class SqliteTypewriterRepository
+  class PostgresTypewriterRepository
+  class DeviceConfig
+}
+package "org.ashoreprospect.net" {
+  class Api
+  class NodeApi
+  class LoginView
+  class NetworkWatch
+  class LocalSession
+  class Endpoints
+  class OsEnv
+  class PasswordRules
+  class SmtpSettings
+}
+package "org.ashoreprospect.crypto" {
+  class Vault
+}
+
+SchedulerApp ..> TaskManagementSystem : starts
+TaskManagementSystem *-- SchedulerEngine
+TaskManagementSystem *-- BlockedTimePeriod
+TaskManagementSystem o-- "0..*" Task
+TaskManagementSystem o-- "0..*" Day
+SchedulerEngine --> "0..*" Day
+SchedulerEngine --> "0..*" Task
+Day o-- "0..*" Task
+Day --> BlockedTimePeriod
+BlockedTimePeriod *-- "0..*" BlockedTime
+Task --> Workflow
+Task --> TaskLifeCycle
+TaskManagementSystem --> TaskRepository
+TaskManagementSystem --> SchedulerController
+TaskManagementSystem --> FetchPopOutTask
+TaskStates ..> Task : constants only
+SchedulerEngine --> TaskManagementSystem
+TaskManagementSystem --> Api : Node polling
+TaskDialogs --> Api
+AccountPane --> Api
+
+Command <|.. AddTask
+Command <|.. AddTaskWithFile
+Command <|.. ClearAllTask
+Command <|.. ClearPastTasks
+Command <|.. ClearTask
+Command <|.. EditTask
+Command <|.. FinishTask
+Command <|.. MoveTask
+Command <|.. PrintAllTask
+Command <|.. RecordedCommand
+Command <|.. RunSchedulerCommand
+Command <|.. UnfinishTask
+RecordedCommand <|-- Undo
+RecordedCommand <|-- Redo
+SystemCommands ..> Command : creates/executes
+CLIRunner ..> SystemCommands
+RecordedCommand ..> Command : static undo/redo stacks
+
+SchedulerController --> TaskManagementSystem
+SchedulerController *-- WeekGridBuilder
+SchedulerController *-- MonthGridBuilder
+SchedulerController *-- DayGridBuilder
+SchedulerController *-- TaskDialogs
+SchedulerController *-- TaskDragDropSupport
+SchedulerController *-- TypewriterPane
+WeekGridBuilder --> TaskManagementSystem
+MonthGridBuilder --> TaskManagementSystem
+DayGridBuilder --> TaskManagementSystem
+TaskDialogs --> TaskManagementSystem
+TaskDragDropSupport --> TaskManagementSystem
+TypewriterPane --> TypewriterStore
+SchedulerController --> AppTheme
+AppTheme o-- ThemePack
+ThemePack <|.. ColorThemePack
+ColorThemePack *-- ThemePalette
+BuiltinThemes ..> ThemePack
+ThemePalette --> ThemeKind
+
+TaskRepository *-- SqliteTaskRepository
+TaskRepository *-- PostgresTaskRepository
+TaskRepository --> Task
+TaskRepository --> BlockedTime
+TypewriterStore *-- SqliteTypewriterRepository
+TypewriterStore *-- PostgresTypewriterRepository
+DeviceConfig ..> TaskRepository
+
+Api *-- NodeApi
+NodeApi --> LocalSession
+LoginView --> Api
+LoginView --> Vault
+NetworkWatch ..> Api
+NodeApi --> Endpoints
+NodeApi --> OsEnv
+NodeApi --> PasswordRules
+NodeApi --> SmtpSettings
+
+@enduml
