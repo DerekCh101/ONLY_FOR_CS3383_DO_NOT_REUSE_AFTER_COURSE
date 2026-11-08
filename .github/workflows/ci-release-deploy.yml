@@ -67,6 +67,45 @@ jobs:
         shell: pwsh
         run: .\gradlew.bat clean test jar cliJar distZip distTar
 
+      - name: Add test results to workflow summary
+        if: always()
+        shell: pwsh
+        run: |
+          $reports = Get-ChildItem -Path build/test-results/test -Filter '*.xml' -ErrorAction SilentlyContinue
+          if (-not $reports) {
+            @(
+              '## Test results'
+              ''
+              'No JUnit test reports were found.'
+            ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          $tests = 0
+          $failures = 0
+          $errors = 0
+          $skipped = 0
+          $duration = 0.0
+          foreach ($report in $reports) {
+            $document = [xml](Get-Content -Raw $report.FullName)
+            foreach ($suite in $document.SelectNodes('//testsuite')) {
+              $tests += [int]$suite.tests
+              $failures += [int]$suite.failures
+              $errors += [int]$suite.errors
+              $skipped += [int]$suite.skipped
+              $duration += [double]$suite.time
+            }
+          }
+
+          $status = if (($failures + $errors) -eq 0) { 'Passed' } else { 'Failed' }
+          @(
+            '## Test results'
+            ''
+            "| Status | Tests | Failed | Errors | Skipped | Duration (s) |"
+            '| --- | ---: | ---: | ---: | ---: | ---: |'
+            "| $status | $tests | $failures | $errors | $skipped | $([math]::Round($duration, 2)) |"
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
       - name: Upload platform distributions
         uses: actions/upload-artifact@v4
         with:
@@ -162,21 +201,22 @@ jobs:
 
           latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
           if [[ -z "$latest_tag" ]]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            if git diff-tree --root --no-commit-id --name-only -r "$GITHUB_SHA" -- 'src/main/**' | grep -q .; then
+              echo "Functional changes found in src/main; creating the first release."
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "No changes in src/main; skipping release."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
 
           if git diff --quiet "$latest_tag..$GITHUB_SHA" -- \
-            'src/**' \
-            'server/**' \
-            'build.gradle.kts' \
-            'settings.gradle.kts' \
-            'gradle/**' \
-            'docker-compose.yml'; then
-            echo "No functional changes since $latest_tag; skipping release."
+            'src/main/**'; then
+            echo "No changes in src/main since $latest_tag; skipping release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Functional changes found since $latest_tag; creating release."
+            echo "Changes found in src/main since $latest_tag; creating release."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
