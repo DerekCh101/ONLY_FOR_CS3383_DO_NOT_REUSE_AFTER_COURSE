@@ -238,6 +238,69 @@ class BlockedTimePeriodTest {
     }
 
     @Test
+    void oneOffException_overridesMatchingDailyRow() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        BlockedTime daily = BlockedTime.daily("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        BlockedTime exception = BlockedTime.once("free", MON, LocalTime.of(12, 0), LocalTime.of(13, 0));
+        exception.setException(true);
+        period.replaceBlockedPeriods(java.util.List.of(daily, exception));
+
+        assertFalse(period.isBlocked(MON, LocalTime.of(12, 30)));
+        assertTrue(period.isBlocked(TUE, LocalTime.of(12, 30)));
+    }
+
+    @Test
+    void isBlocked_excludesExactEndBoundaryButIncludesStart() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        period.replaceBlockedPeriods(java.util.List.of(
+                BlockedTime.daily("window", LocalTime.of(9, 0), LocalTime.of(10, 0))));
+
+        assertTrue(period.isBlocked(MON, LocalTime.of(9, 0)));
+        assertTrue(period.isBlocked(MON, LocalTime.of(9, 30)));
+        assertFalse(period.isBlocked(MON, LocalTime.of(10, 0)));
+    }
+
+    @Test
+    void addBlockedTime_rejectsStartBeforeSixAm() {
+        java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(
+                "05-00\n06-00\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        java.io.InputStream originalIn = System.in;
+        try {
+            System.setIn(in);
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.addBlockedTime();
+            assertTrue(period.blockedPeriod.isEmpty());
+        } finally {
+            System.setIn(originalIn);
+        }
+
+        java.io.ByteArrayInputStream in2 = new java.io.ByteArrayInputStream(
+                "06-00\n07-00\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try {
+            System.setIn(in2);
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.addBlockedTime();
+            assertEquals(1, period.blockedPeriod.size());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void dailyRange_blocksEachDateInRangeOnly() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        LocalDate start = MON;
+        LocalDate end = MON.plusDays(2);
+        period.replaceBlockedPeriods(BlockedTime.dailyRange("repeat", start, end,
+                LocalTime.of(14, 0), LocalTime.of(15, 0)));
+
+        assertTrue(period.isBlocked(start, LocalTime.of(14, 30)));
+        assertTrue(period.isBlocked(start.plusDays(1), LocalTime.of(14, 30)));
+        assertTrue(period.isBlocked(end, LocalTime.of(14, 30)));
+        assertFalse(period.isBlocked(end.plusDays(1), LocalTime.of(14, 30)));
+    }
+
+    @Test
     void violatesBlocked_checksEachHourOfDuration() {
         BlockedTimePeriod period = new BlockedTimePeriod();
         period.replaceBlockedPeriods(java.util.List.of(

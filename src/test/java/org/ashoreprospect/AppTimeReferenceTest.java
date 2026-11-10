@@ -215,4 +215,18 @@ class AppTimeReferenceTest {
             AppTimeReference.setClock(saved);
         }
     }
+
+    @Test
+    void localTimeToSlot_tracksPreviousDayBoundaryAcrossMidnight() {
+        assertEquals(36, AppTimeReference.localTimeToSlot(LocalTime.MIDNIGHT));
+        assertEquals(47, AppTimeReference.localTimeToSlot(LocalTime.of(5, 30)));
+        assertEquals(35, AppTimeReference.localTimeToSlot(LocalTime.of(23, 30)));
+        assertEquals(0, AppTimeReference.localTimeToSlot(LocalTime.of(6, 0)));
+    }
+
+    @Test
+    void occupancySlots_roundsAcrossTheDailyBoundary() {
+        assertEquals(2, AppTimeReference.occupancySlots(LocalTime.of(23, 59), 2));
+        assertEquals(2, AppTimeReference.occupancySlots(LocalTime.of(23, 59), 30));
+    }
 }

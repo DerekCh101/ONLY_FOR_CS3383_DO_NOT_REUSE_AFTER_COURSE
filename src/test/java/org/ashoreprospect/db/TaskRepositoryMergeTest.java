@@ -89,6 +89,19 @@ class TaskRepositoryMergeTest {
     }
 
     @Test
+    void remoteNewerPlacement_winsEvenIfTaskTimestampIsOlder() {
+        Task local = placed("local", LocalTime.of(9, 0), OLDER);
+        Task remote = placed("remote", LocalTime.of(10, 0), NEWER);
+        local.setLastUpdatedAt(Instant.parse("2026-10-15T16:00:00Z"));
+        remote.setLastUpdatedAt(Instant.parse("2026-10-10T16:00:00Z"));
+
+        Task merged = TaskRepository.mergeTasks(local, remote, true);
+
+        assertEquals(LocalTime.of(10, 0), merged.getPlacedTime());
+        assertEquals(NEWER, merged.getPlacementUpdatedAt());
+    }
+
+    @Test
     void equalBlockedTimestamp_clientTakesRemote() {
         BlockedTime local = blocked("local", TIE);
         BlockedTime remote = blocked("remote", TIE);

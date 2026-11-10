@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.ashoreprospect.crypto.Vault;
 
@@ -148,7 +149,7 @@ public class NodeApi {
 
     public Map<String, String> postTypewriterImage(String sha, String name, String base64,
                                                    String kind, String mime) throws Exception {
-        String ext = name == null ? "" : name.toLowerCase();
+        String ext = name == null ? "" : name.toLowerCase(Locale.ROOT);
         String resolvedMime = mime;
         if (resolvedMime == null || resolvedMime.isBlank()) {
             if (ext.endsWith(".jpg") || ext.endsWith(".jpeg")) resolvedMime = "image/jpeg";
@@ -366,7 +367,7 @@ public class NodeApi {
 
     static String friendlyError(String path, int code, String msg) {
         String m = msg == null ? "" : msg.trim();
-        String low = m.toLowerCase();
+        String low = m.toLowerCase(Locale.ROOT);
         boolean pw = path != null && path.contains("password");
         if (pw && (code == 404 || low.contains("not found") || low.contains("no route"))) {
             return "Change password is not on this Node yet. Restart Node on the host PC "

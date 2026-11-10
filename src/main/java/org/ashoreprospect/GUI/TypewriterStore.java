@@ -22,6 +22,7 @@ import java.util.Base64;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -708,14 +709,14 @@ public final class TypewriterStore {
                 System.out.println("Typewriter image already on Node: " + sha);
                 return sha;
             }
-            String mime = name != null && name.toLowerCase().endsWith(".jpg") ? "image/jpeg"
-                    : name != null && name.toLowerCase().endsWith(".gif") ? "image/gif"
-                    : name != null && name.toLowerCase().endsWith(".webp") ? "image/webp"
+            String mime = name != null && name.toLowerCase(Locale.ROOT).endsWith(".jpg") ? "image/jpeg"
+                    : name != null && name.toLowerCase(Locale.ROOT).endsWith(".gif") ? "image/gif"
+                    : name != null && name.toLowerCase(Locale.ROOT).endsWith(".webp") ? "image/webp"
                     : "image/png";
             Map<String, String> posted = Api.INSTANCE.postTypewriterImage(sha, name,
                     Base64.getEncoder().encodeToString(bytes), kind, mime);
             String got = first(posted, "sha256", "sha", "id");
-            String stored = got != null && !got.isBlank() ? got.toLowerCase() : sha;
+            String stored = got != null && !got.isBlank() ? got.toLowerCase(Locale.ROOT) : sha;
             if (!stored.equalsIgnoreCase(sha)) {
                 File dest = cacheFile(stored, name);
                 if (!dest.isFile()) Files.write(dest.toPath(), bytes);
@@ -725,7 +726,7 @@ public final class TypewriterStore {
         } catch (Exception e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
             System.out.println("Typewriter image push failed: " + msg);
-            if (msg.toLowerCase().contains("too many") || msg.contains("Wait a minute")) return null;
+            if (msg.toLowerCase(Locale.ROOT).contains("too many") || msg.contains("Wait a minute")) return null;
             return sha;
         }
     }
@@ -739,7 +740,7 @@ public final class TypewriterStore {
     }
 
     private static String cacheExt(String name) {
-        String n = name == null ? "" : name.toLowerCase();
+        String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
         int slash = Math.max(n.lastIndexOf('/'), n.lastIndexOf('\\'));
         if (slash >= 0) n = n.substring(slash + 1);
         if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return ".jpg";

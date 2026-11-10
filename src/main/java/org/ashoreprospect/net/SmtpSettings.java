@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -91,7 +92,7 @@ public final class SmtpSettings {
                 if (s.isEmpty() || s.startsWith("#")) continue;
                 int i = s.indexOf('=');
                 if (i < 1) continue;
-                out.put(s.substring(0, i).trim().toLowerCase(), s.substring(i + 1).trim());
+                out.put(s.substring(0, i).trim().toLowerCase(Locale.ROOT), s.substring(i + 1).trim());
             }
         } catch (IOException ignored) {
         }

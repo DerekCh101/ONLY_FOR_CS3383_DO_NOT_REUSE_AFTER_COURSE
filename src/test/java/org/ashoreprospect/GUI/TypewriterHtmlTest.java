@@ -1,6 +1,8 @@
 /** Typewriter HTML: unwrap editor shells, keep inner markup, drop dangerous tags. */
 package org.ashoreprospect.GUI;
 
+import java.util.Locale;
+
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,6 +29,12 @@ class TypewriterHtmlTest {
         assertFalse(TypewriterHtml.looksLikeEditorDump("just a diary line"));
         assertFalse(TypewriterHtml.looksLikeEditorDump(""));
         assertFalse(TypewriterHtml.looksLikeEditorDump(null));
+    }
+
+    @Test
+    void looksLikeEditorDump_handlesMixedCaseAndWhitespace() {
+        assertTrue(TypewriterHtml.looksLikeEditorDump("<DIV contenteditable = \"true\">hello</DIV>"));
+        assertTrue(TypewriterHtml.looksLikeEditorDump("<Html><Body>hello</Body></Html>"));
     }
 
     // ---------- unwrapInner / storedText ----------
@@ -65,14 +73,23 @@ class TypewriterHtmlTest {
     @Test
     void storedText_removesInlineEventHandlers() {
         String stored = TypewriterHtml.storedText("<p onclick=\"evil()\">text</p>");
-        assertFalse(stored.toLowerCase().contains("onclick"));
+        assertFalse(stored.toLowerCase(Locale.ROOT).contains("onclick"));
         assertTrue(stored.contains("text"));
     }
 
     @Test
     void storedText_removesJavascriptUrls() {
         String stored = TypewriterHtml.storedText("<a href=\"javascript:evil()\">link</a>");
-        assertFalse(stored.toLowerCase().contains("javascript:"));
+        assertFalse(stored.toLowerCase(Locale.ROOT).contains("javascript:"));
+    }
+
+    @Test
+    void storedText_removesMixedCaseDangerousTagsAndInlineScripts() {
+        String stored = TypewriterHtml.storedText(
+                "<SCRIPT>alert(1)</SCRIPT><svg onload=evil()><p>ok</p></svg>");
+        assertFalse(stored.toLowerCase(Locale.ROOT).contains("<script"));
+        assertFalse(stored.toLowerCase(Locale.ROOT).contains("onload"));
+        assertTrue(stored.contains("ok"));
     }
 
     @Test
@@ -101,6 +118,12 @@ class TypewriterHtmlTest {
     void plainText_blankIsEmpty() {
         assertEquals("", TypewriterHtml.plainText(""));
         assertEquals("", TypewriterHtml.plainText(null));
+    }
+
+    @Test
+    void plainText_handlesListsAndWhitespace() {
+        assertEquals("one\ntwo", TypewriterHtml.plainText("<ul><li>one</li><li>two</li></ul>"));
+        assertEquals("x   y", TypewriterHtml.plainText("<p>x &nbsp; y</p>"));
     }
 
     // ---------- looksLikeMarkup ----------

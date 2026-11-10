@@ -1521,7 +1521,7 @@ public class TypewriterPane extends BorderPane {
         if (files == null || files.isEmpty()) return;
         for (File file : files) {
             if (file == null) continue;
-            String name = file.getName() == null ? "" : file.getName().toLowerCase();
+            String name = file.getName() == null ? "" : file.getName().toLowerCase(Locale.ROOT);
             if (!(name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")
                     || name.endsWith(".gif") || name.endsWith(".webp"))) {
                 continue;

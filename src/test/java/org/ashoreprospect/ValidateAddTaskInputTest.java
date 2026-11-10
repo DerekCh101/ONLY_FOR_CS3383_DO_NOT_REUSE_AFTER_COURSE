@@ -125,6 +125,19 @@ class ValidateAddTaskInputTest {
         assertTrue(valid(1, "a", 1, TODAY, NOW.plusMinutes(1), null, null));
     }
 
+    @Test
+    void deadlineExactlyNowRejected_becauseItMustBeAfterNow() {
+        assertFalse(valid(2, "a", 1, null, null, TODAY, NOW));
+        assertTrue(valid(2, "a", 1, null, null, TODAY, NOW.plusMinutes(1)));
+    }
+
+    @Test
+    void boundaryDurationLimits_areAppliedAsExpected() {
+        assertTrue(valid(3, "a", 24, null, null, null, null));
+        assertTrue(valid(3, "a", 24.1, null, null, null, null));
+        assertFalse(valid(3, "a", 0, null, null, null, null));
+    }
+
     private static boolean valid(int state, String name, double duration,
                                  LocalDate startDate, LocalTime startTime,
                                  LocalDate deadlineDate, LocalTime deadlineTime) {
