@@ -1,0 +1,99 @@
+@startuml Java Infrastructure Classes
+!include vp-style.puml
+left to right direction
+caption Persistence, Networking, and Security Classes
+
+class TaskRepository {
+  - sqlite : SqliteTaskRepository
+  - postgres : PostgresTaskRepository
+  + dbfetchAll()
+  + dbAddTask(task)
+  + dbUpdateWorkflow(task)
+}
+class SqliteTaskRepository {
+  + upsert(task)
+  + fetchAll()
+}
+class PostgresTaskRepository {
+  + upsert(task)
+  + fetchAll()
+}
+class SqliteTypewriterRepository {
+  + initialize()
+  + lastUpdated(uid)
+  + fetchAll(uid)
+  + replaceAll(uid, diary, lists, pagesRoot)
+  + wipeUser(uid)
+  + wipeAll()
+}
+class PostgresTypewriterRepository {
+  + initialize()
+  + lastUpdated(uid)
+  + fetchAll(uid)
+  + wipeUser(uid)
+}
+class DeviceConfig
+class TypewriterStore
+class Api {
+  {static} INSTANCE : NodeApi
+}
+class NodeApi {
+  - token : String
+  - userId : String
+  - username : String
+  + authenticate()
+  + registerAccount()
+  + restoreSession()
+  + applySession()
+  + postTask(jsonBody)
+  + postBlocked(jsonBody)
+  + postTypewriter(content, lastUpdatedAt)
+}
+class LoginView {
+  + show()
+}
+class NetworkWatch {
+  + start()
+  + addListener(listener)
+}
+class LocalSession {
+  + load()
+  + save()
+  + clear()
+  + wantRemember()
+}
+class Endpoints
+class OsEnv
+class PasswordRules {
+  + reject(password)
+}
+class SmtpSettings
+class Vault {
+  + unlockWithPassword()
+  + unlockRemembered()
+  + eraseLocalKeys()
+}
+class Task
+class BlockedTime
+class TypewriterPane
+
+TaskRepository *-- SqliteTaskRepository
+TaskRepository *-- PostgresTaskRepository
+TaskRepository --> Task
+TaskRepository --> BlockedTime
+TaskRepository --> Api
+TypewriterStore *-- SqliteTypewriterRepository
+TypewriterStore *-- PostgresTypewriterRepository
+DeviceConfig ..> TaskRepository
+Api *-- NodeApi
+NodeApi --> LocalSession
+LoginView --> Api
+LoginView --> Vault
+NetworkWatch ..> Api
+NodeApi --> Endpoints
+NodeApi --> OsEnv
+NodeApi --> PasswordRules
+NodeApi --> SmtpSettings
+NodeApi --> Vault
+
+@enduml

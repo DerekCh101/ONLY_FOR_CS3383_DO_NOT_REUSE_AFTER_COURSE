@@ -1,0 +1,98 @@
+@startuml Sequence Account Lifecycle
+!include vp-style.puml
+title Manage account settings, sessions, and logout
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant AccountPane
+participant Api
+participant NodeApi
+participant LocalSession
+participant TypewriterPane
+participant TaskRepository
+participant TypewriterStore
+participant SchedulerApp
+participant Vault
+
+User -> SchedulerController : open Account
+activate SchedulerController
+SchedulerController -> AccountPane : show account page
+activate AccountPane
+AccountPane -> Api : getUsername()
+activate Api
+Api --> AccountPane : current profile
+deactivate Api
+AccountPane -> Api : getMe()
+
+alt update profile or password
+  User -> AccountPane : save username, email, or password
+  AccountPane -> Api : saveUsername / saveEmail / changePassword
+  activate Api
+  Api -> NodeApi : authenticated POST request
+  activate NodeApi
+  NodeApi --> Api : result
+  deactivate NodeApi
+  deactivate Api
+  opt username changed and Remember is enabled
+    Api -> LocalSession : save updated remembered session
+    activate LocalSession
+    deactivate LocalSession
+  end
+else inspect or revoke sessions
+  User -> AccountPane : open Sessions
+  AccountPane -> Api : getSessions()
+  activate Api
+  Api -> NodeApi : GET /sessions
+  activate NodeApi
+  NodeApi --> Api : session list
+  deactivate NodeApi
+  deactivate Api
+  User -> AccountPane : revoke session
+  AccountPane -> Api : revokeSession(id)
+  activate Api
+  Api -> NodeApi : DELETE /sessions/{id}
+  activate NodeApi
+  deactivate NodeApi
+  deactivate Api
+end
+
+alt delete account
+  User -> AccountPane : confirm account deletion
+  AccountPane -> Api : deleteAccount(password)
+  activate Api
+  Api -> NodeApi : POST /me/delete
+  activate NodeApi
+  NodeApi --> Api : deleted
+  deactivate NodeApi
+  deactivate Api
+  AccountPane -> SchedulerController : onAccountDeleted()
+  SchedulerController -> SchedulerApp : wipe local state
+  activate SchedulerApp
+  SchedulerApp -> TaskRepository : clear cached tasks
+  activate TaskRepository
+  deactivate TaskRepository
+  TaskRepository -> TypewriterStore : wipeCurrentUser()
+  activate TypewriterStore
+  deactivate TypewriterStore
+  deactivate SchedulerApp
+  SchedulerController -> SchedulerController : logout()
+else sign out
+  User -> AccountPane : click Logout
+  AccountPane -> SchedulerController : onLogout()
+  SchedulerController -> TypewriterPane : saveAll()
+  activate TypewriterPane
+  TypewriterPane -> TypewriterStore : save current notes
+  activate TypewriterStore
+  deactivate TypewriterStore
+  deactivate TypewriterPane
+  SchedulerController -> Api : logout()
+  activate Api
+  deactivate Api
+  SchedulerController -> SchedulerApp : return to login view
+  SchedulerApp -> TaskManagementSystem : resetInstance()
+  SchedulerApp -> Vault : lock()
+end
+deactivate AccountPane
+deactivate SchedulerController
+@enduml

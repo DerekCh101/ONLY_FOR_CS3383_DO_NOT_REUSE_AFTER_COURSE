@@ -4,6 +4,7 @@ import java.util.zip.ZipFile
 
 plugins {
     id("application")
+    id("jacoco")
     id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
@@ -34,6 +35,15 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
 }
 
 application {

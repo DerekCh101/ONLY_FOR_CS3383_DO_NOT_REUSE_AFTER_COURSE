@@ -1,0 +1,42 @@
+@startuml Sequence Network and Repository Sync
+!include vp-style.puml
+title Persist a task locally and synchronize with the server
+autonumber
+autoactivate off
+actor User
+participant AddTask
+participant TaskRepository
+participant SqliteTaskRepository
+participant PostgresTaskRepository
+participant Api
+participant NodeApi
+
+User -> AddTask : execute()
+activate AddTask
+AddTask -> TaskRepository : dbAddTask(task)
+activate TaskRepository
+TaskRepository -> TaskRepository : ensureTimestamps(task)
+TaskRepository -> SqliteTaskRepository : upsert(task)
+activate SqliteTaskRepository
+SqliteTaskRepository --> TaskRepository : local write complete
+deactivate SqliteTaskRepository
+opt PostgreSQL configured
+  TaskRepository -> PostgresTaskRepository : upsert(task)
+  activate PostgresTaskRepository
+  PostgresTaskRepository --> TaskRepository : database write complete
+  deactivate PostgresTaskRepository
+end
+opt authenticated session
+  TaskRepository -> Api : postTask(json)
+  activate Api
+  Api -> NodeApi : request("POST", "/tasks", json)
+  activate NodeApi
+  NodeApi --> Api : server response
+  deactivate NodeApi
+  Api --> TaskRepository : synchronized
+  deactivate Api
+end
+TaskRepository --> AddTask : persistence result
+deactivate TaskRepository
+deactivate AddTask
+@enduml

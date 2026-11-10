@@ -57,10 +57,14 @@ public class Day {
         if (slotIndex + slotCount > todayTaskGrid.length) {
             slotCount = todayTaskGrid.length - slotIndex;
         }
+        int newlyOccupied = 0;
         for (int i = 0; i < slotCount; i++) {
+            if (todayTaskGrid[slotIndex + i] != task) {
+                newlyOccupied++;
+            }
             todayTaskGrid[slotIndex + i] = task;
         }
-        availableSlots -= slotCount;
+        availableSlots -= newlyOccupied;
         if (availableSlots <= AppTimeReference.SLOTS_PER_HOUR) {
             overloadFlag = true;
         }

@@ -1,0 +1,68 @@
+@startuml Sequence Unscheduled Recovery
+!include vp-style.puml
+title Recover an unscheduled task or delete it
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskDialogs
+participant TaskRepository
+participant EditTask
+participant TaskManagementSystem
+participant SchedulerEngine
+participant ClearTask
+participant RecordedCommand
+
+User -> SchedulerController : open Unscheduled tasks
+activate SchedulerController
+SchedulerController -> TaskDialogs : showUnscheduledPopup()
+activate TaskDialogs
+TaskDialogs -> TaskRepository : fetchUnscheduledTasks()
+activate TaskRepository
+TaskRepository --> TaskDialogs : eligible tasks
+deactivate TaskRepository
+User -> TaskDialogs : select task
+TaskDialogs -> TaskDialogs : showUnscheduledTaskActions(task)
+alt resize or update deadline
+  User -> TaskDialogs : submit new duration/deadline
+  TaskDialogs -> EditTask : Snapshot.of(task)
+  activate EditTask
+  TaskDialogs -> EditTask : execute()
+  EditTask -> TaskRepository : dbAddTask(task)
+  activate TaskRepository
+  deactivate TaskRepository
+  deactivate EditTask
+  TaskDialogs -> TaskManagementSystem : updateSchedule()
+  activate TaskManagementSystem
+  TaskManagementSystem -> SchedulerEngine : scheduleTasks(tasks)
+  activate SchedulerEngine
+  alt task can be placed
+    SchedulerEngine --> TaskManagementSystem : placed task
+    TaskDialogs -> SchedulerController : onChanged()
+  else task remains unscheduled
+    SchedulerEngine --> TaskManagementSystem : unscheduled task
+    TaskDialogs -> User : show retry result
+  end
+  deactivate SchedulerEngine
+  deactivate TaskManagementSystem
+else delete completely
+  User -> TaskDialogs : confirm delete
+  create participant ClearTask
+  TaskDialogs -> ClearTask : new(task)
+  activate ClearTask
+  TaskDialogs -> ClearTask : execute()
+  ClearTask -> TaskManagementSystem : remove task from lists and grid
+  activate TaskManagementSystem
+  deactivate TaskManagementSystem
+  ClearTask -> TaskRepository : dbClearTask(task)
+  activate TaskRepository
+  deactivate TaskRepository
+  ClearTask -> RecordedCommand : getUndoList().add(this)
+  activate RecordedCommand
+  deactivate RecordedCommand
+  deactivate ClearTask
+  TaskDialogs -> SchedulerController : onChanged()
+end
+deactivate TaskDialogs
+deactivate SchedulerController
+@enduml

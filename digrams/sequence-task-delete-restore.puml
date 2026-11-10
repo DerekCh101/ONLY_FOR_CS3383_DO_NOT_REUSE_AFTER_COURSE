@@ -1,0 +1,95 @@
+@startuml Sequence Task Delete and Restore
+!include vp-style.puml
+title Delete a task, then undo the deletion
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskManagementSystem
+participant TaskRepository
+participant SqliteTaskRepository
+participant PostgresTaskRepository
+participant NodeApi
+participant RecordedCommand
+participant SystemCommands
+participant Undo
+
+User -> SchedulerController : choose Delete task
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : command("clearTask")
+activate TaskManagementSystem
+TaskManagementSystem -> SystemCommands : run("clearTask", system)
+create participant ClearTask
+TaskManagementSystem -> ClearTask : new(task)
+activate ClearTask
+TaskManagementSystem -> ClearTask : execute()
+ClearTask -> TaskManagementSystem : find affiliated quick tasks
+activate TaskManagementSystem
+TaskManagementSystem --> ClearTask : quick task list
+deactivate TaskManagementSystem
+loop each affiliated task
+  ClearTask -> TaskManagementSystem : remove from task lists and grid
+  activate TaskManagementSystem
+  deactivate TaskManagementSystem
+  ClearTask -> TaskRepository : dbClearTask(quick)
+  activate TaskRepository
+  deactivate TaskRepository
+end
+ClearTask -> TaskManagementSystem : remove task from lists and grid
+activate TaskManagementSystem
+deactivate TaskManagementSystem
+ClearTask -> TaskRepository : dbClearTask(task)
+activate TaskRepository
+TaskRepository -> SqliteTaskRepository : deleteTaskAndLog(task)
+activate SqliteTaskRepository
+SqliteTaskRepository --> TaskRepository : tombstone written
+deactivate SqliteTaskRepository
+opt PostgreSQL available
+  TaskRepository -> PostgresTaskRepository : deleteTaskAndLog(task)
+  activate PostgresTaskRepository
+  deactivate PostgresTaskRepository
+end
+TaskRepository -> NodeApi : DELETE /tasks/{id}
+activate NodeApi
+deactivate NodeApi
+deactivate TaskRepository
+ClearTask -> RecordedCommand : getUndoList().add(this)
+activate RecordedCommand
+deactivate RecordedCommand
+deactivate ClearTask
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate TaskManagementSystem
+deactivate SchedulerController
+
+User -> SchedulerController : click Undo
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : command("undo")
+TaskManagementSystem -> SystemCommands : run("undo", system)
+SystemCommands -> Undo : new(system)
+Undo -> RecordedCommand : getUndoList().getLast().undo()
+activate RecordedCommand
+RecordedCommand -> ClearTask : undo()
+activate ClearTask
+ClearTask -> TaskManagementSystem : restore placement or pending state
+activate TaskManagementSystem
+deactivate TaskManagementSystem
+ClearTask -> TaskRepository : dbRestoreTask(task)
+activate TaskRepository
+TaskRepository -> SqliteTaskRepository : restore task and clear tombstone
+activate SqliteTaskRepository
+deactivate SqliteTaskRepository
+opt PostgreSQL available
+  TaskRepository -> PostgresTaskRepository : unrecordDelete and upsert
+  activate PostgresTaskRepository
+  deactivate PostgresTaskRepository
+end
+TaskRepository -> NodeApi : POST restored task
+activate NodeApi
+deactivate NodeApi
+deactivate TaskRepository
+deactivate ClearTask
+ClearTask -> RecordedCommand : move command to redoList
+deactivate RecordedCommand
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate SchedulerController
+@enduml

@@ -1,0 +1,68 @@
+@startuml Sequence Node Poll and Merge
+!include vp-style.puml
+title Poll Node and apply newer remote data
+autonumber
+autoactivate off
+participant TaskManagementSystem
+participant Api
+participant TaskRepository
+participant NodeApi
+participant SqliteTaskRepository
+participant SqliteTypewriterRepository
+participant TypewriterStore
+participant SchedulerController
+participant Task
+
+loop every 30 seconds while application is running
+  TaskManagementSystem -> Api : INSTANCE.getToken()
+  activate Api
+  deactivate Api
+  alt authenticated
+    TaskManagementSystem -> TaskRepository : pullFromNode()
+    activate TaskRepository
+    TaskRepository -> Api : getTasks()
+    TaskRepository -> Api : getBlocked()
+    TaskRepository -> SqliteTaskRepository : merge newer rows
+    activate SqliteTaskRepository
+    SqliteTaskRepository --> TaskRepository : calendar changed?
+    deactivate SqliteTaskRepository
+    deactivate TaskRepository
+    TaskManagementSystem -> TypewriterStore : pullIfRemoteNewer()
+    activate TypewriterStore
+    TypewriterStore -> Api : getTypewriter()
+    activate Api
+    Api -> NodeApi : GET /typewriter
+    activate NodeApi
+    NodeApi --> Api : content and last_updated_at
+    deactivate NodeApi
+    deactivate Api
+    alt Typewriter remote timestamp is newer
+      TypewriterStore -> TypewriterStore : parse and validate bundle
+      TypewriterStore -> SqliteTypewriterRepository : replaceAll(...)
+      activate SqliteTaskRepository
+      deactivate SqliteTaskRepository
+      TypewriterStore --> TaskManagementSystem : Typewriter data
+    else no newer Typewriter data
+      TypewriterStore --> TaskManagementSystem : null
+    end
+    deactivate TypewriterStore
+    alt calendar or Typewriter changed
+      TaskManagementSystem -> SchedulerController : Platform.runLater(update)
+      activate SchedulerController
+      opt calendar changed
+        TaskManagementSystem -> TaskRepository : reloadFromSqlite(system)
+        activate TaskRepository
+        TaskRepository --> TaskManagementSystem : rebuilt task lists and grid
+        deactivate TaskRepository
+        TaskManagementSystem -> SchedulerController : refreshGUI()
+      end
+      opt Typewriter changed
+        TaskManagementSystem -> SchedulerController : applyTypewriterFromNode(data)
+      end
+      deactivate SchedulerController
+    end
+  else unauthenticated
+    TaskManagementSystem -> TaskManagementSystem : skip poll
+  end
+end
+@enduml

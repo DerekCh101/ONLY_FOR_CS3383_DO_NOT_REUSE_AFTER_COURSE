@@ -1,0 +1,71 @@
+@startuml Sequence Startup and Login
+!include vp-style.puml
+title Scheduler startup, remembered session, and login
+autonumber
+autoactivate off
+actor User
+participant SchedulerApp
+participant NetworkWatch
+participant Api
+participant LocalSession
+participant LoginView
+participant NodeApi
+participant Vault
+participant TaskManagementSystem
+participant TaskRepository
+participant SchedulerController
+participant FXMLLoader
+
+User -> SchedulerApp : launch()
+activate SchedulerApp
+SchedulerApp -> NetworkWatch : start()
+activate NetworkWatch
+deactivate NetworkWatch
+SchedulerApp -> Api : INSTANCE.restoreSession()
+activate Api
+Api -> LocalSession : load()
+activate LocalSession
+deactivate LocalSession
+deactivate Api
+alt remembered session is valid
+  SchedulerApp -> Vault : unlockRemembered()
+  activate Vault
+  deactivate Vault
+  SchedulerApp -> TaskManagementSystem : getInstance()
+  activate TaskManagementSystem
+  TaskManagementSystem -> TaskRepository : dbfetchAll()
+  activate TaskRepository
+  TaskRepository --> TaskManagementSystem : tasks and blocked time
+  deactivate TaskRepository
+  SchedulerApp -> FXMLLoader : load("/UIScheduler.fxml")
+  activate FXMLLoader
+  FXMLLoader -> SchedulerController : initialize()
+  activate SchedulerController
+  SchedulerController -> TaskManagementSystem : attachGUI()
+  SchedulerController -> TaskManagementSystem : refreshGUI()
+  deactivate SchedulerController
+  deactivate FXMLLoader
+  deactivate TaskManagementSystem
+else no valid session
+  SchedulerApp -> LoginView : show()
+  activate LoginView
+  User -> LoginView : enter credentials
+  LoginView -> Api : INSTANCE.authenticate(user, password)
+  activate Api
+  Api -> NodeApi : postAuth("/login", credentials)
+  activate NodeApi
+  NodeApi --> Api : AuthResult
+  deactivate NodeApi
+  Api --> LoginView : session
+  deactivate Api
+  LoginView -> Vault : unlockWithPassword()
+  activate Vault
+  deactivate Vault
+  LoginView -> Api : applySession(session, remember)
+  activate Api
+  deactivate Api
+  LoginView -> SchedulerApp : showMain()
+  deactivate LoginView
+end
+deactivate SchedulerApp
+@enduml

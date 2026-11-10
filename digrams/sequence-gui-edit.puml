@@ -1,0 +1,59 @@
+@startuml Sequence GUI Edit and Finish
+!include vp-style.puml
+title Edit, finish, and persist a selected task
+autonumber
+autoactivate off
+actor User
+participant SchedulerController
+participant TaskDialogs
+participant Task
+participant EditTask
+participant FinishTask
+participant TaskManagementSystem
+participant TaskRepository
+
+User -> SchedulerController : select task
+activate SchedulerController
+SchedulerController -> TaskManagementSystem : mainTask(task)
+activate TaskManagementSystem
+TaskManagementSystem --> SchedulerController : selected task and quicks
+deactivate TaskManagementSystem
+User -> TaskDialogs : edit description
+activate TaskDialogs
+TaskDialogs -> SchedulerController : save form
+deactivate TaskDialogs
+TaskDialogs -> EditTask : new(task, Snapshot, reschedule)
+activate EditTask
+TaskDialogs -> EditTask : execute()
+EditTask -> Task : setTaskName/setDuration/setDeadline/setDescription
+activate Task
+deactivate Task
+EditTask -> TaskRepository : dbAddTask(task)
+activate TaskRepository
+deactivate TaskRepository
+EditTask -> SchedulerController : refresh()
+deactivate EditTask
+deactivate SchedulerController
+
+User -> SchedulerController : toggle finish
+activate SchedulerController
+SchedulerController -> FinishTask : new FinishTask(task)
+activate FinishTask
+SchedulerController -> FinishTask : execute()
+FinishTask -> Task : setWorkflow(FINISHED)
+activate Task
+deactivate Task
+FinishTask -> TaskRepository : dbUpdateWorkflow(task)
+activate TaskRepository
+deactivate TaskRepository
+FinishTask -> TaskManagementSystem : quicksOf(task)
+activate TaskManagementSystem
+TaskManagementSystem --> FinishTask : affiliated quick tasks
+deactivate TaskManagementSystem
+FinishTask -> TaskRepository : dbUpdateWorkflow(quick tasks)
+activate TaskRepository
+deactivate TaskRepository
+SchedulerController -> TaskManagementSystem : refreshGUI()
+deactivate FinishTask
+deactivate SchedulerController
+@enduml

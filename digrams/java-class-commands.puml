@@ -1,0 +1,125 @@
+@startuml Java Command Classes
+!include vp-style.puml
+left to right direction
+caption Command, CLI, and Undo/Redo Classes
+
+interface Command {
+  + execute() : boolean
+  + undo()
+  + redo()
+}
+class RecordedCommand {
+  + execute()
+  + undo()
+  + redo()
+}
+class AddTask {
+  + execute()
+  + undo()
+}
+class AddTaskWithFile {
+  + execute()
+  + undo()
+}
+class ClearAllTask {
+  + execute()
+  + undo()
+}
+class ClearPastTasks {
+  + execute()
+  + undo()
+}
+class ClearTask {
+  + execute()
+  + undo()
+}
+class EditTask {
+  + execute()
+  + undo()
+}
+class FinishTask {
+  + execute()
+  + undo()
+}
+class MoveTask {
+  + execute()
+  + undo()
+}
+class PrintAllTask {
+  + execute()
+}
+class RunSchedulerCommand {
+  + execute()
+  + undo()
+}
+class UnfinishTask {
+  + execute()
+  + undo()
+}
+class Undo {
+  + execute()
+}
+class Redo {
+  + execute()
+}
+class SystemCommands {
+  + run(name, system)
+  + exec(command)
+}
+class TaskLookup {
+  + placed(system, idOrName)
+  + anywhere(system, idOrName)
+}
+class InAppCli {
+  + run(system, raw) : Result
+}
+class CLIRunner {
+  + command(raw)
+}
+class TaskManagementSystem
+class Task
+
+Command <|.. AddTask
+Command <|.. AddTaskWithFile
+Command <|.. ClearAllTask
+Command <|.. ClearPastTasks
+Command <|.. ClearTask
+Command <|.. EditTask
+Command <|.. FinishTask
+Command <|.. MoveTask
+Command <|.. PrintAllTask
+Command <|.. RunSchedulerCommand
+Command <|.. UnfinishTask
+RecordedCommand <|-- Undo
+RecordedCommand <|-- Redo
+RecordedCommand ..> Command : static undoList / redoList
+SystemCommands ..> Command : creates and executes
+SystemCommands ..> TaskManagementSystem
+InAppCli ..> SystemCommands
+CLIRunner ..> SystemCommands
+TaskLookup ..> Task
+AddTask ..> TaskManagementSystem
+AddTaskWithFile ..> TaskManagementSystem
+ClearAllTask ..> TaskManagementSystem
+ClearPastTasks ..> TaskManagementSystem
+ClearTask ..> TaskManagementSystem
+EditTask ..> TaskManagementSystem
+FinishTask ..> TaskManagementSystem
+MoveTask ..> TaskManagementSystem
+RunSchedulerCommand ..> TaskManagementSystem
+UnfinishTask ..> TaskManagementSystem
+AddTask ..> Task
+EditTask ..> Task
+FinishTask ..> Task
+MoveTask ..> Task
+UnfinishTask ..> Task
+AddTask --> TaskRepository
+AddTask --> SchedulerEngine
+AddTask --> RefreshLifeCycle
+MoveTask --> TaskRepository
+ClearTask --> TaskRepository
+EditTask --> TaskRepository
+FinishTask --> TaskRepository
+UnfinishTask --> TaskRepository
+
+@enduml

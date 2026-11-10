@@ -1,0 +1,119 @@
+@startuml Java GUI Classes
+!include vp-style.puml
+left to right direction
+caption JavaFX GUI and Theme Classes
+
+class SchedulerController {
+  - system : TaskManagementSystem
+  - selectedTask : Task
+  - weekGridBuilder : WeekGridBuilder
+  - monthGridBuilder : MonthGridBuilder
+  - dayGridBuilder : DayGridBuilder
+  + initialize()
+  + refresh()
+  + showTaskDescription(task)
+  + toggleTaskFinish()
+  + runUndo()
+  + runRedo()
+}
+class WeekGridBuilder {
+  + build(grid, sidePanel, weekOffset)
+  + setOnSelectTask(handler)
+}
+class MonthGridBuilder {
+  + build(grid, sidePanel, monthOffset)
+  + setOnSelectTask(handler)
+}
+class DayGridBuilder {
+  + build(grid, sidePanel, dayOffset)
+  + setOnSelectTask(handler)
+}
+class TaskDialogs {
+  + showTaskPopup(fromGridClick, clickedDate, slotIndex)
+  + showBlockedEditor()
+  + showUnscheduledPopup()
+  + showTaskInfoPopup(task, date, slotIndex)
+}
+class TaskDragDropSupport {
+  + canDropOn(target, task)
+}
+class TaskReminders {
+  + start()
+  + stop()
+}
+class TypewriterPane {
+  + refresh()
+  + saveNote()
+}
+class TypewriterStore {
+  + load()
+  + save(diary, lists, pagesRoot)
+  + syncRemoteInBackground(callback)
+}
+class AccountPane
+class ServerPickView
+class WindowFrame
+class ThemeSwitch
+class AppTheme {
+  - current : ThemePack
+  - packs : Map<String, ThemePack>
+  + currentPack() : ThemePack
+  + register(pack)
+  + setPack(id)
+  + toggle()
+  + apply(scene)
+}
+class GuiHelper
+class ImageMetaStrip
+class SecurityChallenge
+class TypewriterHtml
+class TaskManagementSystem
+class Task
+class Api
+
+interface ThemePack {
+  + id()
+  + displayName()
+  + kind()
+  + palette()
+}
+class ColorThemePack
+class BuiltinThemes
+class Contrast
+class ThemePalette
+enum ThemeKind
+
+SchedulerController --> TaskManagementSystem
+SchedulerController --> Task
+SchedulerController *-- WeekGridBuilder
+SchedulerController *-- MonthGridBuilder
+SchedulerController *-- DayGridBuilder
+SchedulerController *-- TaskDialogs
+SchedulerController *-- TaskDragDropSupport
+SchedulerController *-- TypewriterPane
+WeekGridBuilder --> TaskManagementSystem
+MonthGridBuilder --> TaskManagementSystem
+DayGridBuilder --> TaskManagementSystem
+TaskDialogs --> TaskManagementSystem
+TaskDialogs --> Api
+TaskDialogs --> AddTask
+TaskDialogs --> EditTask
+TaskDialogs --> ClearTask
+TaskDragDropSupport --> TaskManagementSystem
+TaskDragDropSupport ..> Task
+TaskDragDropSupport --> MoveTask
+TypewriterPane --> TypewriterStore
+TypewriterPane --> ImageMetaStrip
+AccountPane ..> Api
+ServerPickView ..> Endpoints
+ThemePack <|.. ColorThemePack
+ColorThemePack *-- ThemePalette
+BuiltinThemes ..> ThemePack
+AppTheme o-- ThemePack
+AppTheme --> ThemeKind
+ThemeSwitch --> AppTheme
+SchedulerController --> AccountPane
+SchedulerController --> FinishTask
+SchedulerController --> UnfinishTask
+
+@enduml
