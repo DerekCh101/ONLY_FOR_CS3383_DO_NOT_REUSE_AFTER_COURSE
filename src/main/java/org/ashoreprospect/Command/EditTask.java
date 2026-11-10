@@ -29,7 +29,9 @@ public class EditTask implements Command {
 
     @Override
     public boolean execute() throws SQLException {
-        apply(after);
+        apply(after, false);
+        after.placedDate = task.getPlacedDate();
+        after.placedTime = task.getPlacedTime();
         RecordedCommand.getRedoList().clear();
         RecordedCommand.getUndoList().add(this);
         return true;
@@ -37,19 +39,19 @@ public class EditTask implements Command {
 
     @Override
     public void undo() throws SQLException {
-        apply(before);
+        apply(before, true);
         RecordedCommand.getRedoList().add(this);
         RecordedCommand.getUndoList().remove(this);
     }
 
     @Override
     public void redo() throws SQLException {
-        apply(after);
+        apply(after, true);
         RecordedCommand.getRedoList().remove(this);
         RecordedCommand.getUndoList().add(this);
     }
 
-    private void apply(Snapshot s) throws SQLException {
+    private void apply(Snapshot s, boolean restorePlacement) throws SQLException {
         TaskManagementSystem sys = TaskManagementSystem.getInstance();
         LocalDate placedDate = task.getPlacedDate();
         LocalTime placedTime = task.getPlacedTime();
@@ -61,13 +63,59 @@ public class EditTask implements Command {
         task.setDescription(s.description);
         task.setDescriptionDone(s.descriptionDone);
         task.touchLastUpdated();
-        if (placedDate != null && placedTime != null && oldSlots != task.getDurationSlots()) {
+        if (restorePlacement) {
+            restorePlacement(sys, s.placedDate, s.placedTime);
+        } else if (placedDate != null && placedTime != null && oldSlots != task.getDurationSlots()) {
             relayoutPlaced(sys, placedDate, placedTime, oldSlots);
         } else if (reschedule && task.canGoUnscheduled()) {
             sys.updateSchedule();
         }
         RefreshLifeCycle.refreshLifeCycle(task);
         sys.getTaskRepo().dbAddTask(task);
+    }
+
+    private void restorePlacement(TaskManagementSystem sys, LocalDate placedDate,
+                                  LocalTime placedTime) {
+        for (Day day : sys.getGrid().values()) {
+            Task[] slots = day.returnDayGrid();
+            boolean changed = false;
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] == task) {
+                    slots[i] = null;
+                    changed = true;
+                }
+            }
+            if (changed) {
+                day.recomputeLoadFromGrid();
+            }
+        }
+
+        sys.getPlacedTasks().remove(task);
+        sys.getPendingTasks().remove(task);
+        sys.getUnscheduledTasks().remove(task);
+
+        if (placedDate == null || placedTime == null) {
+            task.setPlacedDate(null);
+            task.setPlacedTime(null);
+            if (task.canGoUnscheduled()) {
+                sys.getUnscheduledTasks().add(task);
+            } else {
+                sys.getPendingTasks().add(task);
+            }
+            return;
+        }
+
+        task.setPlacedDate(placedDate);
+        task.setPlacedTime(placedTime);
+        sys.getPlacedTasks().add(task);
+        if (!task.isQuick()) {
+            LocalDate column = AppTimeReference.columnDateFor(placedDate, placedTime);
+            int start = AppTimeReference.localTimeToSlot(placedTime);
+            Day day = sys.getGrid().computeIfAbsent(
+                    column, date -> new Day(sys.getBlockedTime()));
+            day.placeTask(start, task);
+            day.recomputeLoadFromGrid();
+        }
     }
 
     private void relayoutPlaced(TaskManagementSystem sys, LocalDate placedDate,
@@ -124,6 +172,8 @@ public class EditTask implements Command {
         public LocalTime deadlineTime;
         public String description;
         public boolean descriptionDone;
+        public LocalDate placedDate;
+        public LocalTime placedTime;
 
         public static Snapshot of(Task t) {
             Snapshot s = new Snapshot();
@@ -133,6 +183,8 @@ public class EditTask implements Command {
             s.deadlineTime = t.getDeadLineTime();
             s.description = t.getDescription();
             s.descriptionDone = t.isDescriptionDone();
+            s.placedDate = t.getPlacedDate();
+            s.placedTime = t.getPlacedTime();
             return s;
         }
     }
