@@ -264,6 +264,69 @@ class TaskManagementSystemTest {
         assertEquals(2, system.getPendingTasks().size());
     }
 
+    // ---------------------------------------------------------------- AC: command + stores
+
+    @Test
+    void commandWithAnUnknownNameReturnsFalseWithoutThrowing() {
+        // SystemCommands.run prints one line and returns false for an unregistered name.
+        java.io.PrintStream originalOut = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        boolean result;
+        try {
+            System.setOut(new java.io.PrintStream(captured, true,
+                    java.nio.charset.StandardCharsets.UTF_8));
+            result = system.command("notACommand");
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        assertFalse(result);
+        assertEquals("Invalid Command." + System.lineSeparator(),
+                captured.toString(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void rewriteEncryptedStores_resavesEveryTaskAndBlockedRowAndAdvancesTheirTimestamps()
+            throws Exception {
+        Task placed = task("placed", 1.0, 3);
+        placed.setPlacedDate(MON);
+        placed.setPlacedTime(LocalTime.of(9, 0));
+        Task unscheduled = task("unscheduled", 1.0, 3);
+        Task pending = task("pending", 1.0, 3);
+        system.getPlacedTasks().add(placed);
+        system.getUnscheduledTasks().add(unscheduled);
+        system.getPendingTasks().add(pending);
+
+        org.ashoreprospect.BlockedTime blocked = org.ashoreprospect.BlockedTime.daily(
+                "lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        system.getBlockedTime().blockedPeriod.add(blocked);
+
+        // The store is re-saved, not replaced: list sizes must survive the pass.
+        int placedCount = system.getPlacedTasks().size();
+        int unscheduledCount = system.getUnscheduledTasks().size();
+        int pendingCount = system.getPendingTasks().size();
+        int blockedCount = system.getBlockedTime().blockedPeriod.size();
+
+        // Stamped well in the past so "advanced" cannot be a clock-resolution artefact.
+        Instant then = Instant.parse("2000-01-01T00:00:00Z");
+        for (Task t : List.of(placed, unscheduled, pending)) t.setLastUpdatedAt(then);
+        blocked.setLastUpdatedAt(then);
+
+        system.rewriteEncryptedStores();
+
+        assertEquals(placedCount, system.getPlacedTasks().size());
+        assertEquals(unscheduledCount, system.getUnscheduledTasks().size());
+        assertEquals(pendingCount, system.getPendingTasks().size());
+        assertEquals(blockedCount, system.getBlockedTime().blockedPeriod.size());
+        for (Task t : List.of(placed, unscheduled, pending)) {
+            assertTrue(t.getLastUpdatedAt().isAfter(then), t.getTaskName() + " stamped");
+        }
+        assertTrue(blocked.getLastUpdatedAt().isAfter(then), "blocked row stamped");
+        // PINNED: all rows share one `now`, so the four stamps are identical.
+        assertEquals(placed.getLastUpdatedAt(), pending.getLastUpdatedAt());
+        assertEquals(placed.getLastUpdatedAt(), blocked.getLastUpdatedAt());
+    }
+
     // ---------- popup / misc ----------
 
     @Test

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -513,6 +514,143 @@ class CommandHistoryTest {
         assertTrue(output.contains("print-1"));
     }
 
+    // ---------------------------------------------------------------- AC: rollback + affiliates
+
+    @Test
+    void aRejectedAddTaskLeavesTheTaskInNoListAndOnNoGridSlot() throws Exception {
+        // PINNED: with no placed date, AddTask only goes straight to the grid for a *fixed
+        // time* task (state 1); a flexible one takes the pending path and is scheduled, so
+        // that is the path that can be rejected here.
+        //
+        // The day is full from 07:15 to 23:45, so no 4-hour window starting at 07:00 fits.
+        // The engine rejects the task and AddTask rolls it back.
+        Task blocker = placedParent("blocker", "blocker-1", LocalTime.of(7, 0));
+        Task[] slots = system.getGrid().get(MON).returnDayGrid();
+        for (int i = 1; i < AppTimeReference.SLOTS_PER_DAY; i++) {
+            slots[i] = blocker;
+        }
+        system.getPlacedTasks().remove(blocker);
+
+        AddTask command = new AddTask("impossible", 4.0, 1,
+                MON, LocalTime.of(7, 0), null, null, null, null);
+        assertFalse(command.execute());
+
+        assertTrue(system.getPlacedTasks().stream()
+                .noneMatch(t -> "impossible".equals(t.getTaskName())), "not placed");
+        assertTrue(system.getPendingTasks().stream()
+                .noneMatch(t -> "impossible".equals(t.getTaskName())), "not pending");
+        assertTrue(system.getUnscheduledTasks().stream()
+                .noneMatch(t -> "impossible".equals(t.getTaskName())), "not unscheduled");
+        assertFalse(system.getGrid().values().stream().anyMatch(day ->
+                java.util.Arrays.stream(day.returnDayGrid())
+                        .anyMatch(t -> t != null && "impossible".equals(t.getTaskName()))),
+                "no grid slot holds the rejected task");
+    }
+
+    @Test
+    void aRejectedAddTaskLeavesTheListsEmpty() throws Exception {
+        // Same rejection as above with the very first slot also taken: the fixed-time path
+        // fails its slot check before writing anything, so the three task lists stay empty.
+        // PINNED: the reachable rejection is the direct grid check, not rollbackTask() -
+        // updateSchedule() skips fixed-time tasks, and a flexible task it refuses is marked
+        // unscheduled and then removed by rollbackTask(), which needs a full 5-year horizon.
+        Task blocker = placedParent("blocker", "blocker-2", LocalTime.of(7, 0));
+        Task[] slots = system.getGrid().get(MON).returnDayGrid();
+        for (int i = 0; i < AppTimeReference.SLOTS_PER_DAY; i++) {
+            slots[i] = blocker;
+        }
+        system.getPlacedTasks().remove(blocker);
+
+        AddTask command = new AddTask("impossible", 4.0, 1,
+                MON, LocalTime.of(7, 0), null, null, null, null);
+        assertFalse(command.execute());
+        assertTrue(system.getPlacedTasks().isEmpty());
+        assertTrue(system.getPendingTasks().isEmpty());
+        assertTrue(system.getUnscheduledTasks().isEmpty());
+    }
+
+    @Test
+    void finishingAParentFinishesItsQuicksAndUndoUnfinishesExactlyThose() throws Exception {
+        Task parent = placedParent("parent", "parent-1", LocalTime.of(9, 0));
+        Task openQuick = quickOf(parent, "open-quick", LocalTime.of(9, 30));
+        Task openQuick2 = quickOf(parent, "open-quick-2", LocalTime.of(10, 0));
+
+        FinishTask finish = new FinishTask(parent);
+        assertTrue(finish.execute());
+
+        assertEquals(Workflow.FINISHED, parent.getWorkflow());
+        assertEquals(Workflow.FINISHED, openQuick.getWorkflow());
+        assertEquals(Workflow.FINISHED, openQuick2.getWorkflow());
+
+        finish.undo();
+
+        assertEquals(Workflow.UNFINISHED, parent.getWorkflow());
+        assertEquals(Workflow.UNFINISHED, openQuick.getWorkflow());
+        assertEquals(Workflow.UNFINISHED, openQuick2.getWorkflow());
+    }
+
+    @Test
+    void finishAffiliatedSkipsAQuickThatWasAlreadyFinished() throws Exception {
+        Task parent = placedParent("parent", "parent-2", LocalTime.of(9, 0));
+        Task already = quickOf(parent, "already-done", LocalTime.of(9, 30));
+        already.setWorkflow(Workflow.FINISHED);
+        Task open = quickOf(parent, "still-open", LocalTime.of(10, 0));
+
+        FinishTask finish = new FinishTask(parent);
+        assertTrue(finish.execute());
+        assertEquals(Workflow.FINISHED, open.getWorkflow());
+
+        finish.undo();
+
+        // PINNED: unfinishAffiliated() only walks the quicks this run finished, so the quick
+        // that was already FINISHED stays FINISHED even though its parent is not.
+        assertEquals(Workflow.FINISHED, already.getWorkflow());
+        assertEquals(Workflow.UNFINISHED, open.getWorkflow());
+    }
+
+    // ---------------------------------------------------------------- AC: CLI text
+
+    @Test
+    void inAppCli_blankLineIsSilentAndUnknownVerbPointsAtHelp() {
+        InAppCli.Result blank = InAppCli.run(system, "  ");
+        assertEquals("", blank.message);
+        assertFalse(blank.refresh);
+
+        InAppCli.Result unknown = InAppCli.run(system, "nope");
+        // U+2014 (em dash), written as an escape so this source stays ASCII-only.
+        assertEquals("unknown \u2014 type help", unknown.message);
+        assertFalse(unknown.refresh);
+    }
+
+    @Test
+    void helpText_isPipeSeparatedAndStartsWithHelp() {
+        String help = InAppCli.helpText();
+
+        assertTrue(help.startsWith("help"), help);
+        String[] parts = help.split(" \\| ");
+        assertEquals(7, parts.length, help);
+        assertEquals("help", parts[0]);
+        assertEquals("movetask id date time [hours]", parts[1]);
+        assertEquals("finish id", parts[2]);
+        assertEquals("unfinish id", parts[3]);
+        assertEquals("clear id", parts[4]);
+        assertEquals("undo", parts[5]);
+        assertEquals("redo", parts[6]);
+    }
+
+    @Test
+    void systemCommandNames_areUnmodifiableAndIncludeTheSchedulerEntryPoints() {
+        java.util.Set<String> names = SystemCommands.names();
+
+        assertTrue(names.contains("update"));
+        assertTrue(names.contains("runScheduler"));
+        assertTrue(names.contains("printAll"));
+        assertTrue(names.contains("exit"));
+        assertThrows(UnsupportedOperationException.class, () -> names.remove("undo"));
+        // A failed mutation must not have removed anything.
+        assertTrue(SystemCommands.known("undo"));
+    }
+
     @Test
     void addTaskWithFile_loadsBundledTasksAndUndoRemovesThem() throws Exception {
         AddTaskWithFile command = new AddTaskWithFile(system);
@@ -883,6 +1021,26 @@ class CommandHistoryTest {
     private static void placeFor(TaskManagementSystem sys, LocalDate date, int slot, Task task) {
         sys.getGrid().putIfAbsent(date, new Day(sys.getBlockedTime()));
         sys.getGrid().get(date).placeTask(slot, task);
+    }
+
+    /**
+     * A placeable parent at {@code time} on {@link #MON}: registered in the placed list and
+     * on the grid, which is what {@code quicksOf} and {@code FinishTask} both rely on.
+     */
+    private Task placedParent(String name, String id, LocalTime time) {
+        Task parent = task(name, id);
+        system.getPlacedTasks().add(parent);
+        placeFor(system, MON, AppTimeReference.localTimeToSlot(time), parent);
+        return parent;
+    }
+
+    /** A quick child of {@code parent}, placed on the same day at {@code time}. */
+    private Task quickOf(Task parent, String name, LocalTime time) {
+        Task quick = Task.loadTaskFromdb(name + "-id", name, 0.5, 3,
+                null, null, null, null, MON, time);
+        quick.setParentId(parent.getID());
+        system.getPlacedTasks().add(quick);
+        return quick;
     }
 
     private static Task task(String name, String id) {
