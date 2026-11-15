@@ -54,6 +54,10 @@ tasks.jacocoTestReport {
 // Every class named below must keep at least 60% LINE coverage; the rules are per class,
 // because the Gradle plugin in use ignores `excludes` and a "pkg.*" pattern would also
 // match nested packages.
+//
+// `db.TaskRepository` is the SQLite cache, testable offline against a temporary database. It
+// entered the gate at 66% (294 lines missed, mostly the Postgres sync paths and the offline
+// arm of `dbfetchAll`); it was the last class added in round 4, in its own commit.
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.test)
     violationRules {
@@ -88,6 +92,7 @@ tasks.jacocoTestCoverageVerification {
             "org.ashoreprospect.Command.Undo",
             "org.ashoreprospect.Command.UnfinishTask",
             "org.ashoreprospect.crypto.Vault",
+            "org.ashoreprospect.db.TaskRepository",
             "org.ashoreprospect.GUI.theme.Contrast",
             "org.ashoreprospect.GUI.theme.ThemePalette"
         ).forEach { className ->
