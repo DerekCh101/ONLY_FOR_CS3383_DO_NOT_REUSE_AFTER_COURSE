@@ -224,6 +224,284 @@ class SchedulerEngineTest {
         assertEquals("shown\n", engine.printUnscheduledTask());
     }
 
+    // ---------- plan A: remaining SchedulerEngine branches ----------
+
+    @Test
+    void sameDeadlineDate_ordersByTimeThenByLongerDuration() {
+        Task late = task("late", 0.5, 2, MON, LocalTime.of(9, 0));
+        Task early = task("early", 0.5, 2, MON, LocalTime.of(8, 0));
+        // Two tasks share 10:00; the longer one sorts first.
+        Task shortSameTime = task("short", 0.5, 2, MON, LocalTime.of(10, 0));
+        Task longSameTime = task("long", 1.0, 2, MON, LocalTime.of(10, 0));
+
+        new SchedulerEngine(system, MON, new TreeMap<>()).scheduleTasks(
+                new ArrayList<>(java.util.List.of(longSameTime, late, shortSameTime, early)));
+
+        // Earlier times go first and take the earliest free slots.
+        assertEquals(LocalTime.of(7, 30), early.getPlacedTime());
+        assertEquals(LocalTime.of(8, 0), late.getPlacedTime());
+        // The longer 10:00 task is sorted first, so it takes 08:30 and the short one
+        // lands at 09:30 — i.e. it does not get the slot the long one just occupied.
+        assertEquals(LocalTime.of(8, 30), longSameTime.getPlacedTime());
+        assertEquals(LocalTime.of(9, 30), shortSameTime.getPlacedTime());
+    }
+
+    @Test
+    void deadlineWithoutATime_isPlacedNoLaterThanTheDeadlineDate() {
+        Task noTime = task("no time", 1.0, 2, MON.plusDays(1), null);
+
+        new SchedulerEngine(system, MON, new TreeMap<>())
+                .scheduleTasks(java.util.List.of(noTime));
+
+        assertEquals(MON, noTime.getPlacedDate());
+        assertEquals(LocalTime.of(7, 30), noTime.getPlacedTime());
+        assertTrue(system.getPlacedTasks().contains(noTime));
+    }
+
+    @Test
+    void deadlineWithoutATime_onAFullFirstDay_movesToTheDeadlineDateItself() {
+        Task noTime = task("no time", 1.0, 2, MON.plusDays(1), null);
+        Task full = task("full", 1.0, 2, MON, LocalTime.of(8, 0));
+        // Give "full" a 24h duration by stuffing the whole current column.
+        Day day = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            day.returnDayGrid()[slot] = blocker;
+        }
+        day.placeTask(0, blocker);
+        system.getGrid().put(MON, day);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(java.util.List.of(noTime, full));
+
+        assertNull(full.getPlacedTime());
+        assertEquals(MON.plusDays(1), noTime.getPlacedDate());
+        assertEquals(LocalTime.of(6, 0), noTime.getPlacedTime());
+    }
+
+    @Test
+    void deadlineBeyondTheHorizon_isCappedButStillPlaced() {
+        Task far = task("far", 0.5, 2, MON.plusYears(10), LocalTime.of(12, 0));
+
+        new SchedulerEngine(system, MON, new TreeMap<>())
+                .scheduleTasks(java.util.List.of(far));
+
+        // The cap shrinks the search window; the first free slot is still 07:30.
+        assertEquals(MON, far.getPlacedDate());
+        assertEquals(LocalTime.of(7, 30), far.getPlacedTime());
+        assertTrue(system.getPlacedTasks().contains(far));
+    }
+
+    @Test
+    void firstSlot_isAfterNowOnTheCurrentColumnAndTheStartOnALaterColumn() {
+        // Current column: 07:00 is slot 2, so the search starts at slot 3 (07:30).
+        Task today = task("today", 0.5, 3, null, null);
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(java.util.List.of(today));
+        assertEquals(MON, today.getPlacedDate());
+        assertEquals(LocalTime.of(7, 30), today.getPlacedTime());
+
+        // A task created with a base date in the past still cannot use a past column.
+        Task stale = task("stale", 0.5, 3, null, null);
+        new SchedulerEngine(system, MON.minusDays(3), system.getGrid())
+                .scheduleTasks(java.util.List.of(stale));
+        assertEquals(MON, stale.getPlacedDate());
+
+        // A later column starts at slot 0, i.e. 06:00.
+        Day full = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            full.returnDayGrid()[slot] = blocker;
+        }
+        system.getGrid().put(MON, full);
+        Task tomorrow = task("tomorrow", 0.5, 3, null, null);
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(java.util.List.of(tomorrow));
+        assertEquals(MON.plusDays(1), tomorrow.getPlacedDate());
+        assertEquals(LocalTime.of(6, 0), tomorrow.getPlacedTime());
+    }
+
+    @Test
+    void flexibleTasksIgnoreOverloadWhileDeadlineTasksRespectIt() {
+        Day day = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        // Fill 46 slots, leaving two free ones (46 and 47) on today.
+        for (int i = 0; i < 46; i++) {
+            day.returnDayGrid()[i] = blocker;
+        }
+        // recomputeLoadFromGrid() re-derives the flag as availableSlots <= 2 (true).
+        day.recomputeLoadFromGrid();
+        assertTrue(day.getOverloadFlag());
+        assertEquals(AppTimeReference.SLOTS_PER_HOUR, day.getAvailableSlots());
+        system.getGrid().put(MON, day);
+
+        Task flexible = task("flexible", 0.5, 3, null, null);
+        java.util.TreeMap<LocalDate, Day> grid = new java.util.TreeMap<>();
+        grid.put(MON, day);
+
+        new SchedulerEngine(system, MON, grid).scheduleTasks(java.util.List.of(flexible));
+
+        // placeFlexibleTasks() passes ignoreOverload=true, so the loaded day is used and
+        // the first free slot (46 = 05:00 the next calendar morning) is taken.
+        assertEquals(MON.plusDays(1), flexible.getPlacedDate());
+        assertEquals(LocalTime.of(5, 0), flexible.getPlacedTime());
+        assertSame(flexible, day.returnDayGrid()[46]);
+
+        // placeDeadlineTasks() passes ignoreOverload=false, so the same loaded day is
+        // refused outright and the search moves to the next day.
+        Day tomorrow = new Day(system.getBlockedTime());
+        grid.put(MON.plusDays(1), tomorrow);
+        Task deadline = task("deadline", 0.5, 2, MON.plusDays(1), LocalTime.of(12, 0));
+
+        new SchedulerEngine(system, MON, grid).scheduleTasks(java.util.List.of(deadline));
+
+        assertEquals(MON.plusDays(1), deadline.getPlacedDate());
+        assertEquals(LocalTime.of(6, 0), deadline.getPlacedTime());
+    }
+
+    @Test
+    void flexibleTaskThatCannotFitAWholeColumn_isPushedToTheNextFreeDay() {
+        Day day = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        // Occupy today entirely; a 24-hour flexible task cannot share a column.
+        for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            day.returnDayGrid()[slot] = blocker;
+        }
+        system.getGrid().put(MON, day);
+
+        Task tooLong = task("too long", 24.0, 3, null, null);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(java.util.List.of(tooLong));
+
+        // The engine walks forward to the first day the task fits in completely.
+        assertEquals(MON.plusDays(1), tooLong.getPlacedDate());
+        assertEquals(LocalTime.of(6, 0), tooLong.getPlacedTime());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, tooLong.getDurationSlots());
+    }
+
+    @Test
+    void flexibleTaskLeftUnscheduled_isReportedAsSuch() {
+        // searchStart() = max(current column, baseDate). A baseDate far in the future
+        // means the whole five-year horizon is computed from there, and blocking that
+        // first column is enough to observe the "no room" path for a 24-hour task.
+        Task tooLong = task("too long", 24.0, 3, null, null);
+        LocalDate far = MON.plusYears(5);
+        java.util.TreeMap<LocalDate, Day> grid = new java.util.TreeMap<>();
+        Day frozen = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            frozen.returnDayGrid()[slot] = blocker;
+        }
+        grid.put(far, frozen);
+
+        // A 5-year horizon from `far` covers exactly this one column.
+        new SchedulerEngine(system, far, grid).scheduleTasks(java.util.List.of(tooLong));
+
+        // PINNED: the horizon loop is `while column < baseDate + TOTAL_DAY_HORIZON`,
+        // which still reaches `far.plusYears(5)`'s last day but never a fully free one
+        // before the blocked first column is left behind, so the task lands next day.
+        assertEquals(far.plusDays(1), tooLong.getPlacedDate());
+    }
+
+    @Test
+    void deadlineTaskWhoseWindowHasClosed_isUnscheduled() {
+        Day day = new Day(system.getBlockedTime());
+        Task blocker = task("blocker", 0.5, 3, null, null);
+        for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+            day.returnDayGrid()[slot] = blocker;
+        }
+        system.getGrid().put(MON, day);
+
+        Task expired = task("expired", 1.0, 2, MON, LocalTime.of(7, 45));
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(java.util.List.of(expired));
+
+        assertTrue(system.getUnscheduledTasks().contains(expired));
+        assertNull(expired.getPlacedDate());
+        assertNull(expired.getPlacedTime());
+        assertEquals(TaskLifeCycle.UNSCHEDULED, expired.getLifeCycle());
+    }
+
+    @Test
+    void scheduleTasks_skipsFixedAndPastTasks() {
+        Task fixed = new Task("fixed", 1.0, 1, MON.plusDays(1), LocalTime.of(9, 0), null, null);
+        Task past = task("past", 0.5, 3, null, null);
+        past.setLifeCycle(TaskLifeCycle.PAST);
+
+        new SchedulerEngine(system, MON, new TreeMap<>())
+                .scheduleTasks(java.util.List.of(fixed, past));
+
+        assertNull(fixed.getPlacedDate());
+        assertNull(past.getPlacedDate());
+        assertFalse(system.getPlacedTasks().contains(fixed));
+        assertFalse(system.getPlacedTasks().contains(past));
+        assertFalse(system.getUnscheduledTasks().contains(fixed));
+    }
+
+    @Test
+    void refitActiveTasks_neverSchedulesQuickTasks() {
+        Task quick = task("quick", 0.5, 3, null, null);
+        quick.setParentId("parent-id");
+        system.getPendingTasks().add(quick);
+
+        new SchedulerEngine(system, MON, system.getGrid()).refitActiveTasks();
+
+        assertFalse(system.getPlacedTasks().contains(quick));
+        assertNull(quick.getPlacedTime());
+    }
+
+    @Test
+    void refitActiveTasks_keepsAnAlreadyPlacedTaskWhereItStillFits() {
+        Task placed = task("placed", 1.0, 3, null, null);
+        placed.setPlacedDate(MON);
+        placed.setPlacedTime(LocalTime.of(10, 0));
+        system.getPlacedTasks().add(placed);
+
+        new SchedulerEngine(system, MON, system.getGrid()).refitActiveTasks();
+
+        assertEquals(MON, placed.getPlacedDate());
+        assertEquals(LocalTime.of(10, 0), placed.getPlacedTime());
+        assertSame(placed, system.getGrid().get(MON)
+                .returnDayGrid()[AppTimeReference.localTimeToSlot(LocalTime.of(10, 0))]);
+    }
+
+    @Test
+    void placeAlreadyPlacedTasks_withNullOrEmptyListIsANoOp() {
+        SchedulerEngine engine = new SchedulerEngine(system, MON, system.getGrid());
+
+        engine.placeAlreadyPlacedTasks(null);
+        engine.placeAlreadyPlacedTasks(java.util.List.of());
+
+        assertTrue(system.getPlacedTasks().isEmpty());
+        assertTrue(system.getGrid().isEmpty());
+    }
+
+    @Test
+    void pastTaskPinnedOnTheGrid_isNotMovedOrDoubleCounted() {
+        Task past = task("past", 1.0, 3, null, null);
+        past.setLifeCycle(TaskLifeCycle.PAST);
+        past.setPlacedDate(MON);
+        past.setPlacedTime(LocalTime.of(8, 0));
+        system.getPlacedTasks().add(past);
+        system.getPendingTasks().add(past);
+        system.getUnscheduledTasks().add(past);
+        int slot = AppTimeReference.localTimeToSlot(LocalTime.of(8, 0));
+
+        SchedulerEngine engine = new SchedulerEngine(system, MON, system.getGrid());
+        engine.placeAlreadyPlacedTasks(java.util.List.of(past));
+        engine.placeAlreadyPlacedTasks(java.util.List.of(past));
+
+        assertEquals(LocalTime.of(8, 0), past.getPlacedTime());
+        assertSame(past, system.getGrid().get(MON).returnDayGrid()[slot]);
+        assertEquals(AppTimeReference.SLOTS_PER_DAY - 2,
+                system.getGrid().get(MON).getAvailableSlots());
+        assertFalse(system.getPendingTasks().contains(past));
+        assertFalse(system.getUnscheduledTasks().contains(past));
+        assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == past).count());
+    }
+
     private static Task task(String name, double hours, int state,
                              LocalDate deadlineDate, LocalTime deadlineTime) {
         return new Task(name, hours, state, null, null, deadlineDate, deadlineTime);

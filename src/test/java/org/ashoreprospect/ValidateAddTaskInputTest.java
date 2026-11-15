@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -136,6 +137,37 @@ class ValidateAddTaskInputTest {
         assertTrue(valid(3, "a", 24, null, null, null, null));
         assertTrue(valid(3, "a", 24.1, null, null, null, null));
         assertFalse(valid(3, "a", 0, null, null, null, null));
+    }
+
+    // ---------- plan L: remaining boundaries ----------
+
+    @Test
+    void nameIsTrimmedBeforeTheLengthCheck() {
+        // 100 characters plus padding whitespace still fits after trimming.
+        assertTrue(valid(3, "  " + "x".repeat(100) + "  ", 1, null, null, null, null));
+        // 101 real characters are rejected even with padding.
+        assertFalse(valid(3, "  " + "x".repeat(101) + "  ", 1, null, null, null, null));
+    }
+
+    @Test
+    void durationAbove24HoursIsStillAcceptedBecauseOfTheClamp() {
+        // PINNED: hoursToSlots() clamps to 1440 minutes first, so the "> SLOTS_PER_DAY"
+        // guard can never fire. Oversized durations pass validation and get truncated.
+        assertTrue(valid(3, "a", 24.0001, null, null, null, null));
+        assertTrue(valid(3, "a", 1000, null, null, null, null));
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, AppTimeReference.hoursToSlots(1000));
+    }
+
+    @Test
+    void flexibleWithOnlyAStartTimeIsRejected() {
+        assertFalse(valid(3, "a", 1, null, LocalTime.of(10, 0), null, null));
+        assertFalse(valid(3, "a", 1, TODAY.plusDays(1), null, null, null));
+    }
+
+    @Test
+    void deadlineWithOnlyADateIsRejected() {
+        assertFalse(valid(2, "a", 1, null, null, TODAY.plusDays(1), null));
+        assertFalse(valid(2, "a", 1, null, null, null, LocalTime.of(18, 0)));
     }
 
     private static boolean valid(int state, String name, double duration,

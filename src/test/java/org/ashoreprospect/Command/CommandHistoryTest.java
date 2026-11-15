@@ -9,14 +9,17 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 
 import org.ashoreprospect.AppTimeReference;
+import org.ashoreprospect.Day;
 import org.ashoreprospect.FetchPopOutTask;
 import org.ashoreprospect.Task;
+import org.ashoreprospect.TaskLifeCycle;
 import org.ashoreprospect.TaskManagementSystem;
 import org.ashoreprospect.Workflow;
 import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeEach;
@@ -528,9 +531,358 @@ class CommandHistoryTest {
         assertTrue(RecordedCommand.getRedoList().contains(command));
     }
 
+    // =====================================================================
+    // Add-task command paths (plan D)
+    // =====================================================================
+
+    @Test
+    void addTask_flexibleTooBigForOneColumn_isPushedToTheFirstFreeDay() throws Exception {
+        // A flexible task can only occupy consecutive free slots inside one day column.
+        // Leave a single 30-minute gap today, in the next column and in the column after
+        // that, then add a full 24-hour flexible task.
+        for (int dayOffset = 0; dayOffset < 3; dayOffset++) {
+            LocalDate date = MON.plusDays(dayOffset);
+            Day day = new Day(system.getBlockedTime());
+            system.getGrid().put(date, day);
+            for (int slot = 0; slot < AppTimeReference.SLOTS_PER_DAY; slot++) {
+                day.returnDayGrid()[slot] = new Task("filler", 0.5, 3, null, null, null, null);
+            }
+            day.returnDayGrid()[47] = null;
+        }
+
+        AddTask command = new AddTask("huge", 24.0, 3, null, null, null, null);
+        assertTrue(command.execute());
+
+        Task added = system.getPlacedTasks().stream()
+            .filter(t -> "huge".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        // The first completely free column is three days out, starting at 06:00.
+        assertEquals(MON.plusDays(3), added.getPlacedDate());
+        assertEquals(LocalTime.of(6, 0), added.getPlacedTime());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, added.getDurationSlots());
+        assertSame(added, system.getGrid().get(MON.plusDays(3)).returnDayGrid()[0]);
+        assertTrue(RecordedCommand.getUndoList().contains(command));
+    }
+
+    @Test
+    void addTask_fixedInThePast_isStillPlacedOnTheGrid() throws Exception {
+        // AddTask.placeOnGrid only checks collisions and slot bounds; it does not look at
+        // the clock. ValidateAddTaskInput is what rejects past starts on the form path.
+        // Pinned as-is so the difference between the two entry points stays visible.
+        AddTask command = new AddTask(
+            "yesterday", 0.5, 1,
+            MON.minusDays(1), LocalTime.of(10, 0), null, null);
+
+        assertTrue(command.execute());
+        Task added = system.getPlacedTasks().stream()
+            .filter(t -> "yesterday".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        assertEquals(MON.minusDays(1), added.getPlacedDate());
+        assertEquals(LocalTime.of(10, 0), added.getPlacedTime());
+        assertEquals(TaskLifeCycle.PAST, added.getLifeCycle());
+
+        assertFalse(org.ashoreprospect.ValidateAddTaskInput.validateAddTaskInput(
+            "yesterday", 0.5, 1,
+            MON.minusDays(1), LocalTime.of(10, 0), null, null));
+    }
+
+    @Test
+    void addTask_quickEventInsideParentWindow_isPlacedAndLinked() throws Exception {
+        Task parent = task("parent", "parent-quick-1");
+        parent.setPlacedDate(MON);
+        parent.setPlacedTime(LocalTime.of(8, 0));
+        parent.setDurationHours(2.0);
+        place(parent, 4);
+        system.getPlacedTasks().add(parent);
+
+        FetchPopOutTask popup = new FetchPopOutTask(
+            "coffee", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(9, 0));
+        popup.setParentId(parent.getID());
+        system.fetchPopupTask(popup);
+
+        assertTrue(new AddTask("coffee", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(9, 0)).execute());
+
+        Task quick = system.getPlacedTasks().stream()
+            .filter(t -> "coffee".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        assertTrue(quick.isQuick());
+        assertEquals(parent.getID(), quick.getParentId());
+        assertEquals(MON, quick.getPlacedDate());
+        assertEquals(LocalTime.of(9, 0), quick.getPlacedTime());
+        assertEquals(TaskLifeCycle.ONGOING, quick.getLifeCycle());
+        assertSame(parent, system.mainTask(quick));
+    }
+
+    @Test
+    void addTask_quickEventOutsideParentWindow_isRejected() throws Exception {
+        Task parent = task("parent", "parent-quick-2");
+        parent.setPlacedDate(MON);
+        parent.setPlacedTime(LocalTime.of(8, 0));
+        parent.setDurationHours(1.0);
+        place(parent, 4);
+        system.getPlacedTasks().add(parent);
+
+        FetchPopOutTask popup = new FetchPopOutTask(
+            "too late", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(11, 0));
+        popup.setParentId(parent.getID());
+        system.fetchPopupTask(popup);
+
+        assertFalse(new AddTask("too late", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(11, 0)).execute());
+        assertTrue(system.getPlacedTasks().stream()
+            .noneMatch(t -> "too late".equals(t.getTaskName())));
+    }
+
+    @Test
+    void addTask_quickEventWithUnplacedParent_isRejected() throws Exception {
+        Task ghost = task("ghost", "ghost-parent-1");
+        ghost.setPlacedDate(null);
+        ghost.setPlacedTime(null);
+        system.getPendingTasks().add(ghost);
+
+        FetchPopOutTask popup = new FetchPopOutTask(
+            "orphan", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(9, 0));
+        popup.setParentId(ghost.getID());
+        system.fetchPopupTask(popup);
+
+        assertFalse(new AddTask("orphan", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(9, 0)).execute());
+        assertTrue(system.getPlacedTasks().stream()
+            .noneMatch(t -> "orphan".equals(t.getTaskName())));
+    }
+
+    @Test
+    void addTask_autoScheduledUndo_leavesTheTaskOutOfEveryList() throws Exception {
+        AddTask command = new AddTask("auto", 0.5, 3, null, null, null, null);
+        assertTrue(command.execute());
+
+        Task added = system.getPlacedTasks().stream()
+            .filter(t -> "auto".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        LocalTime autoSlot = added.getPlacedTime();
+        assertEquals(LocalTime.of(7, 30), autoSlot);
+
+        command.undo();
+
+        assertFalse(system.getPlacedTasks().contains(added));
+        assertFalse(system.getPendingTasks().contains(added));
+        assertFalse(system.getUnscheduledTasks().contains(added));
+        // Pinned current behaviour: undo() clears the grid and the lists and calls
+        // updateSchedule(), but it does not clear placedDate/placedTime on the task.
+        assertEquals(MON, added.getPlacedDate());
+        assertEquals(LocalTime.of(7, 30), added.getPlacedTime());
+        assertTrue(RecordedCommand.getRedoList().contains(command));
+    }
+
+    @Test
+    void addTask_popupExtras_areCopiedOntoTheNewTask() throws Exception {
+        // The popup's parentId turns the new task into a quick event, which is only
+        // accepted inside its parent's window, so the popup carries no parent here.
+        FetchPopOutTask popup = new FetchPopOutTask(
+            "with extras", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(13, 30));
+        popup.setDescription("bring notes");
+        popup.setDescriptionDone(true);
+        system.fetchPopupTask(popup);
+
+        assertTrue(new AddTask("with extras", 0.5, 1, null, null, null, null,
+            MON, LocalTime.of(13, 30)).execute());
+
+        Task created = system.getPlacedTasks().stream()
+            .filter(t -> "with extras".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        assertEquals("bring notes", created.getDescription());
+        assertTrue(created.isDescriptionDone());
+        assertFalse(created.isQuick());
+        assertEquals("", created.getParentId());
+        assertEquals(LocalTime.of(13, 30), created.getPlacedTime());
+    }
+
+    @Test
+    void addTask_subHalfHourPopupDuration_keepsExactMinutes() throws Exception {
+        FetchPopOutTask popup = new FetchPopOutTask(
+            "twenty", 20.0 / 60.0, 1, null, null, null, null,
+            MON, LocalTime.of(10, 0));
+        system.fetchPopupTask(popup);
+
+        assertTrue(new AddTask("twenty", 20.0 / 60.0, 1, null, null, null, null,
+            MON, LocalTime.of(10, 0)).execute());
+
+        Task created = system.getPlacedTasks().stream()
+            .filter(t -> "twenty".equals(t.getTaskName()))
+            .findFirst()
+            .orElseThrow();
+        assertEquals(20, created.getDurationMinutes());
+        assertEquals(1, created.getDurationSlots());
+    }
+
+    // =====================================================================
+    // Run-scheduler command paths (plan E)
+    // =====================================================================
+
+    @Test
+    void runScheduler_leavesFixedTasksAloneThroughExecuteUndoRedo() throws Exception {
+        Task fixed = new Task("fixed", 1.0, 1, MON, LocalTime.of(11, 0), null, null);
+        placeFor(system, MON, AppTimeReference.localTimeToSlot(LocalTime.of(11, 0)), fixed);
+        fixed.setPlacedDate(MON);
+        fixed.setPlacedTime(LocalTime.of(11, 0));
+        system.getPlacedTasks().add(fixed);
+
+        RunSchedulerCommand command = new RunSchedulerCommand(system);
+
+        assertTrue(command.execute());
+        assertTrue(system.getPlacedTasks().contains(fixed));
+        assertEquals(LocalTime.of(11, 0), fixed.getPlacedTime());
+        assertSame(fixed, system.getGrid().get(MON).returnDayGrid()[10]);
+
+        command.undo();
+        assertTrue(system.getPlacedTasks().contains(fixed));
+        assertEquals(LocalTime.of(11, 0), fixed.getPlacedTime());
+        assertSame(fixed, system.getGrid().get(MON).returnDayGrid()[10]);
+
+        command.redo();
+        assertEquals(LocalTime.of(11, 0), fixed.getPlacedTime());
+    }
+
+    @Test
+    void runScheduler_deadlineThatNoLongerFits_becomesUnscheduled() throws Exception {
+        Task deadline = Task.loadTaskFromdb("dl-1", "deadline", 1.0, 2,
+            null, null, MON, LocalTime.of(8, 30), MON, LocalTime.of(7, 30));
+        place(deadline, 3);
+        system.getPlacedTasks().add(deadline);
+
+        // A fixed task grabs the only slot that could hold the 1-hour deadline task.
+        Task blocker = new Task("blocker", 1.0, 1, MON, LocalTime.of(7, 30), null, null);
+        blocker.setPlacedDate(MON);
+        blocker.setPlacedTime(LocalTime.of(7, 30));
+        system.getTaskRepo().dbAddTask(blocker);
+        system.getPlacedTasks().add(blocker);
+        system.getGrid().get(MON).returnDayGrid()[3] = null;
+        system.getGrid().get(MON).placeTask(3, blocker);
+
+        RunSchedulerCommand command = new RunSchedulerCommand(system);
+        assertTrue(command.execute());
+
+        assertFalse(system.getPlacedTasks().contains(deadline));
+        assertTrue(system.getUnscheduledTasks().contains(deadline));
+        assertNull(deadline.getPlacedDate());
+        assertNull(deadline.getPlacedTime());
+        assertEquals(TaskLifeCycle.UNSCHEDULED, deadline.getLifeCycle());
+    }
+
+    @Test
+    void runScheduler_undoWithOccupiedOldSlot_dropsTheTaskInsteadOfOverlapping() throws Exception {
+        Task flexible = task("flex", "flex-undo-1");
+        flexible.setPlacedDate(MON);
+        flexible.setPlacedTime(LocalTime.of(7, 30));
+        place(flexible, 3);
+
+        RunSchedulerCommand command = new RunSchedulerCommand(system);
+        assertTrue(command.execute());
+
+        // Squat on the snapshot slot (07:30) after the run moved the task elsewhere.
+        Task squatter = new Task("squatter", 1.0, 1, MON, LocalTime.of(7, 30), null, null);
+        system.getGrid().putIfAbsent(MON, new Day(system.getBlockedTime()));
+        system.getGrid().get(MON).placeTask(3, squatter);
+        assertSame(squatter, system.getGrid().get(MON).returnDayGrid()[3]);
+
+        command.undo();
+
+        // Pinned current behaviour: when the old slot is taken, undo() skips the placement
+        // and does NOT move the task to the unscheduled list. It ends up in no list and is
+        // off the grid, but it never overlaps the squatter.
+        assertFalse(system.getPlacedTasks().contains(flexible));
+        assertFalse(system.getUnscheduledTasks().contains(flexible));
+        assertFalse(system.getPendingTasks().contains(flexible));
+        assertSame(squatter, system.getGrid().get(MON).returnDayGrid()[3]);
+        assertTrue(system.getGrid().get(MON).returnDayGrid()[4] != flexible);
+    }
+
+    @Test
+    void runScheduler_undoRestoresTasksThatWereNeverPlaced() throws Exception {
+        Task neverPlaced = task("never", "never-1");
+        neverPlaced.setPlacedDate(null);
+        neverPlaced.setPlacedTime(null);
+        system.getPendingTasks().add(neverPlaced);
+
+        RunSchedulerCommand command = new RunSchedulerCommand(system);
+        assertTrue(command.execute());
+        assertTrue(system.getPlacedTasks().contains(neverPlaced));
+
+        command.undo();
+
+        assertTrue(system.getPendingTasks().contains(neverPlaced));
+        assertFalse(system.getPlacedTasks().contains(neverPlaced));
+        assertNull(neverPlaced.getPlacedTime());
+    }
+
+    @Test
+    void successfulExecute_clearsTheRedoStack() throws Exception {
+        Task pending = task("sched", "sched-clear-1");
+        pending.setPlacedDate(null);
+        pending.setPlacedTime(null);
+        system.getPendingTasks().add(pending);
+
+        RunSchedulerCommand first = new RunSchedulerCommand(system);
+        assertTrue(first.execute());
+        first.undo();
+        assertEquals(1, RecordedCommand.getRedoList().size());
+
+        assertTrue(new AddTask("newer", 0.5, 1,
+            MON, LocalTime.of(15, 0), null, null).execute());
+
+        assertTrue(RecordedCommand.getRedoList().isEmpty());
+    }
+
+    @Test
+    void runScheduler_undoRestoresEveryTaskThatWasPlacedInTheSystem() throws Exception {
+        Task a = task("a", "multi-a");
+        Task b = task("b", "multi-b");
+        a.setPlacedDate(MON);
+        a.setPlacedTime(LocalTime.of(7, 30));
+        b.setPlacedDate(MON);
+        b.setPlacedTime(LocalTime.of(8, 30));
+        place(a, 3);
+        place(b, 5);
+        system.getPlacedTasks().add(a);
+        system.getPlacedTasks().add(b);
+
+        RunSchedulerCommand command = new RunSchedulerCommand(system);
+        assertTrue(command.execute());
+
+        // Pinned current behaviour: updateSchedule() clears the non-fixed tasks off the grid
+        // and then runs the engine over the now-empty grid. Both 1-hour tasks therefore come
+        // back at their original slots instead of being packed from 06:00.
+        assertEquals(LocalTime.of(7, 30), a.getPlacedTime());
+        assertEquals(LocalTime.of(8, 30), b.getPlacedTime());
+
+        command.undo();
+
+        assertEquals(LocalTime.of(7, 30), a.getPlacedTime());
+        assertEquals(LocalTime.of(8, 30), b.getPlacedTime());
+        assertTrue(system.getPlacedTasks().contains(a));
+        assertTrue(system.getPlacedTasks().contains(b));
+        assertSame(a, system.getGrid().get(MON).returnDayGrid()[3]);
+        assertSame(b, system.getGrid().get(MON).returnDayGrid()[5]);
+        assertTrue(system.getPendingTasks().isEmpty());
+    }
+
     private void place(Task task, int slot) {
-        system.getGrid().putIfAbsent(MON, new org.ashoreprospect.Day(system.getBlockedTime()));
-        system.getGrid().get(MON).placeTask(slot, task);
+        placeFor(system, MON, slot, task);
+    }
+
+    private static void placeFor(TaskManagementSystem sys, LocalDate date, int slot, Task task) {
+        sys.getGrid().putIfAbsent(date, new Day(sys.getBlockedTime()));
+        sys.getGrid().get(date).placeTask(slot, task);
     }
 
     private static Task task(String name, String id) {

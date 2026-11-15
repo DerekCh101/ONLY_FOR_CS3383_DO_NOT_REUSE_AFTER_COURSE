@@ -50,4 +50,26 @@ class PasswordRulesTest {
         assertEquals("Password needs 8+ characters, upper and lower case, a number, and a symbol.",
                 PasswordRules.HINT);
     }
+
+    // ---------- plan M: remaining boundaries ----------
+
+    @Test
+    void exactlyEightCharactersIsTheCutoff() {
+        assertNull(PasswordRules.reject("Abcde1!x"));
+        assertEquals(PasswordRules.HINT, PasswordRules.reject("Abcde1!"));
+    }
+
+    @Test
+    void unicodeAndEmojiCountAsASymbol() {
+        assertNull(PasswordRules.reject("Abcdef1\u00e9"));
+        assertNull(PasswordRules.reject("Abcdef1\uD83D\uDE00"));
+    }
+
+    @Test
+    void spaceAndTabAlsoCountAsASymbol() {
+        // PINNED: the rule is "anything that is not a-z, A-Z or 0-9 is a symbol",
+        // so whitespace satisfies the symbol requirement.
+        assertNull(PasswordRules.reject("Abcdef1 "));
+        assertNull(PasswordRules.reject("Abcdef1\t"));
+    }
 }

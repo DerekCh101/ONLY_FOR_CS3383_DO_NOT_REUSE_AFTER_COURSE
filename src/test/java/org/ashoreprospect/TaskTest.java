@@ -129,6 +129,150 @@ class TaskTest {
         assertNull(task.getPlacedDate());
     }
 
+    // ---------- plan K: durations, clipping, ids ----------
+
+    @Test
+    void durationSlots_roundUpHalfHourCellsAndClampToOneDay() {
+        assertEquals(1, taskWithMinutes("a", 1).getDurationSlots());
+        assertEquals(1, taskWithMinutes("b", 30).getDurationSlots());
+        assertEquals(2, taskWithMinutes("c", 31).getDurationSlots());
+        assertEquals(2, taskWithMinutes("d", 60).getDurationSlots());
+        assertEquals(3, taskWithMinutes("e", 61).getDurationSlots());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, taskWithMinutes("f", 1440).getDurationSlots());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, taskWithMinutes("g", 1441).getDurationSlots());
+    }
+
+    @Test
+    void setDurationHours_clampsNonPositiveAndNaNToOneMinute() {
+        Task task = task("clamp", 1.0);
+
+        task.setDurationHours(0);
+        assertEquals(1, task.getDurationMinutes());
+
+        task.setDurationHours(-5);
+        assertEquals(1, task.getDurationMinutes());
+
+        task.setDurationHours(Double.NaN);
+        assertEquals(1, task.getDurationMinutes());
+
+        task.setDurationHours(25);
+        assertEquals(AppTimeReference.MINUTES_PER_DAY, task.getDurationMinutes());
+    }
+
+    @Test
+    void setDurationMinutes_clampsToTheSameRange() {
+        Task task = task("minutes", 1.0);
+
+        task.setDurationMinutes(0);
+        assertEquals(1, task.getDurationMinutes());
+
+        task.setDurationMinutes(1440);
+        assertEquals(1440, task.getDurationMinutes());
+
+        task.setDurationMinutes(2000);
+        assertEquals(1440, task.getDurationMinutes());
+    }
+
+    @Test
+    void sealedName_isNotClippedButAPlainNameIs() {
+        String sealed = "AP1." + "x".repeat(200);
+        Task sealedTask = task(sealed, 1.0);
+        assertEquals(sealed, sealedTask.getTaskName());
+
+        // Pinned current behaviour: the private load constructor stores the name verbatim
+        // (the id comes from the DB), so clipping only happens on the public constructor
+        // and on setTaskName().
+        Task loadedPlain = task("y".repeat(150), 1.0);
+        assertEquals(150, loadedPlain.getTaskName().length());
+
+        Task fresh = new Task("y".repeat(150), 1.0, 3, null, null, null, null);
+        assertEquals(100, fresh.getTaskName().length());
+
+        fresh.setTaskName("y".repeat(150));
+        assertEquals(100, fresh.getTaskName().length());
+    }
+
+    @Test
+    void description_extrasAreCappedButSealedTextIsNot() {
+        Task task = task("desc", 1.0);
+
+        task.copyExtrasFrom(null);
+        assertEquals("", task.getDescription());
+        assertFalse(task.isDescriptionDone());
+
+        task.setDescription("z".repeat(9000));
+        assertEquals(8000, task.getDescription().length());
+
+        String sealed = "AP1." + "q".repeat(9000);
+        task.setDescription(sealed);
+        assertEquals(sealed, task.getDescription());
+
+        task.setDescription(null);
+        assertEquals("", task.getDescription());
+    }
+
+    @Test
+    void parentId_isTrimmedAndBlankMeansNotQuick() {
+        Task task = task("quick", 1.0);
+
+        task.setParentId("  parent-1  ");
+        assertEquals("parent-1", task.getParentId());
+        assertTrue(task.isQuick());
+
+        task.setParentId("   ");
+        assertEquals("", task.getParentId());
+        assertFalse(task.isQuick());
+    }
+
+    @Test
+    void toString_containsIdentityStateLifecycleAndWorkflow() {
+        Task task = task("shown", 1.5);
+        task.setPlacedDate(LocalDate.of(2026, 10, 12));
+        task.setPlacedTime(LocalTime.of(9, 0));
+
+        String text = task.toString();
+
+        assertTrue(text.contains(task.getID()));
+        assertTrue(text.contains("shown"));
+        assertTrue(text.contains("durationHours=1.5"));
+        assertTrue(text.contains("state=3"));
+        assertTrue(text.contains("lifeCycle=UNSCHEDULED"));
+        assertTrue(text.contains("workflow=UNFINISHED"));
+    }
+
+    @Test
+    void twoNewTasks_getDistinctIds() {
+        Task first = new Task("a", 1.0, 3, null, null, null, null);
+        Task second = new Task("b", 1.0, 3, null, null, null, null);
+
+        assertFalse(first.getID().isBlank());
+        assertFalse(first.getID().equals(second.getID()));
+    }
+
+    @Test
+    void typePredicates_areMutuallyExclusiveOnTheStoredState() {
+        Task fixed = task("fixed", 1.0);
+        fixed.setState(1);
+        assertTrue(fixed.isFixedTime());
+        assertFalse(fixed.hasDeadline());
+        assertFalse(fixed.canGoUnscheduled());
+
+        Task deadline = task("deadline", 1.0);
+        deadline.setState(2);
+        assertTrue(deadline.hasDeadline());
+        assertTrue(deadline.canGoUnscheduled());
+
+        Task flexible = task("flexible", 1.0);
+        assertTrue(flexible.isFlexible());
+        assertTrue(flexible.canGoUnscheduled());
+    }
+
+    private static Task taskWithMinutes(String name, int minutes) {
+        Task task = task(name, 1.0);
+        task.setDurationMinutes(minutes);
+        return task;
+    }
+
     private static Task task(String name, double hours) {
         return Task.loadTaskFromdb(
                 name + "-id", name, hours, 3,
