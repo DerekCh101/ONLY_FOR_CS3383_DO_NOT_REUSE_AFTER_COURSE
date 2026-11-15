@@ -54,7 +54,7 @@ public class LoginView {
         StackPane.setAlignment(resetHold[0], Pos.CENTER);
 
         org.ashoreprospect.SchedulerApp.setStageRoot(root);
-        stage.setTitle("Ashore Prospect");
+        stage.setTitle("Scheduler");
         org.ashoreprospect.GUI.WindowFrame.snapWorkArea();
         stage.show();
     }
@@ -62,7 +62,7 @@ public class LoginView {
     private VBox buildLoginCard(Runnable onOk, Runnable showRegister, Runnable showReset) {
         Label kicker = muted("ACCOUNT");
         Label title = heading("Sign in");
-        Label ver = muted("Ashore Prospect " + org.ashoreprospect.AppVersion.LABEL);
+        Label ver = muted("Scheduler " + org.ashoreprospect.AppVersion.LABEL);
         Label where = muted(Endpoints.nodeBase());
 
         TextField user = field("username");

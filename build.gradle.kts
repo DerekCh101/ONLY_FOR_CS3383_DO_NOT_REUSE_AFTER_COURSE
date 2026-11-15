@@ -9,7 +9,8 @@ plugins {
 }
 
 group = "org.ashoreprospect"
-version = "v0.1.3"
+// Mirrors AppVersion.LABEL: the UI version and the release tag must not drift apart.
+version = "v0.1.7"
 
 repositories {
     mavenCentral()

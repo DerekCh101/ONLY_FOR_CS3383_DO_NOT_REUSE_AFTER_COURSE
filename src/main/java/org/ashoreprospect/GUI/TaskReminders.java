@@ -125,7 +125,7 @@ public final class TaskReminders {
                     g.setColor(new java.awt.Color(243, 238, 228));
                     g.fillOval(4, 4, 8, 8);
                     g.dispose();
-                    trayIcon = new TrayIcon(img, "Ashore Prospect");
+                    trayIcon = new TrayIcon(img, "Scheduler");
                     trayIcon.setImageAutoSize(true);
                     SystemTray.getSystemTray().add(trayIcon);
                 }

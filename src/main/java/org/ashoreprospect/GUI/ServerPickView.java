@@ -47,7 +47,7 @@ public final class ServerPickView extends VBox {
         Label kicker = new Label("SERVER");
         kicker.setStyle("-fx-text-fill: #6b6358; -fx-font-size: 11px;" + FONT);
 
-        Label ver = new Label("Ashore Prospect " + org.ashoreprospect.AppVersion.LABEL);
+        Label ver = new Label("Scheduler " + org.ashoreprospect.AppVersion.LABEL);
         ver.setStyle("-fx-text-fill: #6b6358; -fx-font-size: 12px;" + FONT);
 
         Label title = new Label("Where should this copy talk?");

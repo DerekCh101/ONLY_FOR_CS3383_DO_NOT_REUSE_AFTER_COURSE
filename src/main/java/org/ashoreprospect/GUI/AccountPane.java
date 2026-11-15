@@ -155,7 +155,7 @@ public final class AccountPane extends BorderPane {
         Label emailNow = muted("Email: loading…");
         fillMeLabel(emailNow, "email", "Email: ");
         VBox box = new VBox(14,
-                muted("Ashore Prospect " + AppVersion.LABEL),
+                muted("Scheduler " + AppVersion.LABEL),
                 muted("Signed in as " + user),
                 deviceRow(),
                 emailNow,

@@ -111,7 +111,7 @@ public class SchedulerApp extends Application {
         StackPane wrap = new StackPane(pick);
         wrap.setStyle("-fx-background-color: #1c2430;");
         setStageRoot(wrap);
-        stage.setTitle("Ashore Prospect");
+        stage.setTitle("Scheduler");
         WindowFrame.snapWorkArea();
         stage.show();
 
@@ -153,7 +153,7 @@ public class SchedulerApp extends Application {
         spin.skinProperty().addListener((o, a, b) -> Platform.runLater(() -> stripBootSpinPlate(spin)));
         Label msg = new Label(text);
         msg.setStyle("-fx-text-fill: white; -fx-font-size: 15px;");
-        Label ver = new Label("Ashore Prospect " + AppVersion.LABEL);
+        Label ver = new Label("Scheduler " + AppVersion.LABEL);
         ver.setStyle("-fx-text-fill: #9aa4b2; -fx-font-size: 12px;");
         VBox box = new VBox(16, spin, msg, ver);
         box.setAlignment(Pos.CENTER);
@@ -161,7 +161,7 @@ public class SchedulerApp extends Application {
         setStageRoot(box);
         box.setStyle("-fx-background-color: #1c2430;");
         Platform.runLater(() -> stripBootSpinPlate(spin));
-        stage.setTitle("Ashore Prospect");
+        stage.setTitle("Scheduler");
         WindowFrame.snapWorkArea();
         stage.show();
     }
@@ -183,7 +183,7 @@ public class SchedulerApp extends Application {
                 System.err.println("FXML controller is null");
             }
             setStageRoot(root);
-            stage.setTitle("Ashore Prospect");
+            stage.setTitle("Scheduler");
             WindowFrame.snapWorkArea();
             stage.show();
         } catch (Exception e) {
