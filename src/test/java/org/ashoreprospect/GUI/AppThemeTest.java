@@ -1,12 +1,14 @@
 /**
- * Theme registry and the CSS-string builders.
+ * Theme registry, the CSS-string builders, and switching between packs.
  *
- * <p>Only the parts that do not touch a scene: the pack registry, the palette accessors,
- * and the eight style builders. {@code apply} / {@code paint} / {@code walkMenus} / and
- * anything that reaches {@code fire()} are never called, because {@code fire()} iterates
- * {@code Window.getWindows()} and starts the toolkit.
+ * <p>{@code setPack()} / {@code toggle()} are exercised because they are headless-safe: on the
+ * main thread {@code Window.getWindows()} is empty, so {@code fire()} reaches only the registered
+ * listeners. The scene paths ({@code apply(Scene)}, {@code applyPopup(ContextMenu)},
+ * {@code paint}, {@code walkMenus}, {@code hookPopups(tree)}) still need a real Stage and stay
+ * uncovered; only their null guards are tested.
  *
- * <p>{@code .scheduler/theme.txt} is user data, so it is snapshotted and restored.
+ * <p>{@code .scheduler/theme.txt} is user data, so it is snapshotted and restored around every
+ * test, and the current pack is put back by each test that switches it.
  */
 package org.ashoreprospect.GUI;
 
@@ -249,5 +251,109 @@ class AppThemeTest {
             if (c == null || c.isBlank()) continue;
             assertTrue(css.contains(c), name + " should contain " + c + ": " + css);
         }
+    }
+
+    // ---------------------------------------------------------------- switching packs
+
+    @Test
+    void setPack_switchesThePaletteAndPersistsTheId() throws Exception {
+        ThemePack before = AppTheme.currentPack();
+        String other = "light".equals(before.id()) ? "dark" : "light";
+        try {
+            AppTheme.setPack(other);
+
+            assertEquals(other, AppTheme.currentPack().id());
+            assertTrue(Files.exists(FILE), "a real switch persists the choice");
+            assertEquals(other, Files.readString(FILE, StandardCharsets.UTF_8).trim());
+            assertEquals(AppTheme.currentPack().palette(), AppTheme.palette(),
+                    "the colour accessors follow the current pack");
+            assertEquals(AppTheme.currentPack().palette().ink(), AppTheme.ink());
+        } finally {
+            AppTheme.setPack(before.id());
+        }
+    }
+
+    @Test
+    void toggle_flipsBetweenTheTwoBuiltInsAndIsInvolutive() throws Exception {
+        ThemePack start = AppTheme.currentPack();
+        try {
+            AppTheme.toggle();
+            ThemePack flipped = AppTheme.currentPack();
+            assertFalse(start.id().equals(flipped.id()), "toggle picks the other built-in");
+
+            AppTheme.toggle();
+            assertEquals(start.id(), AppTheme.currentPack().id(), "toggling twice returns");
+        } finally {
+            AppTheme.setPack(start.id());
+        }
+    }
+
+    @Test
+    void toggle_runsRegisteredListenersExactlyOncePerSwitch() throws Exception {
+        ThemePack start = AppTheme.currentPack();
+        int[] runs = {0};
+        try {
+            AppTheme.clearListeners();
+            AppTheme.listen(() -> runs[0]++);
+
+            AppTheme.toggle();
+            assertEquals(1, runs[0], "one switch notifies once");
+
+            AppTheme.clearListeners();
+            AppTheme.toggle();
+            assertEquals(1, runs[0], "cleared listeners are not called");
+        } finally {
+            AppTheme.clearListeners();
+            AppTheme.setPack(start.id());
+        }
+    }
+
+    @Test
+    void isDark_followsWhicheverBuiltInIsCurrent() throws Exception {
+        ThemePack start = AppTheme.currentPack();
+        try {
+            AppTheme.setPack("dark");
+            assertEquals(Contrast.darkSurface(AppTheme.palette().bg()), AppTheme.isDark());
+
+            AppTheme.setPack("light");
+            assertFalse(AppTheme.isDark(), "the light pack has a light surface");
+        } finally {
+            AppTheme.setPack(start.id());
+        }
+    }
+
+    @Test
+    void registeringAPackByIdLetsSetPackSelectIt() throws Exception {
+        ThemePack start = AppTheme.currentPack();
+        ThemePack custom = new ColorThemePack("apptheme-custom", "Custom",
+                BuiltinThemes.DARK.palette());
+        try {
+            AppTheme.register(custom);
+            AppTheme.setPack("apptheme-custom");
+
+            assertSame(custom, AppTheme.currentPack(),
+                    "a registered pack is a real switch, not just a registry entry");
+        } finally {
+            AppTheme.setPack(start.id());
+        }
+    }
+
+    // ---------------------------------------------------------------- toolkit-free guards
+
+    @Test
+    void applyAndPopupEntryPointsReturnEarlyForNull() {
+        // Every one of these checks its argument before touching the toolkit, so they are safe
+        // to call headlessly. The scene paths (ensureCss / paint / walkMenus) still need a real
+        // Stage and stay uncovered.
+        assertDoesNotThrow(() -> AppTheme.apply(null));
+        assertDoesNotThrow(() -> AppTheme.applyPopup(null));
+        assertDoesNotThrow(() -> AppTheme.hookPopups(null));
+    }
+
+    @Test
+    void currentPackAndPaletteAreTheSameObject() {
+        assertSame(AppTheme.currentPack().palette(), AppTheme.palette(),
+                "palette() delegates to the current pack; it does not copy");
+        assertNotNull(AppTheme.currentPack().displayName());
     }
 }

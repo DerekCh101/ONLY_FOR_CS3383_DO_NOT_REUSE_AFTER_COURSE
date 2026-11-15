@@ -3,9 +3,9 @@
  * the {@code AuthResult} value holder, and the two guard paths that return before any
  * connection is attempted.
  *
- * <p>No server, no Docker, no socket. The transport half ({@code request}, {@code postAuth}
- * and everything they reach) is deliberately left untested — it requires a live Node, so
- * {@code NodeApi} stays out of the JaCoCo gate.
+ * <p>No server and no socket. The transport half ({@code request}, {@code postAuth}, and the
+ * verb wrappers) is covered by {@link NodeApiTransportTest} against a loopback fake Node, so the
+ * two classes split cleanly: pure logic here, bytes on the wire there.
  */
 package org.ashoreprospect.net;
 

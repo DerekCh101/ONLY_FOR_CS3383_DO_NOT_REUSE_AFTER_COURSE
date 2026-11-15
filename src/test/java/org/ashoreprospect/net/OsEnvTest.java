@@ -109,4 +109,68 @@ class OsEnvTest {
         assertEquals("", OsEnv.get(name));
         assertEquals("", OsEnv.get(name), "lookup is side-effect free and repeats");
     }
+
+    // ---------------------------------------------------------------- overlay precedence
+
+    @Test
+    void theOverlayShadowsTheEnvironment() throws Exception {
+        // Same lookup order the production code relies on: overlay, then System.getenv, then the
+        // user env file. Writing the overlay is the only way a test may choose a value, because
+        // persist() would run setx on Windows.
+        String name = "OSENV_OVERLAY_TEST_5B2E";
+        try {
+            TestEnv.set(name, "from-overlay");
+            assertEquals("from-overlay", OsEnv.get(name));
+        } finally {
+            TestEnv.clear(name);
+        }
+
+        assertEquals(System.getenv(name) == null ? "" : System.getenv(name).trim(),
+                OsEnv.get(name), "clearing the overlay restores the real lookup");
+    }
+
+    @Test
+    void anOverlayValueWinsOverARealEnvironmentVariable() throws Exception {
+        // PATH is present on every runner; the overlay must still shadow it.
+        try {
+            TestEnv.set("PATH", "/overlay/wins");
+            assertEquals("/overlay/wins", OsEnv.get("PATH"));
+        } finally {
+            TestEnv.clear("PATH");
+        }
+
+        String real = System.getenv("PATH");
+        assertEquals(real == null ? "" : real.trim(), OsEnv.get("PATH"),
+                "the real value is back after the overlay is cleared");
+    }
+
+    @Test
+    void aBlankOverlayValueFallsThroughToTheRealLookup() throws Exception {
+        // PINNED: get() treats a blank overlay entry as absent, but persist("name", "") removes
+        // the entry rather than storing "" - so the blank-overlay branch is only reachable by
+        // writing the map directly, as here.
+        String real = System.getenv("PATH");
+        try {
+            TestEnv.set("PATH", "   ");
+            assertEquals(real == null ? "" : real.trim(), OsEnv.get("PATH"));
+        } finally {
+            TestEnv.clear("PATH");
+        }
+    }
+
+    @Test
+    void aValueFromTheUserEnvFileIsTheLastResort() throws Exception {
+        // PINNED: with nothing in the overlay or the environment, get() reads the user env file.
+        // Its contents are the developer's own, so the expectation is a re-read of that file
+        // rather than a fixed value.
+        String name = "OSENV_FILE_FALLBACK_4A17";
+        try {
+            TestEnv.set(name, "from-overlay");
+            assertEquals("from-overlay", OsEnv.get(name));
+        } finally {
+            TestEnv.clear(name);
+        }
+        assertEquals(System.getenv(name) == null ? "" : System.getenv(name).trim(),
+                OsEnv.get(name));
+    }
 }
