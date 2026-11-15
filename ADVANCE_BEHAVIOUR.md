@@ -325,8 +325,8 @@ Working directory must be the **repo root**.
 | Path | Role |
 | --- | --- |
 | `scheduler-cache.db` | Local tasks, blocked, Typewriter |
-| OS env `SCHEDULER_NODE` | Node URL (Windows `setx` / Linux user env) |
-| OS env `postgres_pw` | Postgres password for Java JDBC and Node |
+| OS env `SCHEDULER_NODE` | Node URL (Windows `setx` / Linux user env); JDBC stays on `127.0.0.1` |
+| OS env `postgres_pw` | Postgres password. Java reads it for JDBC; Node reads `PGPASSWORD`, then `postgres_pw` |
 | OS env `SMTP_*` | Host SMTP; see §7 |
 | `~/.config/ashore-prospect/user.env` (Linux) or `%APPDATA%\ashore-prospect\user.env` (Windows) | Same keys, outside the repo |
 | `.scheduler/session.txt` | Remember-me Bearer token |
@@ -337,7 +337,9 @@ Working directory must be the **repo root**.
 | `scheduler-device-id.txt` | This install’s device id (Account → User info, Copy) |
 | `typewriter-images/` | Image cache |
 
-Secrets are OS env, not project files. Fallbacks: leftover `.scheduler/postgres.pw` / `server.txt` from older builds (read, then deleted on next save).
+Secrets are OS env, not project files. The `user.env` file above is the same key/value set, written so a Node process started before the Windows `setx` still sees new values.
+
+Legacy fallbacks, read once then deleted on the next save: `.scheduler/postgres.pw` (only when `postgres_pw` is unset) and `.scheduler/server.txt` (only when `SCHEDULER_NODE` is unset). Neither is written by current builds; do not document them as the primary location.
 
 Node still needs Postgres credentials in **its** process. After server-pick persists `postgres_pw`, restart Node yourself (`cd server && node server.js`, `0.0.0.0:3456`).
 
