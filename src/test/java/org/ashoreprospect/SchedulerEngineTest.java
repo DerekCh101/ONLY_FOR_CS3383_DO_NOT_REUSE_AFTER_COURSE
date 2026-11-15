@@ -512,6 +512,10 @@ class SchedulerEngineTest {
         // later explicitly handles `getDeadLineDate() == null`. Any state-2 task with a null
         // deadline date therefore crashes updateSchedule() with a NullPointerException.
         //
+        // A second copy of this pin lives in knownDefects.SchedulerEngineDeadlineOrderTest,
+        // the defect register the project treats as the canonical record. This copy stays so
+        // the fix has a nearby regression test to promote.
+        //
         // Reachable through the public API: a deadline task with a real date (so the sort
         // has a non-null side to compare against) is enough to trigger it.
         Task planted = task("no-date", 0.5, 3, null, null);
@@ -605,6 +609,8 @@ class SchedulerEngineTest {
         // PINNED: L42's `task == null` arm is dead. scheduleTasks() dereferences every entry
         // at L132 (`task.hasDeadline()`) before addIfActive() ever sees it, so a null in the
         // list throws instead of being skipped. Only the isQuick() arm of L42 is live.
+        // Kept here because it documents a reachability decision about addIfActive(); the
+        // matching placeAlreadyPlacedTasks() case is in knownDefects.SchedulerEngineDeadlineOrderTest.
         ArrayList<Task> supplied = new ArrayList<>();
         supplied.add(null);
         supplied.add(task("real", 0.5, 3, null, null));

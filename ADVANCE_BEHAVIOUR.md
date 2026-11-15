@@ -209,7 +209,7 @@ Task types (`Task.state`):
 1. Snapshot every **non-fixed** task (for undo).
 2. Pull those tasks off the grid and clear their placed date/time.
 3. Split remaining work into deadline vs flexible. Skip `PAST` in the placer.
-4. **Deadline order:** earlier deadline **date** first; same date → **longer** duration first.
+4. **Deadline order:** earlier deadline **date** first; same date → earlier deadline **time** first (a task with no deadline time sorts after any timed one on that day); same date and time (or both untimed) → **longer** duration first.
 5. **Place deadline:** from `searchStart` (the later of the week/month base column and “today’s” column) through the deadline day, earliest slot first.
    - Today’s column starts at **current slot + 1** (never in the past).
    - Past columns have no free slots.
@@ -325,8 +325,8 @@ Working directory must be the **repo root**.
 | Path | Role |
 | --- | --- |
 | `scheduler-cache.db` | Local tasks, blocked, Typewriter |
-| OS env `SCHEDULER_NODE` | Node URL (Windows `setx` / Linux user env) |
-| OS env `postgres_pw` | Postgres password for Java JDBC and Node |
+| OS env `SCHEDULER_NODE` | Node URL (Windows `setx` / Linux user env); JDBC stays on `127.0.0.1` |
+| OS env `postgres_pw` | Postgres password. Java reads it for JDBC; Node reads `PGPASSWORD`, then `postgres_pw` |
 | OS env `SMTP_*` | Host SMTP; see §7 |
 | `~/.config/ashore-prospect/user.env` (Linux) or `%APPDATA%\ashore-prospect\user.env` (Windows) | Same keys, outside the repo |
 | `.scheduler/session.txt` | Remember-me Bearer token |
@@ -337,7 +337,9 @@ Working directory must be the **repo root**.
 | `scheduler-device-id.txt` | This install’s device id (Account → User info, Copy) |
 | `typewriter-images/` | Image cache |
 
-Secrets are OS env, not project files. Fallbacks: leftover `.scheduler/postgres.pw` / `server.txt` from older builds (read, then deleted on next save).
+Secrets are OS env, not project files. The `user.env` file above is the same key/value set, written so a Node process started before the Windows `setx` still sees new values.
+
+Legacy fallbacks, read once then deleted on the next save: `.scheduler/postgres.pw` (only when `postgres_pw` is unset) and `.scheduler/server.txt` (only when `SCHEDULER_NODE` is unset). Neither is written by current builds; do not document them as the primary location.
 
 Node still needs Postgres credentials in **its** process. After server-pick persists `postgres_pw`, restart Node yourself (`cd server && node server.js`, `0.0.0.0:3456`).
 

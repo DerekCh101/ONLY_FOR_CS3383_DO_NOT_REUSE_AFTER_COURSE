@@ -138,3 +138,9 @@ Regression tests pinning the same behaviour: `TaskRepositoryNodeMergeTest`,
 
 656 tests, 0 failures. The probe assertions pin buggy behaviour on purpose, so they pass; a fix must
 update the probe assertions along with the production code.
+
+> **Update (round 4):** the suite is now **672 tests, 0 failures** (`.\gradlew.bat clean test check`).
+> Defect pins that were scattered across the regression suites now live in one register,
+> `src/test/java/org/ashoreprospect/knownDefects/` (see its `KNOWN_DEFECTS.md`). The 12 tests
+> there pass on purpose; each one asserts current, wrong behaviour so the bug stays visible.
+> Note the count above (656) predates both the round-4 register and the earlier committed tests.
