@@ -408,7 +408,7 @@ public class SchedulerController {
         if (menuSessions != null) menuSessions.setOnAction(e -> showAccount(AccountPane.Page.SESSIONS));
         if (menuLogout != null) menuLogout.setOnAction(e -> logout());
         if (menuAbout != null) menuAbout.setOnAction(e -> {
-            Alert a = new Alert(Alert.AlertType.INFORMATION, "Ashore Prospect — calendar and typewriter.", ButtonType.OK);
+            Alert a = new Alert(Alert.AlertType.INFORMATION, "Scheduler — calendar and typewriter.", ButtonType.OK);
             a.setHeaderText("About");
             a.setTitle("About");
             a.showAndWait();

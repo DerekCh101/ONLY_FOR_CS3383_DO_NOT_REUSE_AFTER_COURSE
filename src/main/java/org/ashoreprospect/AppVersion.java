@@ -3,7 +3,11 @@ package org.ashoreprospect;
 
 public final class AppVersion {
 
-    public static final String LABEL = "Beta 1.2";
+    /**
+     * The release tag this build corresponds to, so the UI and the GitHub release cannot drift
+     * apart. Keep this in step with {@code version} in build.gradle.kts when cutting a release.
+     */
+    public static final String LABEL = "v0.1.7";
 
     private AppVersion() {}
 }

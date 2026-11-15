@@ -326,6 +326,296 @@ class BlockedTimePeriodTest {
         assertTrue(period.periods.isEmpty());
     }
 
+    // ---------- plan I: remaining BlockedTimePeriod branches ----------
+
+    @Test
+    void violatesBlocked_crossingMidnightChecksTheNextCalendarDate() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        period.replaceBlockedPeriods(java.util.List.of(
+                BlockedTime.once("night", MON.plusDays(1), LocalTime.of(1, 0), LocalTime.of(2, 0))));
+
+        // PINNED: violatesBlocked() calls start.plusHours(i) but keeps the original date,
+        // so 23:00 + 2h = 01:00 still compares against MON and never sees the TUE row.
+        assertFalse(period.violatesBlocked(MON, LocalTime.of(23, 0), 3));
+        assertFalse(period.violatesBlocked(MON, LocalTime.of(23, 0), 4));
+        // The row does block its own date.
+        assertTrue(period.violatesBlocked(MON.plusDays(1), LocalTime.of(0, 0), 2));
+        assertFalse(period.violatesBlocked(MON.plusDays(1), LocalTime.of(0, 0), 1));
+    }
+
+    @Test
+    void isBlocked_timeOverload_usesDailyRowsOnly() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        BlockedTime oneOff = BlockedTime.once("one off", MON, LocalTime.of(9, 0), LocalTime.of(10, 0));
+        BlockedTime weekly = BlockedTime.weekly("gym", DayOfWeek.MONDAY,
+                LocalTime.of(11, 0), LocalTime.of(12, 0));
+        BlockedTime everyDay = row("lunch", LocalTime.of(13, 0), LocalTime.of(14, 0));
+        BlockedTime exception = BlockedTime.daily("free", LocalTime.of(15, 0), LocalTime.of(16, 0));
+        exception.setException(true);
+        period.replaceBlockedPeriods(java.util.List.of(oneOff, weekly, everyDay, exception));
+
+        // Only rows that are daily and not exceptions are rebuilt into `periods`.
+        assertEquals(1, period.periods.size());
+        assertTrue(period.isBlocked(LocalTime.of(13, 30)));
+        assertFalse(period.isBlocked(LocalTime.of(9, 30)));
+        assertFalse(period.isBlocked(LocalTime.of(11, 30)));
+        assertFalse(period.isBlocked(LocalTime.of(15, 30)));
+        // The date-aware overload does see the one-off row.
+        assertTrue(period.isBlocked(MON, LocalTime.of(9, 30)));
+    }
+
+    @Test
+    void returnTotalBlockedTime_truncatesHalfHoursToWholeHours() {
+        // PINNED: Duration.toHours() truncates, so a 30-minute block counts as 0 hours
+        // and the day keeps all 48 slots available.
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        period.replaceBlockedPeriods(java.util.List.of(
+                row("half", LocalTime.of(12, 0), LocalTime.of(12, 30))));
+        assertEquals(0, period.returnTotalBlockedTime());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY,
+                new Day(period).getAvailableSlots());
+
+        period.replaceBlockedPeriods(java.util.List.of(
+                row("one", LocalTime.of(12, 0), LocalTime.of(13, 0)),
+                row("two", LocalTime.of(15, 0), LocalTime.of(16, 30))));
+        assertEquals(2, period.returnTotalBlockedTime());
+        assertEquals(AppTimeReference.SLOTS_PER_DAY - 4,
+                new Day(period).getAvailableSlots());
+    }
+
+    @Test
+    void deleteBlockedTime_removesTheSelectedRowAndRebuildsPeriods() {
+        java.io.InputStream originalIn = System.in;
+        try {
+            // BlockedTimePeriod() captures System.in in its Scanner, so setIn must come first.
+            System.setIn(new java.io.ByteArrayInputStream("1\n".getBytes()));
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.replaceBlockedPeriods(java.util.List.of(
+                    row("first", LocalTime.of(8, 0), LocalTime.of(9, 0)),
+                    row("second", LocalTime.of(10, 0), LocalTime.of(11, 0))));
+            assertEquals(2, period.periods.size());
+
+            period.deleteBlockedTime();
+
+            assertEquals(1, period.blockedPeriod.size());
+            assertEquals("second", period.blockedPeriod.get(0).getTitle());
+            assertEquals(1, period.periods.size());
+            assertFalse(period.isBlocked(LocalTime.of(8, 30)));
+            assertTrue(period.isBlocked(LocalTime.of(10, 30)));
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void deleteBlockedTime_invalidSelectionLeavesEverythingAlone() {
+        java.io.InputStream originalIn = System.in;
+        try {
+            for (String choice : java.util.List.of("0", "3", "seven", "")) {
+                System.setIn(new java.io.ByteArrayInputStream((choice + "\n").getBytes()));
+                BlockedTimePeriod period = new BlockedTimePeriod();
+                period.replaceBlockedPeriods(java.util.List.of(
+                        row("only", LocalTime.of(8, 0), LocalTime.of(9, 0))));
+
+                period.deleteBlockedTime();
+
+                assertEquals(1, period.blockedPeriod.size(), "choice=" + choice);
+                assertEquals(1, period.periods.size(), "choice=" + choice);
+            }
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void changeBlockedTime_rejectsEveryEditOfSingleRowSet() {
+        // PINNED: BlockedTimePeriod.validatePeriod() checks the new window against
+        // `periods`, but rebuildPeriods() stores each row's live LocalTime[] array from
+        // BlockedTime.asPeriod(). The edited row is therefore compared against itself
+        // and always "overlaps", so changeBlockedTime() rolls back every time.
+        java.io.InputStream originalIn = System.in;
+        try {
+            System.setIn(new java.io.ByteArrayInputStream("1\n14-00\n15-30\n".getBytes()));
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.replaceBlockedPeriods(java.util.List.of(
+                    row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0))));
+
+            period.changeBlockedTime();
+
+            assertEquals(LocalTime.of(12, 0), period.blockedPeriod.get(0).getStartTime());
+            assertEquals(LocalTime.of(13, 0), period.blockedPeriod.get(0).getEndTime());
+            assertTrue(period.isBlocked(LocalTime.of(12, 30)));
+            assertFalse(period.isBlocked(LocalTime.of(14, 30)));
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void changeBlockedTime_rejectsAnEditThatWouldOverlapAnotherRow() {
+        // PINNED: validatePeriod() runs after the new times are already written and
+        // rebuildPeriods() has put the edited row back into `periods`. The edited row
+        // therefore always clashes with itself, so an edit of one row in a two-row set
+        // is rejected even when the new window overlaps only that row's old copy —
+        // and, as here, even when it only overlaps nothing else but itself.
+        java.io.InputStream originalIn = System.in;
+        try {
+            System.setIn(new java.io.ByteArrayInputStream("1\n19-00\n20-00\n".getBytes()));
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.replaceBlockedPeriods(java.util.List.of(
+                    row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0)),
+                    row("gym", LocalTime.of(18, 0), LocalTime.of(19, 0))));
+
+            period.changeBlockedTime();
+
+            assertEquals(LocalTime.of(12, 0), period.blockedPeriod.get(0).getStartTime());
+            assertEquals(LocalTime.of(13, 0), period.blockedPeriod.get(0).getEndTime());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void changeBlockedTime_invalidSelectionOrTimesLeavesTheRowAlone() {
+        java.io.InputStream originalIn = System.in;
+        try {
+            for (String input : java.util.List.of(
+                    "2\n14-00\n15-00\n",       // out-of-range selection
+                    "0\n14-00\n15-00\n",       // below the first row
+                    "x\n",                     // not a number
+                    "1\n14-00\n09-00\n",       // end before start
+                    "1\n04-00\n05-00\n",       // outside 06:00–23:00
+                    "1\n12-30\n13-30\n")) {    // overlaps the existing row
+                System.setIn(new java.io.ByteArrayInputStream(input.getBytes()));
+                BlockedTimePeriod period = new BlockedTimePeriod();
+                period.replaceBlockedPeriods(java.util.List.of(
+                        row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0))));
+
+                period.changeBlockedTime();
+
+                assertEquals(LocalTime.of(12, 0), period.blockedPeriod.get(0).getStartTime(),
+                        "input=" + input);
+                assertEquals(LocalTime.of(13, 0), period.blockedPeriod.get(0).getEndTime(),
+                        "input=" + input);
+            }
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void changeBlockedTime_withNoRowsIsANoOp() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        period.changeBlockedTime();
+        period.deleteBlockedTime();
+        assertTrue(period.blockedPeriod.isEmpty());
+    }
+
+    @Test
+    void addBlockedTime_acceptsTheDashedFormatAndRejectsOutOfRangeClocks() {
+        java.io.InputStream originalIn = System.in;
+        try {
+            // The same "HH-mm" formatter accepts "09-00": '-' is a literal and "00"
+            // satisfies the minute-of-hour field. Only 06:00–23:00 is enforced.
+            System.setIn(new java.io.ByteArrayInputStream("09-00\n10-00\n".getBytes()));
+            BlockedTimePeriod accepted = new BlockedTimePeriod();
+            accepted.addBlockedTime();
+            assertEquals(1, accepted.blockedPeriod.size());
+            assertEquals(LocalTime.of(9, 0), accepted.blockedPeriod.get(0).getStartTime());
+
+            for (String input : java.util.List.of(
+                    "nonsense\n09:00\n",            // bad start
+                    "09:00\nnonsense\n",            // bad end
+                    "05:00\n09:00\n",               // before 06:00
+                    "09:00\n23:30\n")) {            // after 23:00
+                System.setIn(new java.io.ByteArrayInputStream(input.getBytes()));
+                BlockedTimePeriod period = new BlockedTimePeriod();
+                period.addBlockedTime();
+
+                assertTrue(period.blockedPeriod.isEmpty(), "input=" + input);
+                assertTrue(period.periods.isEmpty(), "input=" + input);
+            }
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void addBlockedTime_rejectsAnOverlappingPeriod() {
+        java.io.InputStream originalIn = System.in;
+        try {
+            System.setIn(new java.io.ByteArrayInputStream("12-30\n13-30\n".getBytes()));
+            BlockedTimePeriod period = new BlockedTimePeriod();
+            period.replaceBlockedPeriods(java.util.List.of(
+                    row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0))));
+
+            period.addBlockedTime();
+
+            assertEquals(1, period.blockedPeriod.size());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void exceptionRows_clashOnlyAmongThemselves() {
+        BlockedTime exception = BlockedTime.daily("free", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        exception.setException(true);
+        BlockedTime exceptionTwin = BlockedTime.daily("free 2", LocalTime.of(12, 30), LocalTime.of(13, 30));
+        exceptionTwin.setException(true);
+        BlockedTime normal = row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+
+        assertTrue(BlockedTimePeriod.blockedOverlap(exception, exceptionTwin));
+        assertFalse(BlockedTimePeriod.blockedOverlap(exception, normal));
+        assertFalse(BlockedTimePeriod.blockedOverlap(normal, exception));
+    }
+
+    @Test
+    void describe_labelsEveryRowKind() {
+        BlockedTime exception = BlockedTime.weekly("holiday", DayOfWeek.FRIDAY,
+                LocalTime.of(8, 0), LocalTime.of(9, 0));
+        exception.setException(true);
+        assertTrue(BlockedTimePeriod.describe(exception).startsWith("holiday exception FRIDAY"));
+
+        BlockedTime oneOff = BlockedTime.once("trip", MON, LocalTime.of(8, 0), LocalTime.of(9, 0));
+        assertTrue(BlockedTimePeriod.describe(oneOff).contains(MON.toString()));
+
+        BlockedTime untitled = new BlockedTime("id", "   ", null, null,
+                LocalTime.of(8, 0), LocalTime.of(9, 0), null, null);
+        assertTrue(BlockedTimePeriod.describe(untitled).startsWith("blocked every day"));
+    }
+
+    @Test
+    void conflictMessage_and_conflictAmong_describeTheClash() {
+        BlockedTimePeriod period = new BlockedTimePeriod();
+        period.replaceBlockedPeriods(java.util.List.of(
+                row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0))));
+
+        assertNull(period.conflictMessage(row("ok", LocalTime.of(14, 0), LocalTime.of(15, 0))));
+        // PINNED: a null input and a row with no clock times report the same message.
+        assertEquals("Invalid time.", period.conflictMessage(
+                new BlockedTime("no-times", "bare", null, null, null, null, null, null)));
+        assertEquals("End must be after start.",
+                period.conflictMessage(row("backwards", LocalTime.of(15, 0), LocalTime.of(14, 0))));
+        assertTrue(period.conflictMessage(row("clash", LocalTime.of(12, 30), LocalTime.of(13, 30)))
+                .startsWith("Overlaps existing blocked time: lunch"));
+
+        // The same id never clashes with itself, which is how edits re-save a row.
+        BlockedTime self = row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        self.setId("lunch-id");
+        period.replaceBlockedPeriods(java.util.List.of(self));
+        BlockedTime edited = row("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        edited.setId("lunch-id");
+        assertNull(period.conflictMessage(edited));
+
+        java.util.List<BlockedTime> batch = java.util.List.of(
+                row("monday run", LocalTime.of(7, 0), LocalTime.of(8, 0)),
+                row("monday run 2", LocalTime.of(7, 30), LocalTime.of(8, 30)));
+        assertNull(period.conflictAmong(java.util.List.of(batch.get(0))));
+        assertTrue(period.conflictAmong(batch).startsWith("Overlaps in this add: monday run"));
+        assertNull(period.conflictAmong(new java.util.ArrayList<>()));
+    }
+
     private static BlockedTime row(String title, LocalTime start, LocalTime end) {
         return BlockedTime.daily(title, start, end);
     }

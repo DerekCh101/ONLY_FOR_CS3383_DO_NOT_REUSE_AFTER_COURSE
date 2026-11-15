@@ -13,6 +13,7 @@ import java.time.LocalTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -110,11 +111,16 @@ class TaskRepositoryMergeTest {
     }
 
     @Test
-    void equalBlockedTimestamp_hostKeepsLocal() {
+    void equalBlockedTimestamp_hostKeepsLocalFields() {
         BlockedTime local = blocked("local", TIE);
         BlockedTime remote = blocked("remote", TIE);
 
-        assertSame(local, TaskRepository.mergeBlocked(local, remote, true));
+        // The host keeps its own fields on a tie, but the merged copy is rebuilt rather than
+        // returned by reference: it carries the stamp forward so repeated merges settle (#2).
+        BlockedTime merged = TaskRepository.mergeBlocked(local, remote, true);
+        assertEquals("local", merged.getTitle(), "host keeps local on a tie");
+        assertEquals(TIE, merged.getLastUpdatedAt());
+        assertEquals(local.getId(), merged.getId());
     }
 
     @Test
@@ -141,8 +147,12 @@ class TaskRepositoryMergeTest {
         BlockedTime remote = blocked("remote", TIE);
         local.setLastUpdatedAt(null);
         remote.setLastUpdatedAt(null);
-        assertSame(local, TaskRepository.mergeBlocked(local, remote, false));
-        assertSame(local, TaskRepository.mergeBlocked(local, remote, true));
+        assertEquals("local", TaskRepository.mergeBlocked(local, remote, false).getTitle(),
+                "no stamp at all keeps local, as before");
+        assertNull(TaskRepository.mergeBlocked(local, remote, false).getLastUpdatedAt(),
+                "and the merged copy still has no stamp");
+        assertEquals("local", TaskRepository.mergeBlocked(local, remote, true).getTitle(),
+                "the host keeps local too");
     }
 
     private static Task task(String name, Instant last, Instant place) {

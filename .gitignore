@@ -50,3 +50,8 @@ Ashore Prospect *.md
 
 #local build
 bin/
+
+#opencode
+opencode.json
+TEST_PLAN.md
+BUGS.md

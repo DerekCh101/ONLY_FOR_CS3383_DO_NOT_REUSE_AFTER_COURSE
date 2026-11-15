@@ -96,7 +96,7 @@ public final class OsEnv {
         try {
             Files.createDirectories(p.getParent());
             StringBuilder sb = new StringBuilder();
-            sb.append("# Ashore Prospect user environment. Outside the git repo.\n");
+            sb.append("# Scheduler user environment. Outside the git repo.\n");
             for (Map.Entry<String, String> e : all.entrySet()) {
                 sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
             }

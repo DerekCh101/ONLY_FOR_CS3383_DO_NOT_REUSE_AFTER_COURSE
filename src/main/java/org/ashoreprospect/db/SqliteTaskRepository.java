@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -100,6 +101,14 @@ public class SqliteTaskRepository {
                     id TEXT PRIMARY KEY,
                     deleted_at TEXT NOT NULL,
                     title TEXT
+                )
+                """);
+            // Which blocked rows Node actually served in the last pull. The delete sweep needs
+            // this: "absent from Node" is only evidence of a remote delete once Node has really
+            // been asked and answered without the row. See issue #2.
+            st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sync_seen_blocked (
+                    id TEXT PRIMARY KEY
                 )
                 """);
         }
@@ -494,6 +503,15 @@ public class SqliteTaskRepository {
                 is_exception = excluded.is_exception
             WHERE blocked_times.last_updated_at IS NULL
                OR excluded.last_updated_at >= blocked_times.last_updated_at
+               -- Re-storing an unchanged row is a no-op, so let it through even when the stamp
+               -- would otherwise be rejected. mergeNodeBlocked() relies on this to keep a row
+               -- the local side owns without re-reporting it as a change (see issue #2).
+               OR (excluded.title IS blocked_times.title
+                   AND excluded.weekday IS blocked_times.weekday
+                   AND excluded.specific_date IS blocked_times.specific_date
+                   AND excluded.start_time = blocked_times.start_time
+                   AND excluded.end_time = blocked_times.end_time
+                   AND excluded.is_exception = blocked_times.is_exception)
             """;
         try (Connection conn = connect();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -544,6 +562,76 @@ public class SqliteTaskRepository {
             ps.setString(1, id);
             if (uid != null && !uid.isBlank()) ps.setString(2, uid);
             ps.executeUpdate();
+        }
+    }
+
+    public void unrecordBlockedDelete(String id) throws SQLException {
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM sync_deletes_blocked WHERE id = ?")) {
+            ps.setString(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    /** Replaces the set of blocked ids Node served in the last pull. */
+    public void replaceBlockedSeen(Collection<String> ids) throws SQLException {
+        try (Connection conn = connect()) {
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM sync_seen_blocked")) {
+                    ps.executeUpdate();
+                }
+                if (ids != null && !ids.isEmpty()) {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT OR IGNORE INTO sync_seen_blocked(id) VALUES(?)")) {
+                        for (String id : ids) {
+                            if (id == null || id.isBlank()) continue;
+                            ps.setString(1, id);
+                            ps.addBatch();
+                        }
+                        ps.executeBatch();
+                    }
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    /** Blocked ids Node served in the last pull; empty when no pull has recorded one yet. */
+    public Set<String> blockedSeenIds() throws SQLException {
+        Set<String> set = new HashSet<>();
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement("SELECT id FROM sync_seen_blocked");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) set.add(rs.getString(1));
+        }
+        return set;
+    }
+
+    /**
+     * Gives blocked times that were written before anyone signed in to the current account.
+     *
+     * <p>Such a row is stored with {@code user_id NULL}, and every blocked-time read filters on
+     * the signed-in user id, so the row would otherwise be invisible to its owner forever. Called
+     * once a session exists; returning 0 when there is none keeps an orphan orphaned rather than
+     * handing it to whichever account signs in next on a shared machine.
+     *
+     * @return how many rows were claimed
+     */
+    public int claimBlockedRowsWithNoOwner() throws SQLException {
+        String uid = currentUserId();
+        if (uid == null || uid.isBlank()) return 0;
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE blocked_times SET user_id = ? WHERE user_id IS NULL OR user_id = ''")) {
+            ps.setString(1, uid);
+            return ps.executeUpdate();
         }
     }
 

@@ -140,7 +140,7 @@ public final class WindowFrame {
     }
 
     private static HBox buildBar() {
-        title = new Label("Ashore Prospect");
+        title = new Label("Scheduler");
         title.getStyleClass().add("win-title");
         Region grow = new Region();
         HBox.setHgrow(grow, Priority.ALWAYS);
@@ -210,8 +210,8 @@ public final class WindowFrame {
     private static void paintTitle() {
         if (title != null && stage != null) {
             String t = stage.getTitle();
-            title.setText(t == null || t.isBlank() || "Scheduler".equalsIgnoreCase(t)
-                    ? "Ashore Prospect" : t);
+            title.setText(t == null || t.isBlank() || "Ashore Prospect".equalsIgnoreCase(t)
+                    ? "Scheduler" : t);
         }
         if (maxBtn != null) {
             maxBtn.setText(snapped ? "❐" : "□");

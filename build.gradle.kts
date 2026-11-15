@@ -9,7 +9,8 @@ plugins {
 }
 
 group = "org.ashoreprospect"
-version = "v0.1.3"
+// Mirrors AppVersion.LABEL: the UI version and the release tag must not drift apart.
+version = "v0.1.7"
 
 repositories {
     mavenCentral()
@@ -44,6 +45,65 @@ tasks.jacocoTestReport {
         xml.required.set(true)
         html.required.set(true)
     }
+}
+
+// Coverage gate for the headless-testable core.
+//
+// The JavaFX views, the HTTP client, and the Postgres repository all need a display, a
+// live server, or Docker, so they are simply not part of the gate. Each rule targets one
+// package by class-name pattern and asserts 70% line coverage of that package.
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        // Exact class lists: a "pkg.*" pattern would also match nested packages.
+        listOf(
+            "org.ashoreprospect.AppTimeReference",
+            "org.ashoreprospect.BlockedTime",
+            "org.ashoreprospect.BlockedTimePeriod",
+            "org.ashoreprospect.Day",
+            "org.ashoreprospect.RefreshLifeCycle",
+            "org.ashoreprospect.SchedulerEngine",
+            "org.ashoreprospect.Task",
+            "org.ashoreprospect.TaskLifeCycle",
+            "org.ashoreprospect.TaskManagementSystem",
+            "org.ashoreprospect.ValidateAddTaskInput",
+            "org.ashoreprospect.Workflow",
+            "org.ashoreprospect.Command.AddTask",
+            "org.ashoreprospect.Command.AddTaskWithFile",
+            "org.ashoreprospect.Command.ClearAllTask",
+            "org.ashoreprospect.Command.ClearPastTasks",
+            "org.ashoreprospect.Command.ClearTask",
+            "org.ashoreprospect.Command.EditTask",
+            "org.ashoreprospect.Command.FinishTask",
+            "org.ashoreprospect.Command.InAppCli",
+            "org.ashoreprospect.Command.MoveTask",
+            "org.ashoreprospect.Command.PrintAllTask",
+            "org.ashoreprospect.Command.RecordedCommand",
+            "org.ashoreprospect.Command.Redo",
+            "org.ashoreprospect.Command.RunSchedulerCommand",
+            "org.ashoreprospect.Command.SystemCommands",
+            "org.ashoreprospect.Command.TaskLookup",
+            "org.ashoreprospect.Command.Undo",
+            "org.ashoreprospect.Command.UnfinishTask",
+            "org.ashoreprospect.crypto.Vault",
+            "org.ashoreprospect.GUI.theme.Contrast",
+            "org.ashoreprospect.GUI.theme.ThemePalette"
+        ).forEach { className ->
+            rule {
+                element = "CLASS"
+                includes = listOf(className)
+                limit {
+                    counter = "LINE"
+                    value = "COVEREDRATIO"
+                    minimum = "0.60".toBigDecimal()
+                }
+            }
+        }
+    }
+}
+
+tasks.check {
+    dependsOn(tasks.jacocoTestCoverageVerification)
 }
 
 application {
