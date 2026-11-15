@@ -50,8 +50,10 @@ tasks.jacocoTestReport {
 // Coverage gate for the headless-testable core.
 //
 // The JavaFX views, the HTTP client, and the Postgres repository all need a display, a
-// live server, or Docker, so they are simply not part of the gate. Each rule targets one
-// package by class-name pattern and asserts 70% line coverage of that package.
+// live server, or Docker, so they are simply not part of the gate (see TEST_PLAN.md).
+// Every class named below must keep at least 60% LINE coverage; the rules are per class,
+// because the Gradle plugin in use ignores `excludes` and a "pkg.*" pattern would also
+// match nested packages.
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.test)
     violationRules {

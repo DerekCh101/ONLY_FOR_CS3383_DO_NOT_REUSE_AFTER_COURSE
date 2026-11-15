@@ -214,7 +214,7 @@ The server listens on port `3456` by default. Configure the database through the
 The grid uses 30-minute slots, one column per calendar day, from `06:00` through the next morning’s `05:30`. The search horizon is 5 years.
 
 1. **Fixed** tasks stay on their exact start and are never moved by Run Scheduler.
-2. **Deadline** tasks are re-placed earliest-slot-first before their deadline, earliest deadline date first (then longer duration first). A day with no more than 1 hour of free time is treated as overloaded and skipped.
+2. **Deadline** tasks are re-placed earliest-slot-first before their deadline, earliest deadline date first, then earliest deadline time, then longer duration first. A day with no more than 1 hour of free time is treated as overloaded and skipped.
 3. **Flexible** tasks are re-placed earliest-slot-first and ignore the overload rule.
 
 Past columns have no free slots. A task that cannot fit becomes `UNSCHEDULED`. Undo restores the previous placements. See [ADVANCE_BEHAVIOUR.md §8](ADVANCE_BEHAVIOUR.md) for the full algorithm.

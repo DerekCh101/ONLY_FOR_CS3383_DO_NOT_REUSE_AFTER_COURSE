@@ -209,7 +209,7 @@ Task types (`Task.state`):
 1. Snapshot every **non-fixed** task (for undo).
 2. Pull those tasks off the grid and clear their placed date/time.
 3. Split remaining work into deadline vs flexible. Skip `PAST` in the placer.
-4. **Deadline order:** earlier deadline **date** first; same date → **longer** duration first.
+4. **Deadline order:** earlier deadline **date** first; same date → earlier deadline **time** first (a task with no deadline time sorts after any timed one on that day); same date and time (or both untimed) → **longer** duration first.
 5. **Place deadline:** from `searchStart` (the later of the week/month base column and “today’s” column) through the deadline day, earliest slot first.
    - Today’s column starts at **current slot + 1** (never in the past).
    - Past columns have no free slots.
