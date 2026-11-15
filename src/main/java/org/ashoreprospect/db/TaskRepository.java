@@ -294,6 +294,10 @@ public class TaskRepository {
     }
 
     public void dbAddBlocked(BlockedTime blocked) throws SQLException {
+        // Refuse rather than write a row that nothing can ever push. Without a session the row is
+        // stored with a NULL user_id and the push is skipped, so the edit looks saved but can never
+        // reach Node. See issue #1.
+        requireSessionForBlockedWrite("add");
         if (blocked.getLastUpdatedAt() == null) blocked.touch();
         Set<String> deleted = sqlite.fetchBlockedDeletedIds();
         if (deleted.contains(blocked.getId())) {
@@ -320,6 +324,9 @@ public class TaskRepository {
 
     public void dbClearBlocked(BlockedTime blocked) throws SQLException {
         if (blocked == null || blocked.getId() == null) return;
+        // Same reasoning as dbAddBlocked(): a delete that cannot reach Node leaves the block on the
+        // server, so it comes straight back on the next pull. See issue #1.
+        requireSessionForBlockedWrite("clear");
         sqlite.deleteBlockedAndLog(blocked);
         if (postgresAvailable) {
             try {
@@ -487,6 +494,27 @@ public class TaskRepository {
 
     private static boolean nodeReady() {
         return Api.INSTANCE.getToken() != null && !Api.INSTANCE.getToken().isBlank();
+    }
+
+    /**
+     * Rejects a blocked-time write made with no session.
+     *
+     * <p>Every write to blocked times expects to be mirrored to Node, and Node needs a token. With
+     * no token the local row is written with a NULL {@code user_id} and the push is silently
+     * skipped, which loses the user's edit with no feedback. Rather than queue it (there is no
+     * outbox, and a partial queue would be worse than none), refuse the write and say why.
+     *
+     * <p>Throwing is safe here because the GUI never reaches these calls without a session:
+     * {@code showMain()} runs only after {@code applySession()}, and logout returns to the login
+     * view. This guard exists to keep the invariant true rather than to change reachable behaviour.
+     * See issue #1.
+     */
+    private static void requireSessionForBlockedWrite(String action) throws SQLException {
+        if (nodeReady()) return;
+        String message = "Signed out: cannot " + action + " a blocked time, because it could not be"
+                + " saved to the server. Sign in and try again.";
+        System.err.println(message);
+        throw new SQLException(message);
     }
 
     private static String taskToJson(Task task) {

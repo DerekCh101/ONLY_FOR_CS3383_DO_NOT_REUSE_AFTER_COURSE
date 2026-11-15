@@ -36,6 +36,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.LinkedHashMap;
@@ -47,6 +48,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ResourceLock("node-session")
@@ -123,32 +125,39 @@ class BlockedSyncProbeTest {
     // ---------- Probe B: is a signed-out block ever sent? ----------
 
     @Test
-    void probeB_aBlockCreatedWhileSignedOutIsNeverSentToNode() throws Exception {
+    void probeB_aBlockCreatedWhileSignedOutIsRefused() throws Exception {
         Api.INSTANCE.logout();
         assertNull(Api.INSTANCE.getToken(), "precondition: no token");
 
         BlockedTime b = BlockedTime.daily("Offline", LocalTime.of(9, 0), LocalTime.of(10, 0));
-        repo.dbAddBlocked(b);
 
-        // Sign in, then pull. Nothing has pushed the row in between.
+        // FIXED (#1): the write is refused instead of being stored where nothing can push it. A
+        // local-only row would silently never reach Node, so failing loudly is the honest option.
+        SQLException refused = assertThrows(SQLException.class, () -> repo.dbAddBlocked(b),
+                "PROBE-B RESULT: FIXED - a signed-out blocked write is refused");
+        System.out.println("PROBE-B refused: " + refused.getMessage());
+        assertFalse(rowExists(b.getId()), "and nothing was stored");
+
+        // Signing in later does not resurrect it: there is no queue to flush.
         signIn();
         try (CapturingNode node = new CapturingNode()) {
             overrideNodeEnv("http://127.0.0.1:" + node.port());
             repo.pullFromNode();
-
             List<String> writes = node.writes();
             System.out.println("PROBE-B requests: " + node.all());
-            assertTrue(writes.isEmpty(),
-                    "PROBE-B RESULT: a block created while signed out WAS re-sent: " + writes);
-            System.out.println("PROBE-B RESULT: no backlog flush exists - the row is never sent");
+            assertTrue(writes.isEmpty(), "no flush is attempted: " + writes);
+            System.out.println("PROBE-B RESULT: refused, so there is nothing left to send");
         }
     }
 
     @Test
-    void probeB2_aBlockWrittenWhileSignedOutIsOrphanedForever() throws Exception {
+    void probeB2_aBlockLeftWithoutAnOwnerIsClaimedByTheNextPull() throws Exception {
+        // The orphan this guards against is a row that predates the session, not one this build can
+        // create: since #1 a signed-out write is refused outright. Seeding it with no session keeps
+        // the #5 behaviour under test independently of that guard.
         Api.INSTANCE.logout();
         BlockedTime b = BlockedTime.daily("Offline", LocalTime.of(9, 0), LocalTime.of(10, 0));
-        repo.dbAddBlocked(b);
+        sqlite.upsertBlocked(b);                       // DAO write: no token, so user_id stays NULL
         boolean whileOut = sqlite.findBlockedById(b.getId()) != null;
 
         signIn();

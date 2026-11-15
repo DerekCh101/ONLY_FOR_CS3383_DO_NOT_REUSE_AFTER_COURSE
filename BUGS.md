@@ -3,8 +3,10 @@
 Five defects found while expanding the blocked-time test coverage in round 3.
 
 All five were confirmed with automated probes rather than by reading, so the "observed" line in each
-issue is what the code actually did when run. None has been fixed: the production code is untouched
-and the probes deliberately pin the current behaviour.
+issue is what the code actually did when run.
+
+**Status: all five are fixed.** The Status section at the end records what changed and which tests
+pin the corrected behaviour. The issue texts below are kept as written when each bug was found.
 
 ## 1. Blocked period created while signed out is never sent to Node
 
@@ -17,7 +19,8 @@ so the block created while signed out is never retried.
 Verified with `BlockedSyncProbeTest`: probe A sees `POST /blocked` when signed in (the push works);
 probe B sees only `GET /tasks`/`GET /blocked` after signing in, so a signed-out write is never sent.
 
-Fix: mark skipped pushes dirty and flush them at the start of the next pull.
+Fix: refuse the write when there is no session, rather than storing a row that nothing can push.
+An outbox was considered and rejected — see the note under Status.
 
 `TaskRepository` L296-319 (`dbAddBlocked`), L321-333 (`dbClearBlocked`), L482-484 (`nodeReady`).
 
@@ -97,11 +100,21 @@ Fix: add the `OR user_id IS NULL` branch to both, matching the task queries.
 
 | # | Status | Change |
 |---|---|---|
-| 1 | **open** | Needs an outbox, which is a product decision (allow local-only use or not) |
+| 1 | fixed | `dbAddBlocked()` / `dbClearBlocked()` refuse a write with no session instead of storing a row that can never be pushed |
 | 2 | fixed | Served-row record (`sync_seen_blocked`); a row is only swept after two pulls omit it |
 | 3 | fixed | `unrecordBlockedDelete()` called when Node re-sends a tombstoned block |
 | 4 | fixed | An unusable remote stamp is treated as "now" and logged, not as "older than local" |
 | 5 | fixed | `claimBlockedRowsWithNoOwner()` runs at the start of every pull |
+
+Notes on the #1 fix:
+
+- No outbox was added. The GUI never lets a signed-out user reach the blocked-time editor:
+  `showMain()` runs only after `applySession()` has set the token, and logout tears the window
+  down and returns to the login screen. The guard therefore keeps an invariant rather than
+  changing reachable behaviour — it turns a silent data loss into a clear error if that ever
+  stops being true (a future local-only mode, for example).
+- A delete is refused for the same reason: a local-only delete does not reach Node, so the block
+  would reappear on the next pull after the user was told it was removed.
 
 Two notes on the #2 fix:
 

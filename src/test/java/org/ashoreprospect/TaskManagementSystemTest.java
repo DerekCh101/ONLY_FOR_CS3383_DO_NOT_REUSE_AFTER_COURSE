@@ -1,11 +1,20 @@
 /** Singleton wiring: mainTask/quicksOf lookups, schedule rebuild, and popup storage. */
 package org.ashoreprospect;
 
+import org.ashoreprospect.db.SqliteTaskRepository;
+import org.ashoreprospect.db.TaskRepository;
+import org.ashoreprospect.net.Api;
+import org.ashoreprospect.net.Endpoints;
+import org.ashoreprospect.net.LocalSession;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 
+import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -27,31 +36,79 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * every test resets the singleton and clears its lists/grid afterwards.
  */
 @ResourceLock("app-clock")
+@ResourceLock("node-session")
 class TaskManagementSystemTest {
 
     private static final LocalDate MON = LocalDate.of(2026, 10, 12);
     private static final Clock TEST_CLOCK = Clock.fixed(
             Instant.parse("2026-10-12T07:00:00Z"), ZoneId.of("UTC"));
+    private static final String SIGNED_IN_UID = "tms-test-user";
 
     private TaskManagementSystem system;
     private Clock savedClock;
+    private Path sessionFile;
+    private Path prefsFile;
+    private byte[] savedSession;
+    private byte[] savedPrefs;
+    private boolean signedIn;
+
+    @TempDir
+    Path tmp;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         savedClock = Clock.systemDefaultZone();
         AppTimeReference.setClock(TEST_CLOCK);
+
+        Path dir = Endpoints.dir();
+        sessionFile = dir.resolve("session.txt");
+        prefsFile = dir.resolve("login.txt");
+        savedSession = Files.isRegularFile(sessionFile) ? Files.readAllBytes(sessionFile) : null;
+        savedPrefs = Files.isRegularFile(prefsFile) ? Files.readAllBytes(prefsFile) : null;
+
         TaskManagementSystem.resetInstance();
         system = TaskManagementSystem.getInstance();
         clear();
     }
 
+    /**
+     * A file-only remember-me session, plus a repository pointed at a temp database.
+     *
+     * <p>Signing in is needed because rewriteEncryptedStores() is only reached from the account
+     * pane, and a blocked write with no session is refused since #1. The repository must also be
+     * swapped, though: TaskRepository's own constructor opens the real scheduler-cache.db, so a
+     * session would otherwise make this test read the developer's data and collide with it.
+     */
+    private void signInWithIsolatedDatabase() throws Exception {
+        LocalSession.save(SIGNED_IN_UID, "tester", "file-only-token");
+        LocalSession.savePrefs(true, "tester");
+        assertTrue(Api.INSTANCE.restoreSession(), "the file-only session loads");
+
+        SqliteTaskRepository sqlite = new SqliteTaskRepository("jdbc:sqlite:" + tmp.resolve("tms.db"));
+        sqlite.initialize();
+        Field sqliteField = TaskRepository.class.getDeclaredField("sqlite");
+        sqliteField.setAccessible(true);
+        sqliteField.set(system.getTaskRepo(), sqlite);
+        signedIn = true;
+    }
+
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
         if (system != null) {
             clear();
         }
         TaskManagementSystem.resetInstance();
         AppTimeReference.setClock(savedClock);
+        if (signedIn) {
+            Api.INSTANCE.logoutKeepRemembered();
+            restore(sessionFile, savedSession);
+            restore(prefsFile, savedPrefs);
+        }
+    }
+
+    private static void restore(Path file, byte[] content) throws Exception {
+        if (content == null) Files.deleteIfExists(file);
+        else Files.write(file, content);
     }
 
     private void clear() {
@@ -288,6 +345,8 @@ class TaskManagementSystemTest {
     @Test
     void rewriteEncryptedStores_resavesEveryTaskAndBlockedRowAndAdvancesTheirTimestamps()
             throws Exception {
+        // The real callers sit in the account pane, which only exists with a session.
+        signInWithIsolatedDatabase();
         Task placed = task("placed", 1.0, 3);
         placed.setPlacedDate(MON);
         placed.setPlacedTime(LocalTime.of(9, 0));

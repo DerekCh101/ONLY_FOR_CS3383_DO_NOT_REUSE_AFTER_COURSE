@@ -46,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ResourceLock("node-session")
@@ -491,6 +492,62 @@ class TaskRepositoryNodeMergeTest {
 
         assertFalse(mergeBlocked(List.of()));
         assertEquals(1, sqlite.fetchAllBlocked().size());
+    }
+
+    // ---------- writes with no session (#1) ----------
+
+    @Test
+    void dbAddBlocked_withoutASession_isRefusedAndStoresNothing() throws Exception {
+        Api.INSTANCE.logout();
+        BlockedTime b = BlockedTime.daily("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+
+        SQLException refused = assertThrows(SQLException.class, () -> repo.dbAddBlocked(b));
+        assertTrue(refused.getMessage().contains("Sign in"), refused.getMessage());
+        // Nothing is written: a stored row would carry a NULL user_id, be invisible to every read,
+        // and never be pushed to Node - the user's edit would vanish without a trace.
+        assertFalse(rowExists("SELECT 1 FROM blocked_times WHERE id = ?", b.getId()));
+    }
+
+    @Test
+    void dbClearBlocked_withoutASession_isRefusedAndKeepsTheRow() throws Exception {
+        BlockedTime b = BlockedTime.daily("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        overrideNodeEnv("http://127.0.0.1:" + closedPort());
+        try {
+            repo.dbAddBlocked(b);                              // signed in, so this succeeds
+        } finally {
+            overrideNodeEnv(null);
+        }
+        Api.INSTANCE.logout();
+
+        SQLException refused = assertThrows(SQLException.class, () -> repo.dbClearBlocked(b));
+        assertTrue(refused.getMessage().contains("Sign in"), refused.getMessage());
+        // The block stays: a local delete could not reach Node, so the next pull would restore it
+        // and the user would see the block reappear after being told it was removed.
+        assertTrue(rowExists("SELECT 1 FROM blocked_times WHERE id = ?", b.getId()));
+    }
+
+    @Test
+    void dbAddBlocked_withASession_stillWorks() throws Exception {
+        BlockedTime b = BlockedTime.daily("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        overrideNodeEnv("http://127.0.0.1:" + closedPort());
+        try {
+            repo.dbAddBlocked(b);
+        } finally {
+            overrideNodeEnv(null);
+        }
+        assertTrue(rowExists("SELECT 1 FROM blocked_times WHERE id = ?", b.getId()),
+                "the guard only applies without a session");
+    }
+
+    /** Runs a one-row existence query against the same SQLite file the repository uses. */
+    private boolean rowExists(String sql, String id) throws SQLException {
+        try (java.sql.Connection conn = sqlite.connect();
+             java.sql.PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
     }
 
     @Test
