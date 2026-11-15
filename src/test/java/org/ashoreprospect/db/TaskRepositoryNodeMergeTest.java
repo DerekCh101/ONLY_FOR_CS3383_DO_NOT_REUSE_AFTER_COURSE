@@ -300,10 +300,10 @@ class TaskRepositoryNodeMergeTest {
     }
 
     @Test
-    void mergeNodeTasks_aRemoteRowWithAnUnparseableStamp_keepsTheLocalTitle() throws Exception {
-        // PINNED: a Node stamp that is not ISO-8601 is parsed as null. mergeTasks() then treats
-        // the local row (which always has a stamp, because upsert() writes now()) as the newer
-        // side, so the remote edit is dropped and only the change flag is reported.
+    void mergeNodeTasks_aRemoteRowWithAnUnparseableStamp_isApplied() throws Exception {
+        // A Node stamp that is not ISO-8601 is unusable, but it must not be read as "older than
+        // local": the local row always has a stamp, so that silently dropped the remote edit
+        // while still reporting a change (#4).
         Task local = task("bad-stamp", "local-title");
         local.setLastUpdatedAt(null);
         store(local);
@@ -311,8 +311,8 @@ class TaskRepositoryNodeMergeTest {
 
         assertTrue(mergeTasks(rows(row("id", "bad-stamp", "title", "remote-title",
                 "last_updated_at", "yesterday"))), "reported as a change");
-        assertEquals("local-title", sqlite.findById("bad-stamp").getTaskName(),
-                "but the local title wins");
+        assertEquals("remote-title", sqlite.findById("bad-stamp").getTaskName(),
+                "and the remote edit is applied instead of dropped");
     }
 
     // ---------- mergeNodeBlocked ----------
@@ -409,34 +409,43 @@ class TaskRepositoryNodeMergeTest {
     }
 
     @Test
-    void mergeBlocked_isAllOrNothing() throws Exception {
-        // The pure form shows why: no field is combined, the whole block is picked. A newer
-        // local stamp wins on every device, so remote fields never ride along.
+    void mergeBlocked_keepsTheLocalEditAndItsStamp() throws Exception {
+        // The block is picked whole, so a newer local stamp wins on every device. The local stamp
+        // is kept rather than advanced: upsertBlocked() refuses a write whose stamp is older than
+        // the stored one, so a merged copy carrying Node's stamp could never be saved. Convergence
+        // is decided by mergeNodeBlocked()'s served-row record instead (#2).
         BlockedTime local = BlockedTime.daily("mine", LocalTime.of(9, 0), LocalTime.of(10, 0));
         local.setLastUpdatedAt(NOW.plusSeconds(300));
         BlockedTime remote = BlockedTime.daily("theirs", LocalTime.of(9, 0), LocalTime.of(10, 0));
         remote.setLastUpdatedAt(NOW);
 
-        assertSame(local, TaskRepository.mergeBlocked(local, remote, true), "host keeps local");
-        assertSame(local, TaskRepository.mergeBlocked(local, remote, false), "client too");
+        BlockedTime host = TaskRepository.mergeBlocked(local, remote, true);
+        BlockedTime client = TaskRepository.mergeBlocked(local, remote, false);
+
+        assertEquals("mine", host.getTitle(), "host keeps local fields");
+        assertEquals("mine", client.getTitle(), "client too");
+        assertEquals(local.getId(), host.getId(), "and it is the same block");
+        assertEquals(NOW.plusSeconds(300), host.getLastUpdatedAt(), "keeping the local stamp");
+        assertEquals(NOW.plusSeconds(300), client.getLastUpdatedAt());
 
         BlockedTime newer = BlockedTime.daily("newer", LocalTime.of(9, 0), LocalTime.of(10, 0));
         newer.setLastUpdatedAt(NOW.plusSeconds(600));
-        assertEquals("newer", TaskRepository.mergeBlocked(local, newer, true).getTitle(),
+        assertSame(newer, TaskRepository.mergeBlocked(local, newer, true),
                 "a newer remote block replaces the local one wholesale");
     }
 
     @Test
     void mergeNodeBlocked_aTombstonedBlockThatNodeStillHasComesBack() throws Exception {
         sqlite.recordBlockedDelete("blk-3", NOW, "Lunch");
+        assertTrue(sqlite.fetchBlockedDeletedIds().contains("blk-3"), "tombstoned first");
 
         assertTrue(mergeBlocked(rows(row("id", "blk-3", "title", "Lunch",
                 "start_time", "12:00", "end_time", "13:00"))), "the block is stored again");
         assertEquals(1, sqlite.fetchAllBlocked().size());
-        // PINNED: unlike a task, the blocked tombstone is not removed, so the delete is still
-        // reported on every later pull (fetchBlockedDeletedIds() has no user filter either).
-        assertTrue(sqlite.fetchBlockedDeletedIds().contains("blk-3"),
-                "the tombstone is never cleared in mergeNodeBlocked()");
+        // Node still has the block, so the local delete is superseded and the tombstone row goes
+        // with it - otherwise dbAddBlocked() refuses this id forever (#3).
+        assertFalse(sqlite.fetchBlockedDeletedIds().contains("blk-3"),
+                "the tombstone is cleared, like the task branch does");
     }
 
     @Test
@@ -448,6 +457,28 @@ class TaskRepositoryNodeMergeTest {
 
         assertTrue(mergeBlocked(List.of()));
         assertTrue(sqlite.fetchAllBlocked().isEmpty());
+        assertTrue(sqlite.fetchBlockedDeletedIds().contains(local.getId()));
+    }
+
+    @Test
+    void mergeNodeBlocked_aRemoteDeleteOnlyTakesEffectAfterTwoPullsThatOmitTheRow() throws Exception {
+        // A row Node served once is not deleted by the very next response that omits it: one
+        // response is not proof that Node dropped the block (#2).
+        BlockedTime local = BlockedTime.daily("keep", LocalTime.of(9, 0), LocalTime.of(10, 0));
+        local.setLastUpdatedAt(NOW);
+        sqlite.upsertBlocked(local);
+        mergeBlocked(rows(row("id", local.getId(), "title", "keep",
+                "start_time", "09:00", "end_time", "10:00",
+                "last_updated_at", NOW.toString())));
+        sqlite.setMeta("last_node_sync_at", NOW.plusSeconds(60).toString());
+
+        mergeBlocked(List.of());                      // first pull without the row
+        assertNotNull(sqlite.findBlockedById(local.getId()),
+                "one omission is not a remote delete");
+
+        mergeBlocked(List.of());                      // second pull without it
+        assertNull(sqlite.findBlockedById(local.getId()),
+                "a confirmed remote delete still happens");
         assertTrue(sqlite.fetchBlockedDeletedIds().contains(local.getId()));
     }
 
@@ -491,8 +522,7 @@ class TaskRepositoryNodeMergeTest {
     // ---------- pullFromNode ----------
 
     @Test
-    void pullFromNode_withoutATokenResetsTheFingerprintAndReturnsFalse() throws Exception {
-        setField(repo, "lastNodeFingerprint", "stale");
+    void pullFromNode_withoutATokenResetsTheFingerprintAndReturnsFalse() throws Exception {        setField(repo, "lastNodeFingerprint", "stale");
         Api.INSTANCE.logoutKeepRemembered();
         assertNull(Api.INSTANCE.getToken());
 

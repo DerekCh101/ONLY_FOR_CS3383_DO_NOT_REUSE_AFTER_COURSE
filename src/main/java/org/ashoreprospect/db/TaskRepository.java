@@ -415,6 +415,12 @@ public class TaskRepository {
         }
         long epoch = historyEpoch.get();
         try {
+            // Claim before the GET: a blocked time written before sign-in has no owner, so it is
+            // invisible to every local read and cannot be merged anyway. Claiming first means a
+            // flaky or offline Node does not leave the row orphaned for another cycle (#5).
+            boolean claimed = sqlite.claimBlockedRowsWithNoOwner() > 0;
+            if (claimed) System.out.println("claimed blocked times written before sign-in");
+
             List<Map<String, String>> tasks = Api.INSTANCE.getTasks();
             List<Map<String, String>> blocked = Api.INSTANCE.getBlocked();
             String fp = fingerprint(tasks, blocked);
@@ -422,17 +428,17 @@ public class TaskRepository {
             try {
                 if (epoch != historyEpoch.get()) {
                     System.out.println("Node pull dropped — calendar history changed during GET");
-                    return false;
+                    return claimed;
                 }
                 if (fp.equals(lastNodeFingerprint)) {
-                    return false;
+                    return claimed;
                 }
                 boolean changed = mergeNodeTasks(tasks);
                 changed = mergeNodeBlocked(blocked) || changed;
                 lastNodeFingerprint = fp;
                 sqlite.setMeta("last_node_sync_at", Instant.now().toString());
                 if (changed) System.out.println("Node pull applied");
-                return changed;
+                return changed || claimed;
             } finally {
                 unlockHistory();
             }
@@ -621,29 +627,58 @@ public class TaskRepository {
             remoteList.add(remote);
         }
 
+        Map<String, BlockedTime> remoteById = new HashMap<>();
+        for (BlockedTime r : remoteList) {
+            remoteById.put(r.getId(), r);
+        }
+        // What Node served in the *previous* pull. Used both to decide whether a repeat is news
+        // and to require a second confirming pull before the sweep deletes anything. See #2.
+        Set<String> seenBefore = sqlite.blockedSeenIds();
+
         for (BlockedTime remote : remoteList) {
             if (deleted.contains(remote.getId())) {
+                // Node still has this block, so the local delete is superseded: drop the tombstone
+                // row too, or dbAddBlocked() refuses the id forever. Mirrors the task branch.
+                // See issue #3.
+                sqlite.unrecordBlockedDelete(remote.getId());
                 deleted.remove(remote.getId());
+                changed = true;
             }
             BlockedTime local = sqlite.findBlockedById(remote.getId());
             if (local != null && sameBlockedStamp(local, remote)) continue;
             BlockedTime merged = (local == null) ? remote : mergeBlocked(local, remote);
             if (merged.getStartTime() == null || merged.getEndTime() == null) continue;
+            // A row this device has never seen from Node is news even when the local content
+            // wins, so report it once; after that only a real content change counts.
+            if (local != null && sameBlockedContent(local, merged)) {
+                if (!seenBefore.contains(remote.getId())) changed = true;
+                continue;
+            }
             sqlite.upsertBlocked(merged);
             changed = true;
         }
 
-        Map<String, BlockedTime> remoteById = new HashMap<>();
-        for (BlockedTime r : remoteList) {
-            remoteById.put(r.getId(), r);
-        }
+        // Record exactly what Node served in this pull. The sweep below only deletes a local row
+        // that a *previous* complete pull already showed as missing; without that record a single
+        // response omitting a row would delete a block Node still has. See issue #2.
+        sqlite.replaceBlockedSeen(remoteById.keySet());
 
-        Instant lastSync = parseMetaInstant(sqlite.getMeta("last_node_sync_at"));
         for (BlockedTime local : sqlite.fetchAllBlocked()) {
             if (deleted.contains(local.getId())) continue;
             if (remoteById.containsKey(local.getId())) continue;
+            // A row with no owner belongs to whoever signs in next (see issue #5), so this
+            // account must not treat its absence from Node as a deletion. Once claimed, the row
+            // carries a user id and the sweep applies to it normally.
+            if (local.getUserId() == null || local.getUserId().isBlank()) continue;
+            // Absent now, but Node served it in the previous pull: this is the first pull to miss
+            // it, so wait for a second one to confirm the delete rather than trusting one response.
+            if (seenBefore.contains(local.getId())) {
+                changed = true;   // the record changed even though nothing was deleted
+                continue;
+            }
 
             Instant localEdit = local.getLastUpdatedAt();
+            Instant lastSync = parseMetaInstant(sqlite.getMeta("last_node_sync_at"));
             if (lastSync != null && localEdit != null && !localEdit.isAfter(lastSync)) {
                 sqlite.deleteBlockedRow(local.getId());
                 sqlite.recordBlockedDelete(local.getId(), Instant.now(), local.getTitle());
@@ -660,6 +695,21 @@ public class TaskRepository {
 
     private static boolean sameBlockedStamp(BlockedTime local, BlockedTime remote) {
         return sameStamp(local.getLastUpdatedAt(), remote.getLastUpdatedAt());
+    }
+
+    /**
+     * True when re-storing {@code merged} would not change the row: same title, same schedule and
+     * same exception flag. Used to stop mergeNodeBlocked() reporting a change on every pull for a
+     * row the local side already owns (see issue #2). The stamp is deliberately not compared -
+     * the local edit keeps its own stamp so that other devices can still win with a newer one.
+     */
+    private static boolean sameBlockedContent(BlockedTime a, BlockedTime b) {
+        return java.util.Objects.equals(nz(a.getTitle()), nz(b.getTitle()))
+                && a.getStartTime() == b.getStartTime()
+                && a.getEndTime() == b.getEndTime()
+                && a.getWeekday() == b.getWeekday()
+                && java.util.Objects.equals(a.getSpecificDate(), b.getSpecificDate())
+                && a.isException() == b.isException();
     }
 
     private static boolean sameStamp(Instant local, Instant remote) {
@@ -741,9 +791,16 @@ public class TaskRepository {
 
         Instant placeAt = parseInstant(first(row, "placement_updated_at", "placementUpdatedAt"));
         Instant lastAt = parseInstant(first(row, "last_updated_at", "lastUpdatedAt"));
+        if (lastAt == null) {
+            // An unusable stamp must not be read as "older than local", or the row is silently
+            // dropped while the merge still reports a change. Treat it as "at least as new".
+            // See issue #4.
+            System.err.println("node row has no usable last_updated_at, using now id=" + id
+                    + " raw=" + first(row, "last_updated_at", "lastUpdatedAt"));
+            lastAt = Instant.now();
+        }
         if (placeAt != null) task.setPlacementUpdatedAt(placeAt);
-        if (lastAt != null) task.setLastUpdatedAt(lastAt);
-        else if (placeAt != null) task.setLastUpdatedAt(placeAt);
+        task.setLastUpdatedAt(lastAt);
         task.setDescription(first(row, "description"));
         String done = first(row, "description_done", "descriptionDone");
         task.setDescriptionDone("true".equalsIgnoreCase(done) || "t".equalsIgnoreCase(done) || "1".equals(done));
@@ -1137,8 +1194,28 @@ public class TaskRepository {
     }
 
     static BlockedTime mergeBlocked(BlockedTime local, BlockedTime remote, boolean hostDevice) {
-        return preferRemote(local.getLastUpdatedAt(), remote.getLastUpdatedAt(), hostDevice)
-                ? remote : local;
+        if (preferRemote(local.getLastUpdatedAt(), remote.getLastUpdatedAt(), hostDevice)) {
+            return remote;
+        }
+        // The local edit wins, so the remote fields are dropped and the local stamp is kept.
+        // Carrying a stamp forward is not an option: upsertBlocked() refuses any write whose
+        // last_updated_at is older than the stored one, so a merged copy stamped with the remote
+        // value would simply never be saved. Convergence is handled where the row is compared
+        // (sameBlockedContent) and in the served-row record instead of by rewriting the stamp.
+        // See issue #2.
+        BlockedTime out = new BlockedTime(
+                local.getId(),
+                local.getTitle(),
+                local.getWeekday(),
+                local.getSpecificDate(),
+                local.getStartTime(),
+                local.getEndTime(),
+                null,
+                local.getUserId());
+        out.setException(local.isException());
+        // The constructor replaces a null stamp with now(), so restore the local one explicitly.
+        out.setLastUpdatedAt(normalizeInstant(local.getLastUpdatedAt()));
+        return out;
     }
 
     /**

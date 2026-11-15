@@ -336,14 +336,16 @@ class TaskRepositoryWireFormatTest {
     }
 
     @Test
-    void taskFromNode_fallsBackToThePlacementStampWhenTheLastStampIsMissing() {
+    void taskFromNode_anUnusableLastStampDoesNotUseThePlacementStamp() {
         Task t = taskFromNode(row("id", "x-3",
                 "placement_updated_at", STAMP.toString()));
 
         assertEquals(STAMP, t.getPlacementUpdatedAt());
-        // PINNED: a missing last_updated_at is derived from placement_updated_at, so the
-        // merged copy never ends up with a null last stamp.
-        assertEquals(STAMP, t.getLastUpdatedAt());
+        // A missing last_updated_at is not derived from placement_updated_at: a placement stamp
+        // can be far in the past, and using it would make the row look older than the local copy.
+        // It is replaced with "now" instead, so the row is never silently dropped (#4).
+        assertNotNull(t.getLastUpdatedAt());
+        assertFalse(t.getLastUpdatedAt().isBefore(Instant.now().minusSeconds(60)));
     }
 
     @Test

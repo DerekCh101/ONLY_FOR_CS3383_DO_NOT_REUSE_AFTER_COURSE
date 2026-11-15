@@ -160,13 +160,16 @@ class BlockedSyncProbeTest {
                 + " visibleWhileSignedOut=" + whileOut + " visibleWhileSignedIn=" + whileIn);
 
         assertTrue(rawRowExists, "the row is physically in the table");
-        assertNull(owner, "user_id is NULL, because it was written with no session");
+        assertNull(owner, "user_id is NULL before anyone claims it");
         assertFalse(whileOut, "hidden while signed out (user-id filter -> WHERE 1 = 0)");
-        // PINNED BUG: blocked_times reads use "user_id = ?" with no "OR user_id IS NULL", so the
-        // row can never be matched again, by any user, at any point.
-        assertFalse(whileIn,
-                "PROBE-B2 RESULT: CONFIRMED - the row stays invisible even after signing in, "
-                        + "because blocked reads never match a NULL user_id");
+        // FIXED (#5): a signed-in pull claims the row, so it becomes visible to its owner instead
+        // of staying orphaned. The claim runs in pullFromNode(), not on mere sign-in.
+        repo.pullFromNode();
+        boolean whileInAfterPull = sqlite.findBlockedById(b.getId()) != null;
+        System.out.println("PROBE-B2 afterPull user_id=" + userIdOf(b.getId())
+                + " visibleAfterPull=" + whileInAfterPull);
+        assertTrue(whileInAfterPull,
+                "PROBE-B2 RESULT: FIXED - the pull claimed the row and it is visible again");
     }
 
     // ---------- Probe C: does an older row keep the merge "changed"? ----------
@@ -182,17 +185,21 @@ class BlockedSyncProbeTest {
                 "last_updated_at", NOW.minusSeconds(43_200).toString());
 
         boolean first = mergeBlocked(List.of(older));
+        Instant afterFirst = sqlite.findBlockedById(local.getId()).getLastUpdatedAt();
         boolean second = mergeBlocked(List.of(older));
         Instant stored = sqlite.findBlockedById(local.getId()).getLastUpdatedAt();
 
-        System.out.println("PROBE-C first=" + first + " second=" + second + " storedStamp=" + stored);
+        System.out.println("PROBE-C first=" + first + " second=" + second
+                + " remoteStamp=" + older.get("last_updated_at")
+                + " localStamp=" + NOW
+                + " afterFirst=" + afterFirst + " storedStamp=" + stored);
         assertTrue(first, "PROBE-C RESULT: the first merge reports a change");
-        // PINNED BUG: the identical payload never settles. Because mergeBlocked returns the local
-        // object unchanged, the stored stamp stays at NOW and can never equal the remote one, so
-        // sameBlockedStamp at L629 never matches and every merge writes again.
-        assertTrue(second,
-                "PROBE-C RESULT: CONFIRMED - a repeated identical payload is re-merged");
-        assertTrue(NOW.equals(stored), "the stored stamp never moved to the remote value");
+        // FIXED (#2): once the row is on record as served by Node, an identical payload is no
+        // longer re-merged, so the pull settles. The local stamp is kept because the local edit
+        // wins and upsertBlocked() refuses to move a stamp backwards.
+        assertFalse(second,
+                "PROBE-C RESULT: FIXED - a repeated identical payload is no longer re-merged");
+        assertTrue(NOW.equals(stored), "and the local edit keeps its own stamp");
     }
 
     // ---------- Probe D: is that row swept when Node omits it? ----------
@@ -212,15 +219,16 @@ class BlockedSyncProbeTest {
         boolean changed = mergeBlocked(List.of());           // pull B: Node omits the row
         boolean stillLocal = sqlite.findBlockedById(local.getId()) != null;
 
+        System.out.println("PROBE-D syncAt=" + sqlite.getMeta("last_node_sync_at"));
         System.out.println("PROBE-D changed=" + changed + " stillLocal=" + stillLocal
                 + " tombstones=" + sqlite.fetchBlockedDeletedIds());
-        assertTrue(changed, "PROBE-D RESULT: the sweep fired");
-        // PINNED BUG: a block Node still has is deleted and tombstoned because its local stamp
-        // fell behind the pull stamp. One partial response is enough.
-        assertFalse(stillLocal,
-                "PROBE-D RESULT: CONFIRMED - a still-present block was deleted locally");
-        assertTrue(sqlite.fetchBlockedDeletedIds().contains(local.getId()),
-                "PROBE-D RESULT: and tombstoned, so it cannot be re-added");
+        // FIXED (#2): the pull that merged the older row recorded it as served by Node, so a
+        // response that omits it once is not treated as a remote delete. `changed` may still be
+        // true because the served-set updated - what matters is that nothing was deleted.
+        assertTrue(stillLocal,
+                "PROBE-D RESULT: FIXED - the still-present block is kept");
+        assertFalse(sqlite.fetchBlockedDeletedIds().contains(local.getId()),
+                "PROBE-D RESULT: and it is not tombstoned");
     }
 
     // ---------- helpers ----------
