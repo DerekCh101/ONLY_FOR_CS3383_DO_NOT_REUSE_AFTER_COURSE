@@ -11,6 +11,7 @@ import java.util.TreeMap;
 import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -241,7 +242,7 @@ class SchedulerEngineTest {
         assertEquals(LocalTime.of(7, 30), early.getPlacedTime());
         assertEquals(LocalTime.of(8, 0), late.getPlacedTime());
         // The longer 10:00 task is sorted first, so it takes 08:30 and the short one
-        // lands at 09:30 — i.e. it does not get the slot the long one just occupied.
+        // lands at 09:30, i.e. it does not get the slot the long one just occupied.
         assertEquals(LocalTime.of(8, 30), longSameTime.getPlacedTime());
         assertEquals(LocalTime.of(9, 30), shortSameTime.getPlacedTime());
     }
@@ -500,6 +501,365 @@ class SchedulerEngineTest {
         assertFalse(system.getPendingTasks().contains(past));
         assertFalse(system.getUnscheduledTasks().contains(past));
         assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == past).count());
+    }
+
+    // ---------------------------------------------------------------- stage 3: branch hardening
+
+    @Test
+    void updateSchedule_crashesWhenAPlacedDeadlineTaskHasNoDeadlineDate() throws Exception {
+        // BUG (found in stage 3): the deadline sort at SchedulerEngine:139-151 dereferences
+        // t.getDeadLineDate() without a null check, while placeDeadlineTasks() a few lines
+        // later explicitly handles `getDeadLineDate() == null`. Any state-2 task with a null
+        // deadline date therefore crashes updateSchedule() with a NullPointerException.
+        //
+        // Reachable through the public API: a deadline task with a real date (so the sort
+        // has a non-null side to compare against) is enough to trigger it.
+        Task planted = task("no-date", 0.5, 3, null, null);
+        planted.setState(2);
+        planted.setPlacedDate(MON);
+        planted.setPlacedTime(LocalTime.of(9, 0));
+        system.getPlacedTasks().add(planted);
+        system.getGrid().computeIfAbsent(MON, d -> new Day(system.getBlockedTime()))
+                .placeTask(AppTimeReference.localTimeToSlot(LocalTime.of(9, 0)), planted);
+        system.getUnscheduledTasks().add(task("untimed", 0.5, 2, MON.plusDays(1), null));
+        system.getUnscheduledTasks().add(task("timed", 0.5, 2, MON.plusDays(1), LocalTime.of(9, 0)));
+
+        // PINNED: no production change - the crash is recorded exactly as it happens.
+        NullPointerException thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                NullPointerException.class, () -> system.updateSchedule());
+        // The JVM reports the null receiver of LocalDate.compareTo() as "other is null".
+        assertTrue(thrown.getMessage().contains("other") && thrown.getMessage().contains("null"),
+                "PINNED: the NPE comes from the deadline comparator, not anywhere else: "
+                + thrown.getMessage());
+    }
+
+    @Test
+    void deadlineTasks_mixedNullAndPresentDeadlineTimes_stillSort() throws Exception {
+        // L144-L146: with at least one task that has a deadline *time*, the comparator
+        // never compares two LocalDate nulls, so the sort survives and the untimed task is
+        // ordered after the timed one.
+        Task untimed = task("untimed", 0.5, 2, MON.plusDays(1), null);
+        Task timed = task("timed", 0.5, 2, MON.plusDays(1), LocalTime.of(9, 0));
+
+        system.getUnscheduledTasks().add(untimed);
+        system.getUnscheduledTasks().add(timed);
+
+        new SchedulerEngine(system, MON, new java.util.TreeMap<>())
+                .scheduleTasks(new ArrayList<>(system.getUnscheduledTasks()));
+
+        assertEquals(LocalTime.of(7, 30), timed.getPlacedTime(), "timed task is placed first");
+        assertEquals(LocalTime.of(8, 0), untimed.getPlacedTime(), "untimed task goes next");
+    }
+
+    @Test
+    void deadlineTasks_nullTimeSortsAfterATimedDeadlineOnTheSameDate() throws Exception {
+        // L144-L146: the null-aware arms of the deadline comparator. On one date, a task with
+        // no deadline time sorts *after* one with a time, regardless of duration.
+        Task untimed = task("untimed", 2.0, 2, MON.plusDays(1), null);
+        Task timed = task("timed", 0.5, 2, MON.plusDays(1), LocalTime.of(9, 0));
+
+        system.getUnscheduledTasks().add(untimed);
+        system.getUnscheduledTasks().add(timed);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(new ArrayList<>(system.getUnscheduledTasks()));
+
+        assertEquals(LocalTime.of(7, 30), timed.getPlacedTime(),
+                "the timed deadline is placed first despite being shorter");
+        assertEquals(LocalTime.of(8, 0), untimed.getPlacedTime());
+        assertTrue(system.getPlacedTasks().contains(timed));
+        assertTrue(system.getPlacedTasks().contains(untimed));
+    }
+
+    @Test
+    void deadlineTasks_bothUntimedSortByLongerDurationFirst() throws Exception {
+        // L146's else-path: when both deadline times are null, the tie-break is duration,
+        // longest first. An untimed deadline on the same date has no time pressure, so this
+        // only exercises the comparator.
+        Task longTask = task("long", 2.0, 2, MON.plusDays(1), null);
+        Task shortTask = task("short", 0.5, 2, MON.plusDays(1), null);
+
+        system.getUnscheduledTasks().add(shortTask);
+        system.getUnscheduledTasks().add(longTask);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(new ArrayList<>(system.getUnscheduledTasks()));
+
+        assertEquals(LocalTime.of(7, 30), longTask.getPlacedTime(),
+                "the longer task is placed first");
+        assertEquals(LocalTime.of(9, 30), shortTask.getPlacedTime());
+    }
+
+    @Test
+    void addIfActive_ignoresAnUnscheduledListThatIsNull() throws Exception {
+        // L40: the null-source guard. Only reachable by handing scheduleTasks() a null list;
+        // the public refitActiveTasks() always passes real lists.
+        SchedulerEngine engine = new SchedulerEngine(system, MON, system.getGrid());
+        engine.scheduleTasks(null);
+        assertTrue(system.getPlacedTasks().isEmpty());
+        assertTrue(system.getUnscheduledTasks().isEmpty());
+    }
+
+    @Test
+    void scheduleTasks_rejectsANullEntryInTheMiddleOfTheList() throws Exception {
+        // PINNED: L42's `task == null` arm is dead. scheduleTasks() dereferences every entry
+        // at L132 (`task.hasDeadline()`) before addIfActive() ever sees it, so a null in the
+        // list throws instead of being skipped. Only the isQuick() arm of L42 is live.
+        ArrayList<Task> supplied = new ArrayList<>();
+        supplied.add(null);
+        supplied.add(task("real", 0.5, 3, null, null));
+
+        NullPointerException thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                NullPointerException.class,
+                () -> new SchedulerEngine(system, MON, system.getGrid()).scheduleTasks(supplied));
+        assertTrue(thrown.getMessage().contains("hasDeadline"),
+                "PINNED: the crash is at the hasDeadline() dereference: " + thrown.getMessage());
+    }
+
+    @Test
+    void scheduleTasks_quickTasksGetAClockButNoGridSlot() throws Exception {
+        // L42: `task == null || task.isQuick()` - the isQuick() arm never fires here. A quick
+        // task handed straight to scheduleTasks() is classified as flexible (no deadline) and
+        // gets a placed clock, but Day.placeTask() refuses it because it is quick, so it never
+        // occupies a grid slot. The real task then takes the same 07:30 slot.
+        Task quick = task("quick", 0.5, 3, null, null);
+        quick.setParentId("some-parent");
+        Task real = task("real", 0.5, 3, null, null);
+
+        ArrayList<Task> supplied = new ArrayList<>();
+        supplied.add(quick);
+        supplied.add(real);
+
+        new SchedulerEngine(system, MON, system.getGrid()).scheduleTasks(supplied);
+
+        assertTrue(quick.isQuick());
+        // PINNED: the stuck clock is an artefact of applyPlacement() writing the clock even
+        // when Day.placeTask() silently refused the task.
+        assertEquals(LocalTime.of(7, 30), quick.getPlacedTime());
+        assertEquals(LocalTime.of(7, 30), real.getPlacedTime(),
+                "the quick task did not actually consume the slot");
+        Day day = system.getGrid().get(MON);
+        assertSame(real, day.returnDayGrid()[3]);
+        assertTrue(java.util.Arrays.stream(day.returnDayGrid()).noneMatch(t -> t == quick),
+                "quick tasks never occupy grid slots");
+    }
+
+    @Test
+    void addIfActive_skipsPastTasksAndDuplicates() throws Exception {
+        // L43: `!isPast(task) && !out.contains(task)`. A PAST task in the pending list is
+        // left alone, and a task present in both pending and unscheduled is scheduled once.
+        Task past = task("past", 0.5, 3, null, null);
+        past.setPlacedDate(MON);
+        past.setPlacedTime(LocalTime.of(7, 30));
+        past.setLifeCycle(TaskLifeCycle.PAST);
+        Task dup = task("dup", 0.5, 3, null, null);
+        system.getPendingTasks().add(past);
+        system.getPendingTasks().add(dup);
+        system.getUnscheduledTasks().add(dup);
+
+        new SchedulerEngine(system, MON, system.getGrid()).refitActiveTasks();
+
+        assertEquals(LocalTime.of(7, 30), past.getPlacedTime(), "PAST task keeps its slot");
+        assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == dup).count(),
+                "duplicate entry is scheduled exactly once");
+    }
+
+    @Test
+    void placeAlreadyPlacedTasks_skipsATaskWithAPlacedDateButNoTime() throws Exception {
+        // L65: `date == null || time == null` - the mirror case of the existing null-date
+        // test. The task is neither pinned nor made unscheduled.
+        Task half = task("half-placed", 0.5, 3, null, null);
+        half.setPlacedDate(MON);
+        half.setPlacedTime(null);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(half)));
+
+        assertNull(half.getPlacedTime());
+        assertFalse(system.getPlacedTasks().contains(half));
+        assertFalse(system.getUnscheduledTasks().contains(half));
+    }
+
+    @Test
+    void placeAlreadyPlacedTasks_registersAQuickTaskOnce() throws Exception {
+        // L67: a quick task with a placed clock is only registered, never put on the grid,
+        // and a second pass must not duplicate it in placedTasks.
+        Task quick = task("quick-placed", 0.5, 3, null, null);
+        quick.setParentId("parent-x");
+        quick.setPlacedDate(MON);
+        quick.setPlacedTime(LocalTime.of(9, 0));
+
+        SchedulerEngine engine = new SchedulerEngine(system, MON, system.getGrid());
+        engine.placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(quick)));
+        engine.placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(quick)));
+
+        assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == quick).count());
+        Day day = system.getGrid().get(MON);
+        assertTrue(day == null || java.util.Arrays.stream(day.returnDayGrid()).noneMatch(t -> t == quick),
+                "quick tasks never occupy grid slots");
+    }
+
+    @Test
+    void placeAlreadyPlacedTasks_movesADeadlineTaskPastItsDeadlineToUnscheduled()
+            throws Exception {
+        // L89: the deadline half of the combined guard. The slot is free, so only
+        // respectsDeadlineTime() can reject it - the task would finish after its deadline.
+        Task late = task("late", 2.0, 2, MON, LocalTime.of(7, 45));
+        late.setPlacedDate(MON);
+        late.setPlacedTime(LocalTime.of(7, 30));
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(late)));
+
+        assertTrue(system.getUnscheduledTasks().contains(late));
+        assertFalse(system.getPlacedTasks().contains(late));
+    }
+
+    @Test
+    void pinOnGrid_acceptsAFullDayTaskExactlyFillingTheColumn() throws Exception {
+        // L105: 24 h at 06:00 is slot 0 + 48 slots, which is *exactly* SLOTS_PER_DAY, so the
+        // strict `>` guard lets it through and the whole column is claimed.
+        Task pastFull = task("past-full", 24.0, 3, null, null);
+        pastFull.setPlacedDate(MON);
+        pastFull.setPlacedTime(LocalTime.of(6, 0));
+        pastFull.setLifeCycle(TaskLifeCycle.PAST);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(pastFull)));
+
+        assertTrue(system.getPlacedTasks().contains(pastFull));
+        Day day = system.getGrid().get(MON);
+        assertNotNull(day, "pinning creates the column");
+        assertTrue(java.util.Arrays.stream(day.returnDayGrid()).allMatch(t -> t == pastFull),
+                "a 24 h task fills every one of the 48 slots");
+    }
+
+    @Test
+    void pinOnGrid_guardIsUnreachableBecauseSlotsAreClampedToADay() throws Exception {
+        // PINNED: `slot + count > SLOTS_PER_DAY` at L105 can never be true. count comes from
+        // getDurationSlots(), which clamps the duration to one day and rounds up to at most
+        // 48 slots, and slot is one of 0..47. A 06:00 start is therefore the only way to
+        // reach the boundary, and it lands exactly on 48 rather than past it.
+        Task full = task("full", 24.0, 3, null, null);
+        full.setPlacedDate(MON);
+        full.setPlacedTime(LocalTime.of(6, 0));
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, full.getDurationSlots());
+        assertEquals(0, AppTimeReference.localTimeToSlot(LocalTime.of(6, 0)));
+
+        // A longer-than-a-day task is clamped rather than overflowing.
+        Task longer = task("longer", 48.0, 3, null, null);
+        longer.setPlacedDate(MON);
+        longer.setPlacedTime(LocalTime.of(6, 0));
+        assertEquals(AppTimeReference.SLOTS_PER_DAY, longer.getDurationSlots());
+    }
+
+    @Test
+    void markUnscheduled_ignoresTasksThatMayNotGoUnscheduled() throws Exception {
+        // L258: a PAST fixed-time task with a placed clock takes the pinOnGrid() branch and
+        // is never marked unscheduled (canGoUnscheduled() is false for state 1).
+        Task pastFixed = task("past-fixed", 1.0, 1, null, null);
+        pastFixed.setPlacedDate(MON);
+        pastFixed.setPlacedTime(LocalTime.of(6, 0));
+        pastFixed.setLifeCycle(TaskLifeCycle.PAST);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(pastFixed)));
+
+        assertTrue(system.getPlacedTasks().contains(pastFixed));
+        assertFalse(system.getUnscheduledTasks().contains(pastFixed));
+    }
+
+    @Test
+    void markUnscheduled_skipsAPastFlexibleTask() throws Exception {
+        // L259: isPast(task) -> return. A PAST flexible task that cannot be placed on the
+        // grid is left where it is instead of being pushed into the unscheduled list.
+        Task past = task("past-flex", 0.5, 3, null, null);
+        past.setPlacedDate(MON);
+        past.setPlacedTime(LocalTime.of(7, 30));
+        past.setLifeCycle(TaskLifeCycle.PAST);
+        // Occupy the very slot it claims, so canPlace() fails on collision.
+        Day day = new Day(system.getBlockedTime());
+        day.placeTask(AppTimeReference.localTimeToSlot(LocalTime.of(7, 30)),
+                task("squatter", 0.5, 3, null, null));
+        system.getGrid().put(MON, day);
+
+        new SchedulerEngine(system, MON, system.getGrid())
+                .placeAlreadyPlacedTasks(new ArrayList<>(java.util.List.of(past)));
+
+        assertFalse(system.getUnscheduledTasks().contains(past),
+                "PINNED: a PAST task is never re-parked as unscheduled");
+    }
+
+    @Test
+    void placeAlreadyPlacedTasks_rejectsANullEntry() throws Exception {
+        // PINNED: L65's combined guard does not protect against a null *entry*. The loop
+        // dereferences task at L63 (`task.getPlacedDate()`) before the date/time check, so
+        // the documented "null-or-empty list is a no-op" only covers a null list, not a
+        // null element. Only the `date == null` and `time == null` arms are live.
+        ArrayList<Task> withNull = new ArrayList<>();
+        withNull.add(null);
+        SchedulerEngine engine = new SchedulerEngine(system, MON, system.getGrid());
+
+        NullPointerException thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                NullPointerException.class,
+                () -> engine.placeAlreadyPlacedTasks(withNull));
+        assertTrue(thrown.getMessage().contains("getPlacedDate"),
+                "PINNED: the crash is at the getPlacedDate() dereference: " + thrown.getMessage());
+    }
+
+    @Test
+    void scheduleTasks_dropsActivePendingTasksButKeepsPastOnes() throws Exception {
+        // L156: `removeIf(t -> !isPast(t))` runs after the placement passes and strips every
+        // non-PAST pending task, including ones that were never scheduled.
+        Task active = task("active-pending", 0.5, 3, null, null);
+        active.setLifeCycle(TaskLifeCycle.UNSCHEDULED);
+        Task past = task("past-pending", 0.5, 3, null, null);
+        past.setPlacedDate(MON);
+        past.setPlacedTime(LocalTime.of(7, 30));
+        past.setLifeCycle(TaskLifeCycle.PAST);
+        system.getPendingTasks().add(active);
+        system.getPendingTasks().add(past);
+
+        // scheduleTasks() returns early for an empty list (L120), so L156 only runs when at
+        // least one task is supplied.
+        Task trigger = task("trigger", 0.5, 3, null, null);
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(new ArrayList<>(java.util.List.of(trigger)));
+
+        assertFalse(system.getPendingTasks().contains(active));
+        assertTrue(system.getPendingTasks().contains(past));
+    }
+
+    @Test
+    void deadlineTaskWithANullDateIsUnreachableThroughTheSortAlone() throws Exception {
+        // L174: placeDeadlineTasks() guards `getDeadLineDate() == null`, but the sort that
+        // runs before it (SchedulerEngine:139) dereferences the date first. So this guard is
+        // only ever safe for a *single* date-less task - two of them crash in the comparator
+        // (see updateSchedule_crashesWhenAPlacedDeadlineTaskHasNoDeadlineDate above).
+        Task noDate = task("no-date-only", 0.5, 3, null, null);
+        noDate.setState(2);
+        system.getUnscheduledTasks().add(noDate);
+
+        // A lone task has nothing to compare against, so the sort leaves it alone and
+        // placeDeadlineTasks() marks it unscheduled instead of crashing.
+        new SchedulerEngine(system, MON, system.getGrid())
+                .scheduleTasks(new ArrayList<>(system.getUnscheduledTasks()));
+
+        assertTrue(system.getUnscheduledTasks().contains(noDate),
+                "the lone task takes the guarded path at L174");
+        assertFalse(system.getPlacedTasks().contains(noDate));
+    }
+
+    @Test
+    void deadlineTaskWithoutADate_pinsTheUnhandledSecondPath() throws Exception {
+        // PINNED: placeDeadlineTasks() also guards `lastDay < 0` (L174), i.e. a deadline
+        // more than a day before baseDate. That arm is unreachable for a *live* task, but a
+        // lone date-less task reaches the L174 guard above. Both are recorded here so the
+        // dead-code review does not need to re-derive it.
+        Task noDate = task("orphan-deadline", 0.5, 3, null, null);
+        noDate.setState(2);
+        assertTrue(noDate.hasDeadline());
+        assertNull(noDate.getDeadLineDate());
     }
 
     private static Task task(String name, double hours, int state,

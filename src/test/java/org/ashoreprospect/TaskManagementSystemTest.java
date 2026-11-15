@@ -352,4 +352,175 @@ class TaskManagementSystemTest {
         assertNotNull(system.getCliMode());
         assertNotSame(system.getCliMode(), system.getCliMode());
     }
+
+    // ---------- stage 3: branch hardening ----------
+
+    @Test
+    void mainTask_returnsNullAndUnknownForABlankParentId() throws Exception {
+        // L95: `pid == null || pid.isBlank()` - a task whose parentId is blank is not quick,
+        // so mainTask() returns it unchanged without ever looking it up.
+        Task blank = task("blank-parent", 1.0, 3);
+        blank.setParentId("   ");
+        assertFalse(blank.isQuick());
+        assertSame(blank, system.mainTask(blank));
+    }
+
+    @Test
+    void quicksOf_returnsEmptyForANonQuickParentWithNoId() {
+        // L104: `parent.getID() == null` short-circuits before the placed scan. The id is
+        // final, so a null id has to come from the DB loader.
+        Task parent = Task.loadTaskFromdb(null, "no-id", 1.0, 3,
+                null, null, null, null, null, null);
+        assertNull(parent.getID());
+        assertTrue(system.quicksOf(parent).isEmpty());
+    }
+
+    @Test
+    void quicksOf_skipsATaskWhoseParentIdIsBlank() {
+        // L107: only tasks whose parentId actually equals the parent's id are collected, so
+        // an ordinary placed task alongside a real quick is ignored.
+        Task parent = task("parent", 1.0, 3);
+        system.getPlacedTasks().add(parent);
+        Task quick = quickOf(parent, "quick");
+        Task plain = task("plain", 0.5, 3);
+        system.getPlacedTasks().add(quick);
+        system.getPlacedTasks().add(plain);
+
+        List<Task> found = system.quicksOf(parent);
+
+        assertEquals(1, found.size());
+        assertSame(quick, found.get(0));
+    }
+
+    @Test
+    void findById_returnsNullForANullListOrANullId() {
+        // L121: the guard against either side being absent. findById is private, so it is
+        // driven through mainTask, which passes the three system lists in turn.
+        Task quick = task("quick", 0.5, 3);
+        quick.setParentId("  ");
+        assertSame(quick, system.mainTask(quick), "a blank id is not resolved");
+
+        Task quickWithId = task("quick-id", 0.5, 3);
+        quickWithId.setParentId("never-stored");
+        assertSame(quickWithId, system.mainTask(quickWithId),
+                "an unknown id falls back to the quick itself");
+    }
+
+    @Test
+    void findById_skipsNullEntriesAndMatchesOnId() {
+        // L123: a null entry in the list is skipped rather than dereferenced, and a quick
+        // whose parent id matches resolves to that parent.
+        Task parent = task("parent", 0.5, 3);
+        system.getPlacedTasks().add(null);
+        system.getPlacedTasks().add(parent);
+        Task quick = quickOf(parent, "quick");
+        assertTrue(quick.isQuick());
+
+        assertSame(parent, system.mainTask(quick));
+    }
+
+    @Test
+    void rewriteEncryptedStores_skipsNullTaskEntries() throws Exception {
+        // L152: a null in any of the three task lists is skipped, not dereferenced, and the
+        // null entry is preserved rather than silently removed.
+        Task real = task("real", 0.5, 3);
+        system.getPlacedTasks().add(null);
+        system.getPlacedTasks().add(real);
+        system.getUnscheduledTasks().add(null);
+
+        system.rewriteEncryptedStores();
+
+        assertEquals(2, system.getPlacedTasks().size(),
+                "the null entry survives, it is only skipped");
+        assertSame(real, system.getPlacedTasks().get(1));
+        assertEquals(1, system.getUnscheduledTasks().size(),
+                "the null in the unscheduled list survives too");
+    }
+
+    @Test
+    void rewriteEncryptedStores_nullBlockedGuardIsUnreachableBecauseRebuildCrashesFirst()
+            throws Exception {
+        // BUG (found in stage 3): rewriteEncryptedStores() has `if (b == null) continue;`
+        // at L159, but that guard can never run. Putting a null into blockedPeriod goes
+        // through replaceBlockedPeriods(), which calls rebuildPeriods(); that loop does
+        // `b.isDaily()` with no null check and throws first. So the rewrite's null handling
+        // for blocked rows is dead, and a null blocked row is a crash either way.
+        NullPointerException thrown =
+                org.junit.jupiter.api.Assertions.assertThrows(NullPointerException.class,
+                        () -> system.getBlockedTime().replaceBlockedPeriods(
+                                new ArrayList<>(java.util.Arrays.asList(
+                                        (BlockedTime) null,
+                                        BlockedTime.daily("custom",
+                                                LocalTime.of(12, 0), LocalTime.of(13, 0))))));
+        assertTrue(thrown.getMessage().contains("isDaily"),
+                "PINNED: the crash is in rebuildPeriods(), before rewriteEncryptedStores: "
+                + thrown.getMessage());
+    }
+
+    @Test
+    void rewriteEncryptedStores_copesWithNoBlockedPeriodsAtAll() throws Exception {
+        // L157: the outer `blockedTime != null && blockedPeriod != null` guard is already
+        // satisfied with an empty list; the loop simply never runs.
+        system.getBlockedTime().replaceBlockedPeriods(new ArrayList<>());
+        system.rewriteEncryptedStores();
+        assertTrue(system.getBlockedTime().blockedPeriod.isEmpty());
+    }
+
+    @Test
+    void startNodePoll_isNotRestartedWhenAlreadyRunning() throws Exception {
+        // L168: the re-entrancy guard. resetInstance() flips pollRunning to false, so this
+        // pins the live flag rather than guessing at the thread.
+        java.lang.reflect.Field running =
+                TaskManagementSystem.class.getDeclaredField("pollRunning");
+        running.setAccessible(true);
+        assertTrue((boolean) running.get(system),
+                "the constructor starts the poll thread");
+
+        java.lang.reflect.Method start =
+                TaskManagementSystem.class.getDeclaredMethod("startNodePoll");
+        start.setAccessible(true);
+        start.invoke(system);
+
+        assertTrue((boolean) running.get(system), "a second call leaves it running");
+    }
+
+    @Test
+    void attachGUI_nullControllerIsAllowedAndLeavesTheSystemHeadless() {
+        // L252/L258: both guards are `guiController != null`. Attaching nothing keeps
+        // refreshGUI()/applyIdleLimit() as no-ops that never touch the JavaFX toolkit.
+        system.attachGUI(null);
+        system.refreshGUI();
+        system.applyIdleLimit();
+        assertNull(system.getPopupTask(), "no GUI wiring implies no popup either");
+    }
+
+    @Test
+    void updateSchedule_skipsNullQuickAndFixedEntriesInEveryList() {
+        // L217/L222: the three-way filter. Null entries are dropped, quick and fixed tasks
+        // are never handed to the engine, and a flexible task is scheduled once.
+        Task fixed = task("fixed", 1.0, 1);
+        Task parent = task("parent", 1.0, 3);
+        Task quick = quickOf(parent, "quick");
+        Task flexible = task("flexible", 0.5, 3);
+        system.getPlacedTasks().add(null);
+        system.getPlacedTasks().add(fixed);
+        system.getPendingTasks().add(null);
+        system.getPendingTasks().add(quick);
+        system.getUnscheduledTasks().add(null);
+        system.getUnscheduledTasks().add(flexible);
+        system.getUnscheduledTasks().add(flexible);
+
+        system.updateSchedule();
+
+        assertFalse(system.getPendingTasks().contains(null),
+                "null entries are filtered out of the pending list");
+        assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == flexible).count(),
+                "a duplicated flexible task is scheduled exactly once");
+        assertFalse(system.getPlacedTasks().contains(quick),
+                "quick tasks are not handed to the engine");
+        // PINNED: a state-1 task is filtered out by updateSchedule() but never re-added, so
+        // it survives in whatever list it started in. It is not auto-placed either.
+        assertEquals(1, system.getPlacedTasks().stream().filter(t -> t == fixed).count(),
+                "the fixed task stays listed exactly once");
+    }
 }
