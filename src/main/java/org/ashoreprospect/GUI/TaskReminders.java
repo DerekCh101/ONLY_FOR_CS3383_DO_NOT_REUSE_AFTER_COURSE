@@ -25,25 +25,32 @@ import java.util.Set;
 
 public final class TaskReminders {
 
+    private static final long TICK_MILLIS = 20_000L;
+
     private static Timeline clock;
+
+    /**
+     * The tick loop used when there is no JavaFX toolkit. Normally null: the app runs on the FX
+     * thread, so {@link #clock} drives the ticks.
+     */
+    private static Thread clockThread;
+    private static volatile boolean ticking;
+
     private static TrayIcon trayIcon;
     private static final Set<String> sent = new HashSet<>();
 
     private TaskReminders() {}
 
     public static void start() {
-        if (clock != null) return;
-        clock = new Timeline(new KeyFrame(Duration.seconds(20), e -> tick()));
-        clock.setCycleCount(Timeline.INDEFINITE);
-        clock.play();
-        Platform.runLater(TaskReminders::tick);
+        if (clockThread != null && !clockThread.isAlive()) clockThread = null;
+        if (clock != null || clockThread != null) return;
+        if (!startTimeline()) startThread();
+        onFxThread(TaskReminders::tick);
     }
 
     public static void stop() {
-        if (clock != null) {
-            clock.stop();
-            clock = null;
-        }
+        if (clockThread != null) clockThread.interrupt();
+        onFxThread(TaskReminders::clearTimers);
         sent.clear();
         if (trayIcon != null && SystemTray.isSupported()) {
             try {
@@ -51,6 +58,66 @@ public final class TaskReminders {
             } catch (Exception ignored) {
             }
             trayIcon = null;
+        }
+    }
+
+    /** Installs the FX {@code Timeline}; false when no toolkit is available on this thread. */
+    private static boolean startTimeline() {
+        try {
+            Timeline t = new Timeline(new KeyFrame(Duration.seconds(20), e -> tick()));
+            t.setCycleCount(Timeline.INDEFINITE);
+            t.play();
+            clock = t;
+            return true;
+        } catch (IllegalStateException | IllegalArgumentException
+                 | UnsupportedOperationException | NoClassDefFoundError noToolkit) {
+            return false;
+        }
+    }
+
+    /** Fallback tick loop for a headless JVM or a caller that is not on the FX thread. */
+    private static void startThread() {
+        ticking = true;
+        Thread t = new Thread(() -> {
+            while (ticking) {
+                try {
+                    Thread.sleep(TICK_MILLIS);
+                } catch (InterruptedException stop) {
+                    return;
+                }
+                if (!ticking) return;
+                try {
+                    tick();
+                } catch (RuntimeException ignored) {
+                    // A failing tick must not kill the loop; the next one retries.
+                }
+            }
+        }, "task-reminders");
+        t.setDaemon(true);
+        clockThread = t;
+        t.start();
+    }
+
+    /** Clears both timer fields. Runs on the FX thread when there is one, so stop() is legal. */
+    private static void clearTimers() {
+        if (clock != null) {
+            clock.stop();
+            clock = null;
+        }
+        ticking = false;
+        clockThread = null;
+    }
+
+    /** Runs {@code body} on the FX thread, or inline when JavaFX has no toolkit. */
+    private static void onFxThread(Runnable body) {
+        try {
+            if (Platform.isFxApplicationThread()) {
+                body.run();
+            } else {
+                Platform.runLater(body);
+            }
+        } catch (IllegalStateException | UnsupportedOperationException | NoClassDefFoundError noToolkit) {
+            body.run();
         }
     }
 

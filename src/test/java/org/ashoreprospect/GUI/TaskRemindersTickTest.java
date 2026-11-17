@@ -7,12 +7,11 @@
  * {@code LocalSession} preferences; the test controls all three (a fresh singleton with a placed
  * list it owns, a fixed clock, and a snapshotted {@code login.txt}).
  *
- * <p>It also calls {@code SchedulerApp.notifyUser}, whose first act is
- * {@code Platform.runLater(...)}. That throws {@code Toolkit not initialized} with no toolkit, so
- * this class starts one with {@code Platform.startup} - headless, and shared JVM-wide with
- * {@link TaskRemindersLifecycleTest}. The toast it queues draws nothing, because
- * {@code SchedulerApp} has no stage; the assertions therefore use the dedupe set (the state a tick
- * leaves behind) and never the toast text.
+ * <p>It also calls {@code SchedulerApp.notifyUser}. That only touches JavaFX when a toolkit
+ * exists; with none it falls straight through to {@code showToast}, which returns at once because
+ * {@code SchedulerApp} has no stage. No toolkit is started here: {@code Platform.startup} boots
+ * native glass/AWT and crashes headless CI runners, so the assertions use the dedupe set (the
+ * state a tick leaves behind) and never the toast text.
  *
  * <p>{@code start()} and {@code stop()} are covered by the lifecycle class; this one only drives
  * {@code tick()} directly, so no timer is ever running.
@@ -26,9 +25,7 @@ import org.ashoreprospect.TaskManagementSystem;
 import org.ashoreprospect.Workflow;
 import org.ashoreprospect.net.Endpoints;
 import org.ashoreprospect.net.LocalSession;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -50,30 +47,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ResourceLock("app-clock")
 @ResourceLock("os-env")
-@ResourceLock("javafx-toolkit")
 class TaskRemindersTickTest {
 
     /** A fixed local time: Monday 2026-10-12, 09:00 UTC. */
     private static final ZoneId ZONE = ZoneId.of("UTC");
     private static final Instant NOW = Instant.parse("2026-10-12T09:00:00Z");
     private static final LocalDate MON = LocalDate.of(2026, 10, 12);
-
-    private static boolean startedToolkitByThisClass;
-
-    @BeforeAll
-    static void startToolkit() {
-        try {
-            javafx.application.Platform.startup(() -> { });
-            startedToolkitByThisClass = true;
-        } catch (IllegalStateException alreadyStarted) {
-            // The toolkit is a JVM-wide singleton; another class may have started it.
-        }
-    }
-
-    @AfterAll
-    static void stopToolkit() {
-        if (startedToolkitByThisClass) javafx.application.Platform.exit();
-    }
 
     private Clock originalClock;
     private Path prefsFile;
