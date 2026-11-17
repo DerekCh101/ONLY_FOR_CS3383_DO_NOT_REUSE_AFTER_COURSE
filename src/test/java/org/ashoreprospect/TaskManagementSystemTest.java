@@ -342,6 +342,93 @@ class TaskManagementSystemTest {
                 captured.toString(java.nio.charset.StandardCharsets.UTF_8));
     }
 
+    // ---------------------------------------------------------------- command error arms
+
+    /**
+     * Runs {@code name} through {@code TaskManagementSystem.command} after adding it to the
+     * command table, capturing stdout and stderr. The table is put back to exactly what it was,
+     * so a test action can never leak into another test.
+     */
+    private String[] commandCapturingOutput(String name,
+                                            org.ashoreprospect.Command.SystemCommands.Action body) {
+        java.io.PrintStream originalOut = System.out;
+        java.io.PrintStream originalErr = System.err;
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+        try {
+            System.setOut(new java.io.PrintStream(out, true, java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(err, true, java.nio.charset.StandardCharsets.UTF_8));
+            org.ashoreprospect.Command.SystemCommands.put(name, body);
+            system.command(name);
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+            org.ashoreprospect.Command.SystemCommands.put(name, sys -> {
+                throw new IllegalStateException("test action " + name + " leaked out of its test");
+            });
+        }
+        return new String[]{out.toString(java.nio.charset.StandardCharsets.UTF_8),
+                err.toString(java.nio.charset.StandardCharsets.UTF_8)};
+    }
+
+    @Test
+    void commandReportsADatabaseErrorAndReturnsFalse() {
+        String[] io = commandCapturingOutput("testDbFailure", sys -> {
+            throw new java.sql.SQLException("disk full");
+        });
+
+        assertTrue(io[0].contains("Database error: disk full"),
+                "the SQLException arm logs to stdout: " + io[0]);
+    }
+
+    @Test
+    void commandReportsAnyOtherFailureAndReturnsFalse() {
+        String[] io = commandCapturingOutput("testOtherFailure", sys -> {
+            throw new IllegalStateException("boom");
+        });
+
+        assertTrue(io[0].contains("Command failed: boom"),
+                "the generic arm uses a different prefix: " + io[0]);
+    }
+
+    @Test
+    void commandCatchesACheckedFailureToo() {
+        // FileNotFoundException is what addTaskFromFile surfaces when the file is missing.
+        String[] io = commandCapturingOutput("testCheckedFailure", sys -> {
+            throw new java.io.FileNotFoundException("no such file");
+        });
+
+        assertTrue(io[0].contains("Command failed: no such file"), io[0]);
+    }
+
+    @Test
+    void commandSwallowsTheFailureRatherThanReturningTrue() {
+        // The return value is the thing a caller acts on; an exception must not look like success.
+        assertFalse(runWithAction("testDeclines", sys -> {
+            throw new RuntimeException("nope");
+        }));
+        assertTrue(runWithAction("testSucceeds", sys -> true));
+    }
+
+    private boolean runWithAction(String name, org.ashoreprospect.Command.SystemCommands.Action body) {
+        java.io.PrintStream originalOut = System.out;
+        java.io.PrintStream originalErr = System.err;
+        try {
+            System.setOut(new java.io.PrintStream(new java.io.ByteArrayOutputStream(), true,
+                    java.nio.charset.StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(new java.io.ByteArrayOutputStream(), true,
+                    java.nio.charset.StandardCharsets.UTF_8));
+            org.ashoreprospect.Command.SystemCommands.put(name, body);
+            return system.command(name);
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+            org.ashoreprospect.Command.SystemCommands.put(name, sys -> {
+                throw new IllegalStateException("test action " + name + " leaked out of its test");
+            });
+        }
+    }
+
     @Test
     void rewriteEncryptedStores_resavesEveryTaskAndBlockedRowAndAdvancesTheirTimestamps()
             throws Exception {

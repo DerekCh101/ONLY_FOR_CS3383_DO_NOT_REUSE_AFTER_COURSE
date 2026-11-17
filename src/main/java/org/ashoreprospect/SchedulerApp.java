@@ -212,9 +212,14 @@ public class SchedulerApp extends Application {
     public static void notifyUser(String title, String body) {
         String line = (title == null || title.isBlank() ? "" : title + " — ")
                 + (body == null ? "" : body);
-        if (!Platform.isFxApplicationThread()) {
-            Platform.runLater(() -> showToast(line, false, 7));
-        } else {
+        try {
+            if (!Platform.isFxApplicationThread()) {
+                Platform.runLater(() -> showToast(line, false, 7));
+            } else {
+                showToast(line, false, 7);
+            }
+        } catch (IllegalStateException | UnsupportedOperationException | NoClassDefFoundError noToolkit) {
+            // No JavaFX toolkit (headless test JVM): showToast returns at once without a stage.
             showToast(line, false, 7);
         }
     }
