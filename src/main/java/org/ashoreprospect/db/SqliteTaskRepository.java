@@ -143,6 +143,7 @@ public class SqliteTaskRepository {
             st.execute("DELETE FROM sync_deletes");
             st.execute("DELETE FROM blocked_times");
             st.execute("DELETE FROM sync_deletes_blocked");
+            st.execute("DELETE FROM sync_seen_blocked");
             st.execute("DELETE FROM sync_meta");
         }
     }
@@ -206,12 +207,6 @@ public class SqliteTaskRepository {
             ps.executeUpdate();
         }
         upsertExtras(conn, task);
-    }
-
-    private void upsertExtras(Task task) throws SQLException {
-        try (Connection conn = connect()) {
-            upsertExtras(conn, task);
-        }
     }
 
     private void upsertExtras(Connection conn, Task task) throws SQLException {

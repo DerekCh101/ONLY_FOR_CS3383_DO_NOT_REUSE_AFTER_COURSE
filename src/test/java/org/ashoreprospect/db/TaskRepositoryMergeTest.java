@@ -4,6 +4,7 @@ package org.ashoreprospect.db;
 import org.ashoreprospect.BlockedTime;
 import org.ashoreprospect.Task;
 import org.ashoreprospect.Workflow;
+import org.ashoreprospect.net.Endpoints;
 import org.junit.jupiter.api.Test;
 
 import java.time.DayOfWeek;
@@ -137,6 +138,18 @@ class TaskRepositoryMergeTest {
         assertFalse(TaskRepository.preferRemote(TIE, TIE, true));
         assertTrue(TaskRepository.preferRemote(OLDER, NEWER, true));
         assertFalse(TaskRepository.preferRemote(NEWER, OLDER, false));
+        assertEquals(TaskRepository.preferRemote(TIE, TIE, Endpoints.isHostDevice()),
+                TaskRepository.preferRemote(TIE, TIE));
+    }
+
+    @Test
+    void compareInstant_ordersNullAndNonNullStamps() {
+        assertEquals(-1, TaskRepository.compareInstant(null, TIE));
+        assertEquals(1, TaskRepository.compareInstant(TIE, null));
+        assertEquals(0, TaskRepository.compareInstant(null, null));
+        assertEquals(0, TaskRepository.compareInstant(TIE, TIE));
+        assertTrue(TaskRepository.compareInstant(OLDER, NEWER) < 0);
+        assertTrue(TaskRepository.compareInstant(NEWER, OLDER) > 0);
     }
 
     @Test

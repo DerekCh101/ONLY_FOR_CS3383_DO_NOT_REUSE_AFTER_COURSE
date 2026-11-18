@@ -205,6 +205,19 @@ class TaskRepositoryNodeWriterTest {
         assertTrue(sqlite.findById("task-tombstone") == null);
     }
 
+    @Test
+    void idIsTaken_checksBlankTaskAndTombstoneIds() throws Exception {
+        assertTrue(repo.idIsTaken(null));
+        assertTrue(repo.idIsTaken("  "));
+
+        sqlite.upsert(task("taken-task", "task"));
+        sqlite.recordDelete("taken-delete", java.time.Instant.now(), "deleted");
+
+        assertTrue(repo.idIsTaken("taken-task"));
+        assertTrue(repo.idIsTaken("taken-delete"));
+        assertFalse(repo.idIsTaken("unused"));
+    }
+
     // ---------- update / delete ----------
 
     @Test
@@ -261,6 +274,19 @@ class TaskRepositoryNodeWriterTest {
         for (FakeNode.Call c : node.calls()) paths.add(c.method + " " + c.path);
         assertEquals(List.of("DELETE /tasks/batch-1", "DELETE /tasks/batch-2"), paths,
                 "a null entry in the batch is skipped, not pushed");
+    }
+
+    @Test
+    void dbCleanAll_deletesEveryLocalTaskAndPushesEachDelete() throws Exception {
+        repo.dbAddTask(task("clean-a", "one"));
+        repo.dbAddTask(task("clean-b", "two"));
+        node.clear();
+
+        repo.dbCleanAll();
+
+        assertTrue(sqlite.fetchAll().isEmpty());
+        assertEquals(2, node.callCount());
+        assertTrue(node.calls().stream().allMatch(call -> call.method.equals("DELETE")));
     }
 
     @Test

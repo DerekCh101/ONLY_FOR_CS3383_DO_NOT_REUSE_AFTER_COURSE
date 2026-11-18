@@ -49,18 +49,23 @@ tasks.jacocoTestReport {
 
 // Coverage gate for the headless-testable core.
 //
-// The JavaFX views, the HTTP client, and the Postgres repository all need a display, a
-// live server, or Docker, so they are simply not part of the gate (see TEST_PLAN.md).
-// Every class named below must keep at least 60% LINE coverage; the rules are per class,
-// because the Gradle plugin in use ignores `excludes` and a "pkg.*" pattern would also
-// match nested packages.
+// The JavaFX views and HTTP client need a display or a live server. Postgres repositories
+// are covered offline through their JDBC contracts against temporary SQLite databases.
+// Exact class lists and per-class LINE thresholds: a "pkg.*" pattern would also match nested
+// packages, and the Gradle plugin in use ignores `excludes`.
 //
 // `db.TaskRepository` is the SQLite cache, testable offline against a temporary database. It
-// entered the gate at 66% (294 lines missed, mostly the Postgres sync paths and the offline
-// arm of `dbfetchAll`); it was the last class added in round 4, in its own commit.
+// covers the orchestration and merge paths around both local and remote repositories.
 tasks.jacocoTestCoverageVerification {
     dependsOn(tasks.test)
     violationRules {
+        val lineCoverageMinimums = mapOf(
+            "org.ashoreprospect.db.TaskRepository" to "0.80",
+            "org.ashoreprospect.db.SqliteTaskRepository" to "0.90",
+            "org.ashoreprospect.db.SqliteTypewriterRepository" to "0.95",
+            "org.ashoreprospect.db.PostgresTaskRepository" to "0.90",
+            "org.ashoreprospect.db.PostgresTypewriterRepository" to "0.90"
+        )
         // Exact class lists: a "pkg.*" pattern would also match nested packages.
         listOf(
             "org.ashoreprospect.AppTimeReference",
@@ -92,6 +97,10 @@ tasks.jacocoTestCoverageVerification {
             "org.ashoreprospect.Command.Undo",
             "org.ashoreprospect.Command.UnfinishTask",
             "org.ashoreprospect.crypto.Vault",
+            "org.ashoreprospect.db.PostgresTaskRepository",
+            "org.ashoreprospect.db.PostgresTypewriterRepository",
+            "org.ashoreprospect.db.SqliteTaskRepository",
+            "org.ashoreprospect.db.SqliteTypewriterRepository",
             "org.ashoreprospect.db.TaskRepository",
             "org.ashoreprospect.GUI.theme.Contrast",
             "org.ashoreprospect.GUI.theme.ThemePalette"
@@ -102,7 +111,7 @@ tasks.jacocoTestCoverageVerification {
                 limit {
                     counter = "LINE"
                     value = "COVEREDRATIO"
-                    minimum = "0.60".toBigDecimal()
+                    minimum = (lineCoverageMinimums[className] ?: "0.60").toBigDecimal()
                 }
             }
         }

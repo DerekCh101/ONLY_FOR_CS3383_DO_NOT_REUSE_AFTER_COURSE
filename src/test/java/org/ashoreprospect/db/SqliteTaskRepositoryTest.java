@@ -85,6 +85,18 @@ class SqliteTaskRepositoryTest {
         }
     }
 
+    @Test
+    void replaceBlockedSeen_discardsNullAndBlankIdsAndReplacesThePreviousSet() throws Exception {
+        repo.replaceBlockedSeen(java.util.Arrays.asList("block-1", null, "", "  ", "block-2"));
+
+        assertEquals(Set.of("block-1", "block-2"), repo.blockedSeenIds());
+
+        repo.replaceBlockedSeen(null);
+        assertTrue(repo.blockedSeenIds().isEmpty());
+        repo.replaceBlockedSeen(List.of());
+        assertTrue(repo.blockedSeenIds().isEmpty());
+    }
+
     // ---------- meta ----------
 
     @Test
@@ -163,6 +175,30 @@ class SqliteTaskRepositoryTest {
         repo.restoreTasks(null);
         repo.restoreTasks(List.of());
         assertTrue(repo.fetchAll().isEmpty());
+    }
+
+    @Test
+    void wipeAllLocalData_clearsEveryCacheTable() throws Exception {
+        Task task = Task.loadTaskFromdb("wipe-task", "task", 1, 3,
+                null, null, null, null, null, null);
+        repo.upsert(task);
+        repo.recordDelete("wipe-delete", NOW, "deleted");
+        repo.setMeta("user_id", "u-1");
+
+        BlockedTime blocked = BlockedTime.daily("lunch", LocalTime.of(12, 0), LocalTime.of(13, 0));
+        blocked.setUserId("u-1");
+        repo.upsertBlocked(blocked);
+        repo.recordBlockedDelete("wipe-blocked-delete", NOW, "blocked");
+        repo.replaceBlockedSeen(Set.of("wipe-seen"));
+
+        repo.wipeAllLocalData();
+
+        assertFalse(rowExistsDirectly("wipe-task"));
+        assertTrue(readDeletesDirectly().isEmpty());
+        assertTrue(readBlockedDirectly().isEmpty());
+        assertTrue(repo.fetchBlockedDeletedIds().isEmpty());
+        assertTrue(repo.blockedSeenIds().isEmpty());
+        assertNull(repo.getMeta("user_id"));
     }
 
     // ---------- blocked times ----------

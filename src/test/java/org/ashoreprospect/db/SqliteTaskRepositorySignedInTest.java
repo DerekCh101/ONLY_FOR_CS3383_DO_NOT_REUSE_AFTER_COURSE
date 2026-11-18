@@ -215,6 +215,33 @@ class SqliteTaskRepositorySignedInTest {
         assertFalse(sqlite.existsTaskId("  "));
     }
 
+    @Test
+    void containsIdByDateTime_matchesOnlyTheSignedInUsersPlacement() throws Exception {
+        Task placed = Task.loadTaskFromdb("slot-1", "placed", 1, 1, null, null,
+                null, null, LocalDate.of(2026, 10, 12), LocalTime.of(9, 0));
+        placed.setLastUpdatedAt(Instant.parse("2026-10-12T07:00:00Z"));
+        sqlite.upsert(placed);
+
+        assertTrue(sqlite.containsIdByDateTime(LocalDate.of(2026, 10, 12), LocalTime.of(9, 0)));
+        assertFalse(sqlite.containsIdByDateTime(LocalDate.of(2026, 10, 12), LocalTime.of(10, 0)));
+    }
+
+    @Test
+    void deleteAllTasksAndLogEach_writesATombstoneForEverySignedInTask() throws Exception {
+        Task first = task("bulk-1", "first");
+        Task second = task("bulk-2", "second");
+        sqlite.upsert(first);
+        sqlite.upsert(second);
+
+        sqlite.deleteAllTasksAndLogEach();
+
+        assertTrue(sqlite.fetchAll().isEmpty());
+        List<String[]> deletes = sqlite.fetchAllDeletes();
+        assertEquals(2, deletes.size());
+        assertTrue(deletes.stream().anyMatch(row -> row[0].equals("bulk-1")));
+        assertTrue(deletes.stream().anyMatch(row -> row[0].equals("bulk-2")));
+    }
+
     // ---------- blocked times ----------
 
     @Test
