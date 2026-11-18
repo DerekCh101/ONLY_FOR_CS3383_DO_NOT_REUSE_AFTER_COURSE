@@ -31,6 +31,7 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -152,7 +153,8 @@ class TaskRepositoryNodeMergeTest {
         return (boolean) m.invoke(repo, rows);
     }
 
-    private List<Map<String, String>> rows(Map<String, String>... items) {
+    @SafeVarargs
+    private final List<Map<String, String>> rows(Map<String, String>... items) {
         return new ArrayList<>(List.of(items));
     }
 
@@ -576,6 +578,64 @@ class TaskRepositoryNodeMergeTest {
         assertEquals(1, sqlite.fetchAllBlocked().size(), "the upsert stamped it with now()");
     }
 
+    // ---------- Postgres blocked-time synchronization ----------
+
+    @Test
+    void syncBlockedDeletesBothWays_copiesTombstonesAndRemovesDeletedRows() throws Exception {
+        BlockedTime remoteDeleted = new BlockedTime("remote-deleted", "server deleted",
+                null, null, LocalTime.of(9, 0), LocalTime.of(10, 0), NOW, UID);
+        remoteDeleted.setLastUpdatedAt(NOW);
+        sqlite.upsertBlocked(remoteDeleted);
+        sqlite.recordBlockedDelete("local-deleted", NOW, "local title");
+
+        FakePostgresTaskRepository postgres = new FakePostgresTaskRepository();
+        postgres.blockedDeleteRows.add(new Object[]{"remote-deleted", NOW, "server title"});
+        setField(repo, "postgres", postgres);
+        setField(repo, "postgresAvailable", true);
+        invokeSync("syncBlockedDeletesBothWays");
+
+        assertNull(sqlite.findBlockedById("remote-deleted"));
+        assertTrue(sqlite.fetchBlockedDeletedIds().containsAll(
+                List.of("remote-deleted", "local-deleted")));
+        assertTrue(postgres.deletedBlockedIds.containsAll(
+                List.of("remote-deleted", "local-deleted")));
+        assertEquals(2, postgres.recordedBlockedDeletes.size());
+        assertTrue(postgres.recordedBlockedDeletes.stream()
+                .anyMatch(row -> row[0].equals("local-deleted") && row[2].equals("local title")));
+        assertTrue(postgres.recordedBlockedDeletes.stream()
+                .anyMatch(row -> row[0].equals("remote-deleted") && row[2].equals("server title")));
+    }
+
+    @Test
+    void syncBlockedBothWays_mergesRemoteAndPushesLocalOnlyRows() throws Exception {
+        BlockedTime local = new BlockedTime("shared", "local old", DayOfWeek.MONDAY, null,
+                LocalTime.of(9, 0), LocalTime.of(10, 0), NOW.minusSeconds(60), UID);
+        BlockedTime localOnly = new BlockedTime("local-only", "local only", null, null,
+                LocalTime.of(11, 0), LocalTime.of(12, 0), NOW, UID);
+        BlockedTime remote = new BlockedTime("shared", "remote newer", DayOfWeek.MONDAY, null,
+                LocalTime.of(13, 0), LocalTime.of(14, 0), NOW, UID);
+        sqlite.upsertBlocked(local);
+        sqlite.upsertBlocked(localOnly);
+
+        FakePostgresTaskRepository postgres = new FakePostgresTaskRepository();
+        postgres.remoteBlocked.add(remote);
+        setField(repo, "postgres", postgres);
+        setField(repo, "postgresAvailable", true);
+        invokeSync("syncBlockedBothWays");
+
+        BlockedTime merged = sqlite.findBlockedById("shared");
+        assertEquals("remote newer", merged.getTitle());
+        assertEquals(LocalTime.of(13, 0), merged.getStartTime());
+        assertEquals(1, postgres.pushedBlocked.size());
+        assertEquals("local-only", postgres.pushedBlocked.get(0).getId());
+    }
+
+    private void invokeSync(String methodName) throws Exception {
+        Method method = TaskRepository.class.getDeclaredMethod(methodName);
+        method.setAccessible(true);
+        method.invoke(repo);
+    }
+
     // ---------- pullFromNode ----------
 
     @Test
@@ -653,6 +713,43 @@ class TaskRepositoryNodeMergeTest {
     private static void stopServer(ScriptedNode server) throws Exception {
         overrideNodeEnv(null);
         server.close();
+    }
+
+    private static final class FakePostgresTaskRepository extends PostgresTaskRepository {
+        final List<Object[]> blockedDeleteRows = new ArrayList<>();
+        final List<String> deletedBlockedIds = new ArrayList<>();
+        final List<String[]> recordedBlockedDeletes = new ArrayList<>();
+        final List<BlockedTime> remoteBlocked = new ArrayList<>();
+        final List<BlockedTime> pushedBlocked = new ArrayList<>();
+
+        FakePostgresTaskRepository() {
+            super("jdbc:invalid:", "", "");
+        }
+
+        @Override
+        public List<Object[]> fetchAllBlockedDeletes() {
+            return blockedDeleteRows;
+        }
+
+        @Override
+        public void deleteBlockedRow(String id) {
+            deletedBlockedIds.add(id);
+        }
+
+        @Override
+        public void recordBlockedDelete(String id, Instant deletedAt, String title) {
+            recordedBlockedDeletes.add(new String[]{id, deletedAt.toString(), title});
+        }
+
+        @Override
+        public List<BlockedTime> fetchAllBlocked() {
+            return remoteBlocked;
+        }
+
+        @Override
+        public void upsertBlocked(BlockedTime blocked) {
+            pushedBlocked.add(blocked);
+        }
     }
 
     /**

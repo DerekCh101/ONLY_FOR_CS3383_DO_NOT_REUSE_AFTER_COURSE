@@ -67,7 +67,7 @@ Run the tests with coverage:
 .\gradlew.bat test jacocoTestReport
 ```
 
-`.\gradlew.bat check` runs the tests plus a 60% line-coverage gate on the headless-testable core (commands, task model, scheduler, vault, theme contrast). The JavaFX views, HTTP client, and Postgres repository are excluded because they need a display, a live server, or Docker.
+`.\gradlew.bat check` runs the tests plus per-class line-coverage gates on the headless-testable core. The database repositories now have per-class thresholds from 80% to 95% line coverage. PostgreSQL repository tests use temporary SQLite databases with narrow SQL compatibility adapters, so they do not require a live server.
 
 ## Run the GUI
 

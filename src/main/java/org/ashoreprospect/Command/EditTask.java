@@ -2,7 +2,6 @@
 package org.ashoreprospect.Command;
 
 import org.ashoreprospect.AppTimeReference;
-import org.ashoreprospect.BlockedTimePeriod;
 import org.ashoreprospect.Day;
 import org.ashoreprospect.RefreshLifeCycle;
 import org.ashoreprospect.Task;
