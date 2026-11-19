@@ -5,7 +5,7 @@
  * <p>The cache lives in {@code @TempDir}, so nothing touches the app's own
  * {@code scheduler-cache.db}. The merge bodies are private and take plain maps, so they are
  * invoked directly; the repository itself is allocated without running its constructor, which
- * would open the app's database, and is then handed the temp-dir store.
+ * would open the shared test-run database, and is then handed the temp-dir store.
  *
  * <p>Signed in, because {@link SqliteTaskRepository} filters every read on the user id and a
  * blank user turns each query into {@code WHERE 1 = 0}. pullFromNode() is only exercised with
@@ -107,8 +107,7 @@ class TaskRepositoryNodeMergeTest {
     }
 
     private static TaskRepository allocate() throws Exception {
-        // TaskRepository's only constructor opens the app's own database. Unsafe lets the test
-        // skip it and hand the object a temp-dir database instead.
+        // Skip the shared test-run database and hand the object a temp-dir database instead.
         Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         f.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) f.get(null);
@@ -630,6 +629,46 @@ class TaskRepositoryNodeMergeTest {
         assertEquals("local-only", postgres.pushedBlocked.get(0).getId());
     }
 
+    @Test
+    void fullOnlineSync_reconcilesTasksDeletesAndDeviceProgress() throws Exception {
+        Instant lastSync = Instant.now().minusSeconds(60);
+        sqlite.setMeta("last_postgres_sync_at", lastSync.toString());
+
+        Task localNew = task("local-new", "new local");
+        localNew.setLastUpdatedAt(lastSync.plusSeconds(10));
+        store(localNew);
+        Task localOld = task("local-old", "old local");
+        localOld.setLastUpdatedAt(lastSync.minusSeconds(10));
+        store(localOld);
+        store(task("remote-deleted", "removed remotely"));
+        sqlite.recordDelete("local-deleted", lastSync, "removed locally");
+
+        FakePostgresTaskRepository postgres = new FakePostgresTaskRepository();
+        postgres.taskDeleteRows.add(new Object[]{"remote-deleted", lastSync, "removed remotely"});
+        postgres.remoteTasks.add(task("remote-new", "new remote"));
+        postgres.remoteTasks.add(task("local-deleted", "deleted locally"));
+        setField(repo, "postgres", postgres);
+        setField(repo, "postgresAvailable", true);
+        setField(repo, "deviceId", "test-device");
+
+        invokeSync("fullOnlineSync");
+
+        assertEquals("test-device", postgres.registeredDevice);
+        assertTrue(postgres.deleteSyncTouched);
+        assertTrue(postgres.taskSyncTouched);
+        assertNotNull(sqlite.getMeta("last_postgres_sync_at"));
+        assertNotNull(sqlite.findById("remote-new"));
+        assertNull(sqlite.findById("remote-deleted"));
+        assertNull(sqlite.findById("local-old"));
+        assertTrue(sqlite.fetchDeletedIds().containsAll(
+                List.of("remote-deleted", "local-deleted", "local-old")));
+        assertTrue(postgres.deletedTaskIds.containsAll(
+                List.of("remote-deleted", "local-deleted", "local-old")));
+        assertTrue(postgres.recordedTaskDeletes.containsAll(
+                List.of("remote-deleted", "local-deleted", "local-old")));
+        assertTrue(postgres.pushedTasks.stream().anyMatch(t -> t.getID().equals("local-new")));
+    }
+
     private void invokeSync(String methodName) throws Exception {
         Method method = TaskRepository.class.getDeclaredMethod(methodName);
         method.setAccessible(true);
@@ -716,14 +755,76 @@ class TaskRepositoryNodeMergeTest {
     }
 
     private static final class FakePostgresTaskRepository extends PostgresTaskRepository {
+        final List<Object[]> taskDeleteRows = new ArrayList<>();
+        final List<String> deletedTaskIds = new ArrayList<>();
+        final List<String> recordedTaskDeletes = new ArrayList<>();
+        final List<Task> remoteTasks = new ArrayList<>();
+        final List<Task> pushedTasks = new ArrayList<>();
         final List<Object[]> blockedDeleteRows = new ArrayList<>();
         final List<String> deletedBlockedIds = new ArrayList<>();
         final List<String[]> recordedBlockedDeletes = new ArrayList<>();
         final List<BlockedTime> remoteBlocked = new ArrayList<>();
         final List<BlockedTime> pushedBlocked = new ArrayList<>();
+        String registeredDevice;
+        boolean deleteSyncTouched;
+        boolean taskSyncTouched;
 
         FakePostgresTaskRepository() {
             super("jdbc:invalid:", "", "");
+        }
+
+        @Override
+        public void upsertDevice(String deviceId, String displayName, String platform) {
+            registeredDevice = deviceId;
+        }
+
+        @Override
+        public boolean wipeIfAbandoned(int abandonedAfterMonths) {
+            return false;
+        }
+
+        @Override
+        public void revokeStaleDevices(int staleAfterMonths) {
+        }
+
+        @Override
+        public void touchDeleteSync(String deviceId) {
+            deleteSyncTouched = true;
+        }
+
+        @Override
+        public void touchTaskSync(String deviceId) {
+            taskSyncTouched = true;
+        }
+
+        @Override
+        public Instant minDeleteAckAmongActive(int staleAfterMonths) {
+            return null;
+        }
+
+        @Override
+        public List<Object[]> fetchAllDeletes() {
+            return taskDeleteRows;
+        }
+
+        @Override
+        public void deleteTaskRow(String id) {
+            deletedTaskIds.add(id);
+        }
+
+        @Override
+        public void recordDelete(String id, Instant deletedAt, String title) {
+            recordedTaskDeletes.add(id);
+        }
+
+        @Override
+        public List<Task> fetchAll() {
+            return remoteTasks;
+        }
+
+        @Override
+        public void upsert(Task task) {
+            pushedTasks.add(task);
         }
 
         @Override

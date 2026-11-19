@@ -4,7 +4,7 @@
  *
  * <p>No server needed: the rows come from a temp-dir {@code SqliteTaskRepository} and the target is
  * an in-memory {@code TaskManagementSystem}. The repository is built with
- * {@code Unsafe.allocateInstance} because its real constructor opens the app's own cache.
+ * {@code Unsafe.allocateInstance} because its constructor opens the shared test-run cache.
  *
  * <p>Two rules the class encodes, both asserted here:
  * <ul>
@@ -35,6 +35,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -45,6 +47,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ResourceLock("app-clock")
@@ -110,6 +113,13 @@ class TaskRepositoryLoadTest {
     }
 
     // ---------- placement ----------
+
+    @Test
+    void singletonStartsWithoutTheLivePostgresDriver() {
+        assertFalse(system.getTaskRepo().isPostgresAvailable());
+        assertThrows(SQLException.class,
+                () -> DriverManager.getDriver("jdbc:postgresql://127.0.0.1:5432/Scheduler"));
+    }
 
     @Test
     void placedTasksAreRestoredIntoPlacedAndOntoTheGrid() throws Exception {

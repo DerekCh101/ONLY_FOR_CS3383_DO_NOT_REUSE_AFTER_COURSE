@@ -11,8 +11,8 @@
  * is called with a live server, since both refuse before opening a socket (covered by
  * {@link NodeApiTest}).
  *
- * <p>{@code .scheduler/session.txt} and {@code login.txt} are user data and are snapshotted and
- * restored around every test.
+ * <p>The isolated test-run {@code .scheduler/session.txt} and {@code login.txt} are snapshotted
+ * and restored around every test.
  */
 package org.ashoreprospect.net;
 

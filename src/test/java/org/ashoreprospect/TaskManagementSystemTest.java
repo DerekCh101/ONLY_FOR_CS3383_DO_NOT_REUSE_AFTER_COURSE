@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@code getInstance()} opens the real SQLite cache and starts a daemon poll thread, so
+ * {@code getInstance()} opens the test-run SQLite cache and starts a daemon poll thread, so
  * every test resets the singleton and clears its lists/grid afterwards.
  */
 @ResourceLock("app-clock")
@@ -76,8 +76,8 @@ class TaskManagementSystemTest {
      *
      * <p>Signing in is needed because rewriteEncryptedStores() is only reached from the account
      * pane, and a blocked write with no session is refused since #1. The repository must also be
-     * swapped, though: TaskRepository's own constructor opens the real scheduler-cache.db, so a
-     * session would otherwise make this test read the developer's data and collide with it.
+     * swapped, though: TaskRepository's own constructor opens the shared test-run cache, so a
+     * session would otherwise make this test read rows left by other tests.
      */
     private void signInWithIsolatedDatabase() throws Exception {
         LocalSession.save(SIGNED_IN_UID, "tester", "file-only-token");

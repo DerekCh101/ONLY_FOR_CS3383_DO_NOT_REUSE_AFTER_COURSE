@@ -233,6 +233,50 @@ class PostgresTaskRepositoryTest {
         assertTrue(repo.fetchBlockedDeletedIds().isEmpty());
     }
 
+    @Test
+    void deleteAcknowledgementsRequireEveryActiveDevice() throws Exception {
+        repo.upsertDevice("first", "First", "test");
+        repo.upsertDevice("second", "Second", "test");
+        repo.touchDeleteSync("first");
+        repo.touchTaskSync("first");
+
+        assertNull(repo.minDeleteAckAmongActive(6));
+
+        repo.touchDeleteSync("second");
+        assertNotNull(repo.minDeleteAckAmongActive(6));
+        try (Connection connection = connect(); Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                     "SELECT last_task_sync_at FROM devices WHERE device_id = 'first'")) {
+            assertTrue(rows.next());
+            assertNotNull(rows.getString(1));
+        }
+    }
+
+    @Test
+    void staleDevicesAreRevokedAndAbandonedDataIsWiped() throws Exception {
+        repo.upsertDevice("stale", "Old device", "test");
+        repo.upsert(task("old-task", "old task"));
+        assertFalse(repo.wipeIfAbandoned(6));
+
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            statement.executeUpdate("UPDATE devices SET last_seen_at = datetime('now', '-12 months')");
+        }
+        repo.revokeStaleDevices(6);
+        try (Connection connection = connect(); Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT revoked_at FROM devices")) {
+            assertTrue(rows.next());
+            assertNotNull(rows.getString(1));
+        }
+
+        assertTrue(repo.wipeIfAbandoned(6));
+        assertTrue(repo.fetchAll().isEmpty());
+        try (Connection connection = connect(); Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM devices")) {
+            assertTrue(rows.next());
+            assertEquals(0, rows.getInt(1));
+        }
+    }
+
     private Connection connect() throws SQLException {
         return DriverManager.getConnection(
                 "jdbc:postgres-task-test:" + tmp.resolve("tasks.db"), "user", "password");
@@ -378,7 +422,11 @@ class PostgresTaskRepositoryTest {
                 if (args != null && args.length == 1) {
                     if (method.getName().equals("getTimestamp")) {
                         String value = getString(rows, args[0]);
-                        return value == null ? null : java.sql.Timestamp.from(Instant.parse(value));
+                        if (value == null) return null;
+                        if (!value.contains("T")) {
+                            value = value.replace(' ', 'T') + "Z";
+                        }
+                        return java.sql.Timestamp.from(Instant.parse(value));
                     }
                     if (method.getName().equals("getDate")) {
                         String value = getString(rows, args[0]);
@@ -402,6 +450,8 @@ class PostgresTaskRepositoryTest {
         private static String rewriteSql(String sql) {
             return sql.replace("TASK.", "")
                     .replace("TIMESTAMPTZ", "TEXT")
+                    .replace("NOW() - (? || ' months')::INTERVAL",
+                            "datetime('now', '-' || ? || ' months')")
                     .replace("NOW()", "CURRENT_TIMESTAMP")
                     .replace("GREATEST(", "MAX(");
         }

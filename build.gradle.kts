@@ -1,4 +1,5 @@
 import org.gradle.jvm.tasks.Jar
+import java.nio.file.Files
 import java.util.LinkedHashSet
 import java.util.zip.ZipFile
 
@@ -34,8 +35,35 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// PostgreSQL repository tests use SQLite-backed adapters, never the live JDBC driver.
+configurations.testRuntimeClasspath {
+    exclude(group = "org.postgresql", module = "postgresql")
+}
+
 tasks.test {
     useJUnitPlatform()
+    systemProperty("junit.jupiter.execution.parallel.enabled", "false")
+    doFirst {
+        val root = Files.createTempDirectory(temporaryDir.toPath(), "isolated-")
+        val work = Files.createDirectories(root.resolve("work"))
+        val home = Files.createDirectories(root.resolve("home"))
+        val tmp = Files.createDirectories(root.resolve("tmp"))
+        workingDir = work.toFile()
+        systemProperty("scheduler.test.root", root.toString())
+        systemProperty("user.home", home.toString())
+        systemProperty("java.io.tmpdir", tmp.toString())
+        val isolatedVariables = listOf("APPDATA", "XDG_CONFIG_HOME", "SCHEDULER_NODE",
+            "postgres_pw", "PGPASSWORD", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
+            "SMTP_PASS")
+        setEnvironment(environment.filterKeys { key ->
+            isolatedVariables.none { it.equals(key, ignoreCase = true) }
+        })
+        environment("APPDATA", home.resolve("AppData").resolve("Roaming").toString())
+        environment("XDG_CONFIG_HOME", home.resolve(".config").toString())
+        listOf("SCHEDULER_NODE", "postgres_pw", "PGPASSWORD",
+            "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM", "SMTP_PASS")
+            .forEach { environment(it, "") }
+    }
     finalizedBy(tasks.jacocoTestReport)
 }
 
