@@ -6,14 +6,15 @@
  * {@code Platform.startup} - the previous approach - boots native glass/AWT and crashes the
  * process on a headless CI runner and on macOS runners, so these tests must not depend on it.
  *
- * <p>Every call therefore runs on the plain test thread, which takes the no-toolkit path. The
- * assertions read the private timer fields, i.e. whether a timer is currently installed.
+ * <p>These tests do not start a toolkit. If another test already started one, they wait for
+ * the asynchronous FX cleanup before inspecting the timer fields.
  *
  * <p>The 20-second tick itself is not exercised; {@code tick()} is covered by
  * {@link TaskRemindersTickTest}.
  */
 package org.ashoreprospect.GUI;
 
+import javafx.application.Platform;
 import org.ashoreprospect.AppTimeReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,12 +23,16 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 
 import java.lang.reflect.Field;
 import java.time.Clock;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ResourceLock("app-clock")
+@ResourceLock("javafx-toolkit")
 class TaskRemindersLifecycleTest {
 
     private Clock originalClock;
@@ -36,12 +41,12 @@ class TaskRemindersLifecycleTest {
     void setUp() throws Exception {
         originalClock = Clock.systemDefaultZone();
         AppTimeReference.setClock(originalClock);
-        TaskReminders.stop();
+        stopAndWait();
     }
 
     @AfterEach
     void tearDown() throws Exception {
-        TaskReminders.stop();
+        stopAndWait();
         AppTimeReference.setClock(originalClock);
     }
 
@@ -63,7 +68,7 @@ class TaskRemindersLifecycleTest {
         TaskReminders.start();
         assertNotNull(timer());
 
-        TaskReminders.stop();
+        stopAndWait();
         assertNull(clock(), "stop() clears the FX timeline");
         assertNull(clockThread(), "stop() clears the fallback thread");
 
@@ -73,8 +78,8 @@ class TaskRemindersLifecycleTest {
 
     @Test
     void stopIsSafeWithoutAPriorStart() throws Exception {
-        TaskReminders.stop();
-        TaskReminders.stop();
+        stopAndWait();
+        stopAndWait();
 
         assertNull(clock());
         assertNull(clockThread());
@@ -97,6 +102,17 @@ class TaskRemindersLifecycleTest {
     /** The private {@code clockThread} field, i.e. whether the no-toolkit loop is running. */
     private static Object clockThread() {
         return field("clockThread");
+    }
+
+    private static void stopAndWait() throws Exception {
+        TaskReminders.stop();
+        CountDownLatch done = new CountDownLatch(1);
+        try {
+            Platform.runLater(done::countDown);
+        } catch (IllegalStateException | UnsupportedOperationException | NoClassDefFoundError noToolkit) {
+            return;
+        }
+        assertTrue(done.await(10, TimeUnit.SECONDS), "reminder cleanup did not complete");
     }
 
     private static Object field(String name) {

@@ -6,10 +6,8 @@
  * the port is ephemeral and no packet can leave the machine. It records the verb, path, headers,
  * and body of every request, which is exactly what a transport test has to assert.
  *
- * <p>Two calls are deliberately <em>not</em> exercised: nothing here waits on the 12-second
- * {@code forgotPassword} read timeout, and neither {@code register} nor {@code authenticate(true)}
- * is called with a live server, since both refuse before opening a socket (covered by
- * {@link NodeApiTest}).
+ * <p>Nothing here waits on the 12-second {@code forgotPassword} read timeout. The
+ * {@code register} and {@code authenticate(true)} guards are checked without opening a socket.
  *
  * <p>The isolated test-run {@code .scheduler/session.txt} and {@code login.txt} are snapshotted
  * and restored around every test.
@@ -57,7 +55,7 @@ class NodeApiTransportTest {
         api = signedIn();
     }
 
-    /** A fresh {@code NodeApi} that already holds a session, without writing any file of its own. */
+    /** A fresh {@code NodeApi} with a remembered session in the isolated test directory. */
     private static NodeApi signedIn() {
         NodeApi a = new NodeApi();
         NodeApi.AuthResult r = new NodeApi.AuthResult();
@@ -305,6 +303,195 @@ class NodeApiTransportTest {
 
         assertEquals("no such user", assertThrows(IllegalStateException.class,
                 () -> api.authenticate(false, "nobody", "pw")).getMessage());
+    }
+
+    @Test
+    void registrationRequiresRecoveryDetailsAndPostsThemWithoutABearer() throws Exception {
+        assertThrows(IllegalStateException.class, () -> api.register("user", "pw"));
+        assertThrows(IllegalStateException.class, () -> api.authenticate(true, "user", "pw"));
+        assertEquals(0, node.callCount());
+
+        node.replyWith(200, "{\"token\":\"tok\",\"userId\":\"u1\"}");
+        NodeApi.AuthResult result = api.registerAccount("user", "Pass1!", "a@b.test",
+                "A \"question\"?", "an\\swer");
+
+        FakeNode.Call call = node.only();
+        assertEquals("POST /register", call.method + " " + call.path);
+        assertNull(call.header("Authorization"));
+        assertTrue(call.body.contains("\"email\":\"a@b.test\""), call.body);
+        assertTrue(call.body.contains("\"question\":\"A \\\"question\\\"?\""), call.body);
+        assertTrue(call.body.contains("\"answer\":\"an\\\\swer\""), call.body);
+        assertEquals("u1", result.userId);
+        assertEquals("user", result.username);
+    }
+
+    @Test
+    void recoveryRequestsDoNotRequireASessionAndEscapeTheBody() throws Exception {
+        NodeApi signedOut = new NodeApi();
+        signedOut.forgotPassword("user", "a@b.test");
+        FakeNode.Call forgot = node.only();
+        assertEquals("POST /forgot", forgot.method + " " + forgot.path);
+        assertNull(forgot.header("Authorization"));
+        assertEquals("{\"username\":\"user\",\"email\":\"a@b.test\"}", forgot.body);
+
+        node.resetRecording();
+        signedOut.resetPassword("token", "line\nanswer", "Strong1!");
+        FakeNode.Call reset = node.only();
+        assertEquals("POST /reset", reset.method + " " + reset.path);
+        assertNull(reset.header("Authorization"));
+        assertEquals("{\"token\":\"token\",\"answer\":\"line\\nanswer\",\"newPassword\":\"Strong1!\"}",
+                reset.body);
+    }
+
+    @Test
+    void accountStatusEncodesTheIdAndHandlesServerFailures() throws Exception {
+        node.replyWith(200, "{\"deleted\":true}");
+        assertTrue(api.isAccountDeleted(" user + id "));
+        assertEquals("userId=user+%2B+id", node.only().query);
+        assertNull(node.only().header("Authorization"));
+
+        node.replyWith(200, "{\"deleted\":false}");
+        assertFalse(api.isAccountDeleted("user"));
+        node.replyWith(500, "{\"error\":\"unavailable\"}");
+        assertFalse(api.isAccountDeleted("user"));
+    }
+
+    @Test
+    void updatingUsernameRefreshesTheRememberedSession() throws Exception {
+        node.replyWith(200, "{\"username\":\"renamed\"}");
+        assertEquals("renamed", api.saveUsername("renamed").get("username"));
+        assertEquals("renamed", api.getUsername());
+        assertEquals("renamed", LocalSession.load().username);
+        assertEquals("POST /me/username", node.only().method + " " + node.only().path);
+        assertEquals("{\"username\":\"renamed\"}", node.only().body);
+
+        node.replyWith(200, "{\"username\":\"\"}");
+        api.saveUsername("");
+        assertEquals("renamed", api.getUsername());
+        assertEquals("renamed", LocalSession.load().username);
+    }
+
+    @Test
+    void accountSecurityAndSessionRequestsUseAuthenticatedEndpoints() throws Exception {
+        node.replyWith(200, "{\"sessions\":[{\"id\":\"s1\"}]}");
+        assertEquals("s1", api.getSessions().get(0).get("id"));
+        assertEquals("GET /sessions", node.only().method + " " + node.only().path);
+        assertEquals("Bearer test-token", node.only().header("Authorization"));
+
+        node.resetRecording();
+        node.replyWith(200, "{\"ok\":true}");
+        api.revokeOtherSessions();
+        assertEquals("POST /sessions/revoke-others", node.only().method + " " + node.only().path);
+        assertEquals("{}", node.only().body);
+
+        node.resetRecording();
+        api.revokeSession("s1");
+        assertEquals("DELETE /sessions/s1", node.only().method + " " + node.only().path);
+
+        node.resetRecording();
+        api.saveSecurity("question?", "answer");
+        assertEquals("POST /me/security", node.only().method + " " + node.only().path);
+        assertEquals("{\"question\":\"question?\",\"answer\":\"answer\"}", node.only().body);
+
+        node.resetRecording();
+        api.changePassword("old", "new");
+        assertEquals("POST /change-password", node.only().method + " " + node.only().path);
+        assertEquals("{\"oldPassword\":\"old\",\"newPassword\":\"new\"}", node.only().body);
+
+        node.resetRecording();
+        api.challengeQuestion();
+        assertEquals("GET /challenge-question", node.only().method + " " + node.only().path);
+
+        node.resetRecording();
+        api.challengeAnswer("answer");
+        assertEquals("{\"answer\":\"answer\"}", node.only().body);
+        assertEquals("POST /challenge-answer", node.only().method + " " + node.only().path);
+    }
+
+    @Test
+    void accountUpdatesSerializeNullsAndPasswords() throws Exception {
+        api.saveEmail(null);
+        assertEquals("POST /me/email", node.only().method + " " + node.only().path);
+        assertEquals("{\"email\":\"\"}", node.only().body);
+
+        node.resetRecording();
+        api.deleteAccount("a\"b");
+        assertEquals("POST /me/delete", node.only().method + " " + node.only().path);
+        assertEquals("{\"password\":\"a\\\"b\"}", node.only().body);
+    }
+
+    @Test
+    void typewriterRequestsEscapeContentAndReadJsonValues() throws Exception {
+        node.replyWith(200, "{\"content\":\"first\\nsecond\",\"last_updated_at\":null}");
+        Map<String, String> stored = api.getTypewriter();
+        assertEquals("first\nsecond", stored.get("content"));
+        assertTrue(stored.containsKey("last_updated_at"));
+        assertNull(stored.get("last_updated_at"));
+
+        node.resetRecording();
+        api.postTypewriter("quote \" and\nnewline", null);
+        assertEquals("POST /typewriter", node.only().method + " " + node.only().path);
+        assertEquals("{\"content\":\"quote \\\" and\\nnewline\",\"last_updated_at\":\"\"}",
+                node.only().body);
+    }
+
+    @Test
+    void imageMetadataDistinguishesMissingImagesFromOtherErrors() throws Exception {
+        assertFalse(api.typewriterImageExists(null));
+        assertFalse(api.typewriterImageExists(" "));
+        assertEquals(0, node.callCount());
+
+        node.replyWith(200, "{\"exists\":true,\"sha256\":\"abc\"}");
+        assertTrue(api.typewriterImageExists("abc"));
+        assertEquals("/typewriter/images/abc?meta=1", node.only().target());
+        node.replyWith(200, "{\"sha256\":\"ABC\"}");
+        assertTrue(api.typewriterImageExists("abc"));
+        node.replyWith(200, "{\"exists\":false}");
+        assertFalse(api.typewriterImageExists("abc"));
+
+        node.replyWith(404, "{\"error\":\"missing\"}");
+        assertFalse(api.typewriterImageExists("abc"));
+        node.replyWith(401, "{\"error\":\"login required\"}");
+        assertEquals("Your login expired. Sign in again, then retry.",
+                assertThrows(IllegalStateException.class, () -> api.typewriterImageExists("abc")).getMessage());
+        node.replyWith(500, "{\"error\":\"database unavailable\"}");
+        assertEquals("database unavailable",
+                assertThrows(IllegalStateException.class, () -> api.typewriterImageExists("abc")).getMessage());
+    }
+
+    @Test
+    void imageUploadChoosesMimeAndFolderAndEscapesMetadata() throws Exception {
+        String[][] cases = {
+                {"photo.JPG", "image/jpeg"},
+                {"photo.jpeg", "image/jpeg"},
+                {"picture.gif", "image/gif"},
+                {"picture.webp", "image/webp"},
+                {"picture.unknown", "image/png"}
+        };
+        for (String[] entry : cases) {
+            node.resetRecording();
+            api.postTypewriterImage("abc", entry[0], "base64", "PAGES", null);
+            FakeNode.Call call = node.only();
+            assertEquals("POST /typewriter/images", call.method + " " + call.path);
+            assertTrue(call.body.contains("\"mime\":\"" + entry[1] + "\""), call.body);
+            assertTrue(call.body.contains("\"kind\":\"pages\""), call.body);
+        }
+
+        node.resetRecording();
+        api.postTypewriterImage("abc", null, "data", "other", "custom/type");
+        assertTrue(node.only().body.contains("\"name\":\"image.png\""), node.only().body);
+        assertTrue(node.only().body.contains("\"mime\":\"custom/type\""), node.only().body);
+        assertTrue(node.only().body.contains("\"kind\":\"diary\""), node.only().body);
+
+        node.resetRecording();
+        api.postTypewriterImage("abc", "image.png", "data");
+        assertTrue(node.only().body.contains("\"mime\":\"image/png\""), node.only().body);
+        assertTrue(node.only().body.contains("\"kind\":\"diary\""), node.only().body);
+
+        node.resetRecording();
+        node.replyWith(200, "{\"sha256\":\"abc\",\"data\":\"base64\"}");
+        assertEquals("base64", api.getTypewriterImage("abc").get("data"));
+        assertEquals("GET /typewriter/images/abc", node.only().method + " " + node.only().path);
     }
 
     // ---------- session bookkeeping ----------

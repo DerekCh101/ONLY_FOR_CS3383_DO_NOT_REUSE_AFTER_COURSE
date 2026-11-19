@@ -131,7 +131,8 @@ public class NodeApi {
             return "true".equalsIgnoreCase(exists) || sha.equalsIgnoreCase(got);
         } catch (IllegalStateException e) {
             String m = e.getMessage() == null ? "" : e.getMessage();
-            if (m.contains("missing") || m.contains("HTTP 404") || "missing".equals(m)) {
+            if ((e instanceof HttpError && ((HttpError) e).status == 404)
+                    || m.contains("missing") || m.contains("HTTP 404")) {
                 return false;
             }
             throw e;
@@ -335,7 +336,7 @@ public class NodeApi {
             if (code < 200 || code >= 300) {
                 String msg = extract(json, "message");
                 if (msg == null) msg = extract(json, "error");
-                throw new IllegalStateException(friendlyError(path, code, msg));
+                throw new HttpError(code, friendlyError(path, code, msg));
             }
             return json;
         } catch (java.net.SocketTimeoutException e) {
@@ -583,6 +584,15 @@ public class NodeApi {
         } catch (Exception ignored) {
         }
         return "JavaFX · " + os + " · " + host;
+    }
+
+    private static final class HttpError extends IllegalStateException {
+        private final int status;
+
+        private HttpError(int status, String message) {
+            super(message);
+            this.status = status;
+        }
     }
 
     public static final class AuthResult {

@@ -42,6 +42,7 @@ configurations.testRuntimeClasspath {
 
 tasks.test {
     useJUnitPlatform()
+    inputs.property("schedulerTestFx", System.getenv("SCHEDULER_TEST_FX") ?: "")
     systemProperty("junit.jupiter.execution.parallel.enabled", "false")
     doFirst {
         val root = Files.createTempDirectory(temporaryDir.toPath(), "isolated-")

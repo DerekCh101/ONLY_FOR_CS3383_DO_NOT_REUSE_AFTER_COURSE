@@ -67,10 +67,25 @@ Run the tests with coverage:
 .\gradlew.bat test jacocoTestReport
 ```
 
-Run tests through Gradle rather than directly through an IDE test runner. Gradle gives each test
-run an isolated working directory and user configuration, disables live PostgreSQL connections,
-and points ordinary Node requests at an offline endpoint. Tests that need HTTP use local fakes.
-The isolated runtime files are under `build/tmp/test/` and are removed by `clean`.
+By default, run tests through Gradle. Gradle gives each test run an isolated working directory and
+user configuration, disables live PostgreSQL connections, and points ordinary Node requests at an
+offline endpoint. Tests that need HTTP use local fakes. The isolated runtime files are under
+`build/tmp/test/` and are removed by `clean`. A VS Code Java test configuration may also run the
+tests if it supplies the same isolation and excludes the PostgreSQL driver.
+
+The normal suite runs without starting JavaFX. To include the calendar, window, dialogs, account,
+typewriter, login, and security-challenge UI tests in the coverage report, enable the opt-in tests
+on a machine with a graphical display. They do not show a window and use local fakes for HTTP:
+
+```powershell
+$env:SCHEDULER_TEST_FX = "true"
+.\gradlew.bat test jacocoTestReport
+Remove-Item Env:\SCHEDULER_TEST_FX
+```
+
+The isolated VS Code Java test configuration can use **Run Tests with Coverage** for the headless
+tests. Keep `SCHEDULER_TEST_FX` set to `false` there; use the Gradle command above for the
+display-dependent tests. Gradle and VS Code coverage runs each generate their own reports.
 
 `.\gradlew.bat check` runs the tests plus per-class line-coverage gates on the headless-testable core. The database repositories now have per-class thresholds from 80% to 95% line coverage. PostgreSQL repository tests use temporary SQLite databases with narrow SQL compatibility adapters, so they do not require a live server.
 

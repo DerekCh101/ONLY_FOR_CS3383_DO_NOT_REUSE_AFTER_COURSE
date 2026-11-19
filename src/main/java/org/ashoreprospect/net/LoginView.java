@@ -234,13 +234,9 @@ public class LoginView {
     private void goRegister(String user, String password, String email, String question, String answer,
                             boolean remember, Label err, Button create, Button cancel, Runnable onOk) {
         err.setText("");
-        if (blank(user) || blank(password) || blank(email) || blank(question) || blank(answer)) {
-            err.setText("Username, password, email, security question, and answer are all required.");
-            return;
-        }
-        String weak = PasswordRules.reject(password);
-        if (weak != null) {
-            err.setText(weak);
+        String validationError = registrationError(user, password, email, question, answer);
+        if (validationError != null) {
+            err.setText(validationError);
             return;
         }
         create.setDisable(true);
@@ -349,6 +345,14 @@ public class LoginView {
 
     private static void styleGhost(Button b) {
         b.setStyle(AppTheme.cardGhostBtnCss() + "-fx-font-size: 14px;");
+    }
+
+    static String registrationError(String user, String password, String email,
+                                    String question, String answer) {
+        if (blank(user) || blank(password) || blank(email) || blank(question) || blank(answer)) {
+            return "Username, password, email, security question, and answer are all required.";
+        }
+        return PasswordRules.reject(password);
     }
 
     private static boolean blank(String s) {
