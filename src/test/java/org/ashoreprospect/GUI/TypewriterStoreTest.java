@@ -1,6 +1,7 @@
 package org.ashoreprospect.GUI;
 
 import org.ashoreprospect.crypto.Vault;
+import org.ashoreprospect.db.SqliteTypewriterRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -10,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -22,6 +24,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,6 +98,127 @@ class TypewriterStoreTest {
         assertEquals("Travel", restored.pagesRoot.children.get(0).title);
         assertEquals("Kyoto", restored.pagesRoot.children.get(0).notes.get(0).title);
         assertEquals("<p>Plans</p>", restored.pagesRoot.children.get(0).notes.get(0).body);
+    }
+
+    @Test
+    void snapshotsRestoreContentWithVaultEnabledAndRemainStable() throws Exception {
+        requireIsolatedVault();
+        Vault.eraseLocalKeys();
+        try {
+            Vault.enable("snapshot-user", "Str0ng#Pass");
+            LocalDate day = LocalDate.of(2026, 10, 12);
+            TypewriterPane.TwNote diary = new TypewriterPane.TwNote("diary-id", "Diary", day);
+            diary.body = "<p>Today</p>";
+            TypewriterPane.TwList list = new TypewriterPane.TwList("list-id", "Shopping");
+            list.items.add(new TypewriterPane.TwItem("<b>Milk</b>"));
+            TypewriterPane.TwFolder root = new TypewriterPane.TwFolder("Pages");
+            TypewriterPane.TwFolder folder = new TypewriterPane.TwFolder("folder-id", "Travel");
+            TypewriterPane.TwNote page = new TypewriterPane.TwNote("page-id", "Kyoto", null);
+            page.body = "<p>Plans</p>";
+            folder.notes.add(page);
+            root.children.add(folder);
+
+            String snapshot = TypewriterStore.snapshotJson(Map.of(day, diary), List.of(list), root);
+            assertEquals(snapshot, TypewriterStore.snapshotJson(Map.of(day, diary), List.of(list), root));
+            TypewriterStore.Data restored = TypewriterStore.fromSnapshotJson(snapshot);
+
+            assertEquals("Diary", restored.diary.get(day).title);
+            assertEquals("<p>Today</p>", restored.diary.get(day).body);
+            assertEquals("Shopping", restored.lists.get(0).title);
+            assertEquals("<b>Milk</b>", restored.lists.get(0).items.get(0).text);
+            assertEquals("Travel", restored.pagesRoot.children.get(0).title);
+            assertEquals("Kyoto", restored.pagesRoot.children.get(0).notes.get(0).title);
+            assertEquals("<p>Plans</p>", restored.pagesRoot.children.get(0).notes.get(0).body);
+            assertEquals(snapshot, TypewriterStore.snapshotJson(restored.diary, restored.lists, restored.pagesRoot));
+            list.title = "Updated";
+            assertNotEquals(snapshot, TypewriterStore.snapshotJson(Map.of(day, diary), List.of(list), root));
+        } finally {
+            Vault.eraseLocalKeys();
+        }
+    }
+
+    @Test
+    void snapshotRestoreOpensPreviouslySealedFields() throws Exception {
+        requireIsolatedVault();
+        Vault.eraseLocalKeys();
+        try {
+            Vault.enable("snapshot-user", "Str0ng#Pass");
+            String json = "{\"diary\":[{\"id\":\"diary-id\",\"date\":\"2026-10-12\",\"title\":\""
+                    + Vault.seal("Diary") + "\",\"body\":\"" + Vault.seal("Today")
+                    + "\",\"images\":[]}],\"lists\":[{\"id\":\"list-id\",\"title\":\""
+                    + Vault.seal("Shopping") + "\",\"items\":[{\"text\":\""
+                    + Vault.seal("<b>Milk</b>") + "\",\"done\":false}]}],\"pages\":["
+                    + "{\"id\":\"folder-id\",\"kind\":\"folder\",\"title\":\"" + Vault.seal("Travel") + "\"},"
+                    + "{\"id\":\"page-id\",\"parent_id\":\"folder-id\",\"kind\":\"note\",\"title\":\""
+                    + Vault.seal("Kyoto") + "\",\"body\":\"" + Vault.seal("Plans") + "\"}]}";
+
+            TypewriterStore.Data restored = TypewriterStore.fromSnapshotJson(json);
+
+            assertEquals("Diary", restored.diary.get(LocalDate.of(2026, 10, 12)).title);
+            assertEquals("Today", restored.diary.get(LocalDate.of(2026, 10, 12)).body);
+            assertEquals("Shopping", restored.lists.get(0).title);
+            assertEquals("<b>Milk</b>", restored.lists.get(0).items.get(0).text);
+            assertEquals("Travel", restored.pagesRoot.children.get(0).title);
+            assertEquals("Kyoto", restored.pagesRoot.children.get(0).notes.get(0).title);
+            assertEquals("Plans", restored.pagesRoot.children.get(0).notes.get(0).body);
+        } finally {
+            Vault.eraseLocalKeys();
+        }
+    }
+
+    @Test
+    void snapshotsDoNotDisableSqliteEncryption(@TempDir Path temp) throws Exception {
+        requireIsolatedVault();
+        Vault.eraseLocalKeys();
+        try {
+            Vault.enable("snapshot-user", "Str0ng#Pass");
+            TypewriterPane.TwList list = new TypewriterPane.TwList("list-id", "Shopping");
+            list.items.add(new TypewriterPane.TwItem("Milk"));
+            TypewriterPane.TwFolder root = new TypewriterPane.TwFolder("Pages");
+            TypewriterStore.snapshotJson(Map.of(), List.of(list), root);
+            String url = "jdbc:sqlite:" + temp.resolve("typewriter.db");
+            SqliteTypewriterRepository repo = new SqliteTypewriterRepository(url);
+            repo.initialize();
+            repo.replaceAll("snapshot-user", Map.of(), List.of(list), root);
+
+            try (Connection connection = DriverManager.getConnection(url);
+                 ResultSet row = connection.createStatement().executeQuery(
+                         "SELECT l.title, i.text FROM tw_lists l JOIN tw_list_items i ON i.list_id = l.id")) {
+                assertTrue(row.next());
+                assertTrue(Vault.sealed(row.getString(1)));
+                assertTrue(Vault.sealed(row.getString(2)));
+            }
+            assertEquals("Shopping", repo.fetchAll("snapshot-user").lists.get(0).title);
+        } finally {
+            Vault.eraseLocalKeys();
+        }
+    }
+
+    @Test
+    void snapshotsPreserveLocalImagesWithoutRemoteStorage(@TempDir Path temp) throws Exception {
+        Path image = Files.createFile(temp.resolve("photo.png")).toAbsolutePath();
+        LocalDate day = LocalDate.of(2026, 10, 12);
+        TypewriterPane.TwNote diary = new TypewriterPane.TwNote("Diary", day);
+        diary.images.add(image.toFile());
+        TypewriterPane.TwFolder root = new TypewriterPane.TwFolder("Pages");
+        TypewriterPane.TwNote page = new TypewriterPane.TwNote("Page", null);
+        page.images.add(image.toFile());
+        root.notes.add(page);
+
+        String snapshot = TypewriterStore.snapshotJson(Map.of(day, diary), List.of(), root);
+        TypewriterStore.Data restored = TypewriterStore.fromSnapshotJson(snapshot);
+
+        assertEquals(image.toFile(), restored.diary.get(day).images.get(0));
+        assertEquals(image.toFile(), restored.pagesRoot.notes.get(0).images.get(0));
+        assertEquals(snapshot, TypewriterStore.snapshotJson(restored.diary, restored.lists, restored.pagesRoot));
+    }
+
+    private static void requireIsolatedVault() {
+        String root = System.getProperty("scheduler.test.root", "");
+        if (root.isBlank() || !Path.of("").toAbsolutePath().normalize()
+                .equals(Path.of(root).toAbsolutePath().normalize().resolve("work"))) {
+            throw new IllegalStateException("Tests require the isolated Gradle test environment. Run .\\gradlew test.");
+        }
     }
 
     @Test

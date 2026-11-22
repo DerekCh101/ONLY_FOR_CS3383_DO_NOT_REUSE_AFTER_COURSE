@@ -322,11 +322,14 @@ public final class TypewriterStore {
         snap.diary.putAll(diary);
         snap.lists.addAll(lists);
         copyFolder(pagesRoot, snap.pagesRoot);
-        return toBundle(snap);
+        // History is transient and compared by value; encrypted fields use random IVs.
+        return toBundle(snap, false);
     }
 
     public static Data fromSnapshotJson(String json) {
-        return parseBundle(json);
+        Data data = parseBundle(json);
+        openLoaded(data);
+        return data;
     }
 
     private static void pushRemote(String uid, Data data) {
@@ -520,6 +523,10 @@ public final class TypewriterStore {
     }
 
     private static String toBundle(Data data) {
+        return toBundle(data, true);
+    }
+
+    private static String toBundle(Data data, boolean sealFields) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"diary\":[");
         boolean first = true;
@@ -527,7 +534,7 @@ public final class TypewriterStore {
             if (!hasContent(e.getValue())) continue;
             if (!first) sb.append(',');
             first = false;
-            appendNote(sb, e.getValue(), e.getKey());
+            appendNote(sb, e.getValue(), e.getKey(), sealFields);
         }
         sb.append("],\"lists\":[");
         first = true;
@@ -536,14 +543,14 @@ public final class TypewriterStore {
             first = false;
             sb.append("{");
             field(sb, "id", list.id, true);
-            secret(sb, "title", list.title, false);
+            secret(sb, "title", list.title, false, sealFields);
             sb.append(",\"items\":[");
             boolean firstItem = true;
             for (TypewriterPane.TwItem item : list.items) {
                 if (!firstItem) sb.append(',');
                 firstItem = false;
                 sb.append("{");
-                secret(sb, "text", TypewriterHtml.storedText(item.text), true);
+                secret(sb, "text", TypewriterHtml.storedText(item.text), true, sealFields);
                 sb.append(",\"done\":").append(item.done ? "true" : "false");
                 sb.append('}');
             }
@@ -551,24 +558,25 @@ public final class TypewriterStore {
         }
         sb.append("],\"pages\":[");
         StringBuilder pages = new StringBuilder();
-        flattenPages(pages, data.pagesRoot, null, new int[]{0});
+        flattenPages(pages, data.pagesRoot, null, new int[]{0}, sealFields);
         sb.append(pages);
         sb.append("]}");
         return sb.toString();
     }
 
-    private static void appendNote(StringBuilder sb, TypewriterPane.TwNote n, LocalDate date) {
+    private static void appendNote(StringBuilder sb, TypewriterPane.TwNote n, LocalDate date,
+                                   boolean sealFields) {
         sb.append("{");
         field(sb, "date", date == null ? "" : date.toString(), true);
         field(sb, "id", n.id, false);
-        secret(sb, "title", n.title, false);
-        secret(sb, "body", TypewriterHtml.storedText(n.body), false);
-        sb.append(",\"images\":").append(imagesToJson(n, "diary"));
+        secret(sb, "title", n.title, false, sealFields);
+        secret(sb, "body", TypewriterHtml.storedText(n.body), false, sealFields);
+        appendImages(sb, n, "diary", sealFields);
         sb.append('}');
     }
 
     private static void flattenPages(StringBuilder sb, TypewriterPane.TwFolder folder,
-                                     String parentId, int[] pos) {
+                                     String parentId, int[] pos, boolean sealFields) {
         boolean needComma = sb.length() > 0;
         for (TypewriterPane.TwFolder child : folder.children) {
             if (needComma) sb.append(',');
@@ -577,12 +585,12 @@ public final class TypewriterStore {
             field(sb, "id", child.id, true);
             field(sb, "parent_id", parentId, false);
             field(sb, "kind", "folder", false);
-            secret(sb, "title", child.title, false);
-            secret(sb, "body", "", false);
+            secret(sb, "title", child.title, false, sealFields);
+            secret(sb, "body", "", false, sealFields);
             sb.append(",\"images\":[]");
             sb.append(",\"pos\":").append(pos[0]++);
             sb.append('}');
-            flattenPages(sb, child, child.id, pos);
+            flattenPages(sb, child, child.id, pos, sealFields);
         }
         for (TypewriterPane.TwNote note : folder.notes) {
             if (needComma) sb.append(',');
@@ -591,12 +599,18 @@ public final class TypewriterStore {
             field(sb, "id", note.id, true);
             field(sb, "parent_id", parentId, false);
             field(sb, "kind", "note", false);
-            secret(sb, "title", note.title, false);
-            secret(sb, "body", TypewriterHtml.storedText(note.body), false);
-            sb.append(",\"images\":").append(imagesToJson(note, "pages"));
+            secret(sb, "title", note.title, false, sealFields);
+            secret(sb, "body", TypewriterHtml.storedText(note.body), false, sealFields);
+            appendImages(sb, note, "pages", sealFields);
             sb.append(",\"pos\":").append(pos[0]++);
             sb.append('}');
         }
+    }
+
+    private static void appendImages(StringBuilder sb, TypewriterPane.TwNote note, String kind,
+                                     boolean remoteBundle) {
+        if (remoteBundle) sb.append(",\"images\":").append(imagesToJson(note, kind));
+        else field(sb, "images", joinImages(note), false);
     }
 
     private static String imagesToJson(TypewriterPane.TwNote note, String kind) {
@@ -887,8 +901,10 @@ public final class TypewriterStore {
         else sb.append('"').append(escape(value)).append('"');
     }
 
-    private static void secret(StringBuilder sb, String key, String value, boolean first) {
-        field(sb, key, Vault.seal(value == null ? "" : value), first);
+    private static void secret(StringBuilder sb, String key, String value, boolean first,
+                               boolean sealFields) {
+        String text = value == null ? "" : value;
+        field(sb, key, sealFields ? Vault.seal(text) : text, first);
     }
 
     private static String escape(String s) {

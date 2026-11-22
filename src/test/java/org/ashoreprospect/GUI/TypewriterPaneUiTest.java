@@ -98,6 +98,47 @@ class TypewriterPaneUiTest {
     }
 
     @Test
+    void undoAndRedoRestoreListTitleAndSelectionBeforeSaveDebounce() throws Exception {
+        TypewriterPane pane = call(TypewriterPane::new);
+        call(() -> {
+            TypewriterStore.Data initial = new TypewriterStore.Data();
+            initial.lists.add(new TypewriterPane.TwList("Shopping"));
+            pane.applyFromNode(initial);
+            button(pane, "Lists").fire();
+            field(pane, "List name").setText("Groceries");
+
+            pane.undo();
+            assertEquals("Shopping", pane.snapshot().lists.get(0).title);
+            assertEquals("Shopping", field(pane, "List name").getText());
+
+            pane.redo();
+            assertEquals("Groceries", pane.snapshot().lists.get(0).title);
+            assertEquals("Groceries", field(pane, "List name").getText());
+            return null;
+        });
+    }
+
+    @Test
+    void redoCanRestoreAnEmptyListCollection() throws Exception {
+        TypewriterPane pane = call(TypewriterPane::new);
+        call(() -> {
+            TypewriterStore.Data initial = new TypewriterStore.Data();
+            initial.lists.add(new TypewriterPane.TwList("Only list"));
+            pane.applyFromNode(initial);
+            button(pane, "Lists").fire();
+            button(pane, "Delete list").fire();
+            button(overlay(pane), "Delete").fire();
+
+            pane.undo();
+            assertEquals("Only list", pane.snapshot().lists.get(0).title);
+            pane.redo();
+            assertTrue(pane.snapshot().lists.isEmpty());
+            assertTrue(field(pane, "List name").isDisabled());
+            return null;
+        });
+    }
+
+    @Test
     void pagesCanBeCreatedInsideANewFolder() throws Exception {
         TypewriterPane pane = call(TypewriterPane::new);
         call(() -> {

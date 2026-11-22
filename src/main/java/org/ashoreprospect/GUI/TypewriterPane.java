@@ -288,7 +288,10 @@ public class TypewriterPane extends BorderPane {
     }
 
     private void applyLoaded(TypewriterStore.Data data, boolean seedIfEmpty) {
-        if (blank(data)) {
+        String selectedListId = restoringTw && currentList != null ? currentList.id : null;
+        int selectedItem = restoringTw && currentList != null
+                ? currentList.items.indexOf(currentListItem) : -1;
+        if (blank(data) && !restoringTw) {
             if (seedIfEmpty) {
                 seedDefaults();
                 saveAll();
@@ -299,6 +302,21 @@ public class TypewriterPane extends BorderPane {
             lists.clear();
             lists.addAll(data.lists);
             listNames.getItems().setAll(lists);
+            if (restoringTw) {
+                TwList selected = lists.stream()
+                        .filter(list -> list.id.equals(selectedListId))
+                        .findFirst().orElse(lists.isEmpty() ? null : lists.get(0));
+                if (selected == null) {
+                    openList(null);
+                } else {
+                    listNames.getSelectionModel().select(selected);
+                    if (currentList != selected) openList(selected);
+                    if (selected.id.equals(selectedListId)
+                            && selectedItem >= 0 && selectedItem < selected.items.size()) {
+                        bindListItem(selected.items.get(selectedItem));
+                    }
+                }
+            }
             rebuildPageTree(data.pagesRoot);
         }
         TypewriterStore.pruneEmptyDiary(diaryPages);
@@ -306,8 +324,9 @@ public class TypewriterPane extends BorderPane {
             rebuildCalendar();
             TwNote day = diaryPages.get(diaryDate);
             if (hasWriting(day)) bindNote(day);
+            else if (restoringTw) bindNote(null);
         } else if (mode == Mode.LISTS) {
-            listNames.getItems().setAll(lists);
+            if (!restoringTw) listNames.getItems().setAll(lists);
         } else {
             TreeItem<Object> keep = currentNote == null ? null : findNoteById(pageTree.getRoot(), currentNote.id);
             TreeItem<Object> pick = keep != null ? keep : findFirstNote(pageTree.getRoot());
@@ -342,6 +361,7 @@ public class TypewriterPane extends BorderPane {
 
     public void undo() {
         captureHtml();
+        commitTwHistory();
         if (twUndo.isEmpty()) return;
         String now = twSnap();
         String prev = twUndo.removeLast();
@@ -351,6 +371,7 @@ public class TypewriterPane extends BorderPane {
 
     public void redo() {
         captureHtml();
+        commitTwHistory();
         if (twRedo.isEmpty()) return;
         String now = twSnap();
         String next = twRedo.removeLast();
@@ -385,6 +406,7 @@ public class TypewriterPane extends BorderPane {
             fillingList = false;
             restoringTw = false;
         }
+        saveDebounce.playFromStart();
     }
 
     private static boolean hasWriting(TwNote n) {

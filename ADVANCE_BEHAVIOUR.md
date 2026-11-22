@@ -256,6 +256,8 @@ Add-task and Task Information have no category fields. Popups for add/info sit s
 
 Typewriter: `HTMLEditor` is the writing surface. Persist `TypewriterHtml.storedText(...)` — inner writing as plain lines, never the editor’s `<html>` / `contenteditable` dump (`u003chtml` and similar). Counts (lines / words / letters) use that unwrapped text.
 
+Typewriter undo/redo keeps transient, plaintext snapshots in memory so unchanged content compares consistently. Database and Node writes continue to seal fields when vault encryption is enabled.
+
 ---
 
 ## 9. Reminders
